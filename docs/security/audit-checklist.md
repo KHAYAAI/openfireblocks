@@ -4,7 +4,9 @@ Status legend: ✅ done · 🟡 partial · ⬜ not started
 
 ## Cryptography & key management
 - 🟡 Vault-backed signing key (KV v2) — single shared key in place
-- ⬜ Real MPC threshold signing (Binance TSS-Lib DKG, k-of-n, key never reconstructed)
+- 🟡 Real MPC threshold signing (Binance TSS-Lib): k-of-n DKG + signing proven
+  and Ethereum-verified in-process (`services/mpc-signer/tss`); live multi-party
+  transport + per-customer ceremony is the remaining Phase 2 work
 - ⬜ HSM-backed Vault auto-unseal
 - ⬜ Documented key ceremony + rotation procedure
 - ⬜ External cryptographic audit of the signing layer

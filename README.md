@@ -77,8 +77,10 @@ cd services/api-gateway && npm install && npm run start:dev && npm test
 - **Phase 0** ✅ — Ethereum signing PoC with audit trail.
 - **Phase 1** ✅ — Multi-tenancy + API-key auth, OPA policy engine, Temporal
   settlement workflows, Vault key management, Prometheus/Grafana, Helm/K8s, CI, SDK.
-- **Phase 2** — Real MPC threshold signing (Binance TSS-Lib), multi-chain
-  (Bitcoin, Solana, Cosmos), risk engine (velocity, OFAC), treasury.
+- **Phase 2** — Real MPC threshold signing (Binance TSS-Lib): cryptographic core
+  (k-of-n DKG + signing) proven in `services/mpc-signer/tss`; remaining work is
+  distributing parties + per-customer ceremonies. Plus multi-chain (Bitcoin,
+  Solana, Cosmos), risk engine (OFAC), treasury.
 - **Phase 3** — Bank-grade hardening: external crypto + pen-test audits, SOC 2 /
   ISO 27001, regulatory reporting, multi-region HA.
 

@@ -35,7 +35,10 @@ temporal-worker) and its data stores. Methodology: STRIDE per trust boundary.
 
 ## Known gaps (tracked for Phase 2/3)
 
-- Real MPC threshold signing (currently a single shared key) — **highest priority**.
+- Real MPC threshold signing: the cryptographic core (k-of-n DKG + signing) is
+  implemented and Ethereum-verified in `services/mpc-signer/tss`; distributing
+  the parties across isolated hosts and per-customer key ceremonies is the
+  remaining Phase 2 work — **highest priority** before customer funds.
 - API-key hashing at rest (currently stored as-is for the MVP).
 - Rate limiting / WAF not yet enabled by default.
 - mTLS between internal services (service mesh) not yet enabled.

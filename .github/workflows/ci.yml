@@ -35,6 +35,24 @@ jobs:
         working-directory: ${{ matrix.module }}
         run: go test ./... -count=1
 
+  mpc-tss:
+    name: MPC threshold signing (tss tag)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+      # Compile the threshold-ECDSA package and run its fast checks. The full
+      # keygen+sign proof (TestThresholdKeygenAndSign, ~75s) runs out of -short;
+      # invoke it manually/nightly: go test -tags tss -vet=off ./tss/
+      - name: Build (tss)
+        working-directory: services/mpc-signer
+        run: go build -tags tss ./...
+      - name: Test (tss, short)
+        working-directory: services/mpc-signer
+        run: go test -tags tss -vet=off -short ./tss/
+
   gateway:
     name: API gateway
     runs-on: ubuntu-latest
