@@ -1,11 +1,19 @@
-# OpenFireblocks API (Phase 0)
+# OpenFireblocks API
 
 Base URL (local): `http://localhost:3000`
+
+## Authentication
+
+All tenant routes require an API key, sent as `Authorization: Bearer <key>` or
+`X-API-Key: <key>`. The local stack seeds a demo tenant with key `dev-demo-key`.
+
+Admin routes (`/admin/*`) require the admin token (`ADMIN_API_KEY`, default
+`dev-admin-key` locally) via `Authorization: Bearer <admin-token>`.
 
 ## POST /sign
 
 Sign an Ethereum transaction and, if an RPC endpoint is configured, broadcast it
-to Sepolia.
+to Sepolia. Runs a fail-closed policy check first. Requires a tenant API key.
 
 ### Request
 
@@ -61,11 +69,38 @@ Returned for validation failures (bad address, gasLimit < 21000, unknown fields)
 }
 ```
 
-## GET /health (gateway)
+### Response `403 Forbidden` (policy denied)
 
 ```json
-{ "status": "ok", "service": "api-gateway" }
+{ "error": "policy denied", "denials": ["pro tier limited to 50 ETH per transaction"], "requiresApproval": false, "requestId": "uuid" }
 ```
+
+## GET /transactions
+
+List the authenticated tenant's transactions (most recent first).
+
+## GET /transactions/:requestId
+
+Fetch one of the tenant's transactions (404 if it isn't theirs).
+
+## GET /transactions/:requestId/audit
+
+The audit trail for one of the tenant's transactions.
+
+## Admin (require admin token)
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| POST | `/admin/customers` | Create a tenant `{ email, tier?, customerId? }` → returns `api_key` |
+| GET | `/admin/customers` | List tenants |
+| GET | `/admin/customers/:id` | Get a tenant |
+| PUT | `/admin/customers/:id/policies` | Set per-tenant policy overrides `{ policies: { whitelist?, blockedCountries? } }` |
+| PUT | `/admin/customers/:id/status` | `{ status: "active"\|"suspended"\|"deleted" }` |
+
+## Observability
+
+- `GET /health` → `{ "status": "ok", "service": "api-gateway" }`
+- `GET /metrics` → Prometheus exposition (unauthenticated; restrict by network policy)
 
 ---
 

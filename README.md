@@ -4,20 +4,27 @@ A sovereign, open-source settlement infrastructure platform for agents and
 financial institutions — built on proven OSS (go-ethereum, Binance TSS-Lib,
 Temporal, OPA, immudb, HashiCorp Vault).
 
-> **Status: Phase 0 (Proof of Concept).** Single-chain (Ethereum), single shared
-> signing key, no auth. Proves the end-to-end flow: request → sign → broadcast →
-> immutable audit trail.
+> **Status: Phase 1 (MVP).** Ethereum single-chain. Multi-tenant with API-key
+> auth, OPA policy engine, Temporal settlement orchestration, Vault-backed key
+> management, Prometheus/Grafana observability, Helm/K8s deploy. Signing still
+> uses a single shared key (real MPC threshold signing is Phase 2) — **not yet
+> audited for customer funds**; see [`docs/security`](docs/security).
 
 ## Repository layout
 
 ```
 openfireblocks/
 ├── services/
-│   ├── mpc-signer/     # Go service: Ethereum signing + immudb audit trail
-│   └── api-gateway/    # NestJS API: validation, orchestration, PostgreSQL audit, broadcast
-├── infrastructure/     # docker-compose.yml, init-db.sql, local setup guide
-├── contracts/          # Solidity (Phase 1+; placeholder in Phase 0)
-└── docs/               # architecture, API reference, phase-0 checklist
+│   ├── mpc-signer/       # Go: Ethereum signing, Vault keys, immudb audit, metrics
+│   ├── api-gateway/      # NestJS: auth, multi-tenancy, policy checks, orchestration, metrics
+│   ├── policy-service/   # Go + OPA/Rego: amount/whitelist/approval/geo policies
+│   └── temporal-worker/  # Go: durable settlement workflow (policy→sign→broadcast→monitor)
+├── sdks/
+│   └── sdk-js/           # TypeScript client SDK
+├── infrastructure/       # docker-compose, init SQL, K8s manifests, Helm chart, monitoring
+├── contracts/            # Solidity (Phase 2+; placeholder)
+├── docs/                 # architecture, API, policies, deployment, security, checklists
+└── .github/workflows/    # CI (build + test all services)
 ```
 
 ## Quick start
@@ -56,15 +63,26 @@ cd services/api-gateway && npm install && npm run start:dev && npm test
 
 - [Architecture](docs/architecture.md)
 - [API reference](docs/api.md)
-- [Phase 0 checklist](docs/phase-0-checklist.md)
+- [Policies (OPA)](docs/policies.md)
+- [Deployment (Compose / K8s / Helm)](docs/deployment.md)
+- [Troubleshooting](docs/troubleshooting.md)
+- [Security: threat model](docs/security/threat-model.md) ·
+  [audit checklist](docs/security/audit-checklist.md)
+- Checklists: [Phase 0](docs/phase-0-checklist.md) · [Phase 1](docs/phase-1-checklist.md)
 
 ## Roadmap
 
-- **Phase 0** — Ethereum signing PoC with audit trail *(this milestone)*.
-- **Phase 1** — Multi-tenancy, OPA policy engine, Temporal workflows, HashiCorp
-  Vault, real MPC threshold signing, Prometheus/Grafana, Kubernetes.
-- **Phase 2+** — Multi-chain (Bitcoin, Solana, Cosmos), risk engine, treasury,
-  bank-grade hardening.
+- **Phase 0** ✅ — Ethereum signing PoC with audit trail.
+- **Phase 1** ✅ — Multi-tenancy + API-key auth, OPA policy engine, Temporal
+  settlement workflows, Vault key management, Prometheus/Grafana, Helm/K8s, CI, SDK.
+- **Phase 2** — Real MPC threshold signing (Binance TSS-Lib), multi-chain
+  (Bitcoin, Solana, Cosmos), risk engine (velocity, OFAC), treasury.
+- **Phase 3** — Bank-grade hardening: external crypto + pen-test audits, SOC 2 /
+  ISO 27001, regulatory reporting, multi-region HA.
+
+> **Not production-ready for customer funds yet.** The MVP still uses a single
+> shared signing key and has not been externally audited. See the
+> [audit checklist](docs/security/audit-checklist.md) for the go/no-go gate.
 
 ## License
 

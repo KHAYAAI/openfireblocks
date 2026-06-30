@@ -1,0 +1,17 @@
+{
+  "name": "@openfireblocks/sdk",
+  "version": "0.1.0",
+  "description": "OpenFireblocks JavaScript/TypeScript SDK",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "node --test \"test/*.test.mjs\""
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3"
+  }
+}

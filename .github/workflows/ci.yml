@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    name: Go services (${{ matrix.service }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [mpc-signer, policy-service, temporal-worker]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache-dependency-path: services/${{ matrix.service }}/go.sum
+      - name: Build
+        working-directory: services/${{ matrix.service }}
+        run: go build ./...
+      - name: Vet
+        working-directory: services/${{ matrix.service }}
+        run: go vet ./...
+      - name: Test
+        working-directory: services/${{ matrix.service }}
+        run: go test ./... -count=1
+
+  gateway:
+    name: API gateway
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: services/api-gateway/package-lock.json
+      - working-directory: services/api-gateway
+        run: npm ci
+      - working-directory: services/api-gateway
+        run: npm run build
+      - working-directory: services/api-gateway
+        run: npm test
+
+  sdk-js:
+    name: JS SDK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: sdks/sdk-js/package-lock.json
+      - working-directory: sdks/sdk-js
+        run: npm ci
+      - working-directory: sdks/sdk-js
+        run: npm run build
+      - working-directory: sdks/sdk-js
+        run: npm test
