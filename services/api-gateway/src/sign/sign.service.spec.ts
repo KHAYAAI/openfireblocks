@@ -8,6 +8,7 @@ import { AuditService } from '../database/audit.service';
 import { EthereumService } from '../blockchain/ethereum.service';
 import { PolicyService } from '../policies/policy.service';
 import { RiskService } from '../risk/risk.service';
+import { BillingService } from '../billing/billing.service';
 import { MetricsService } from '../monitoring/metrics.service';
 import { Customer } from '../customers/customer.service';
 import { SignRequestDto } from './dto/sign-request.dto';
@@ -20,6 +21,7 @@ describe('SignService', () => {
   let postgres: { saveTransaction: jest.Mock; updateStatus: jest.Mock };
   let policy: { evaluate: jest.Mock };
   let risk: { checkAndRecord: jest.Mock };
+  let billing: { recordSigned: jest.Mock; recordBroadcast: jest.Mock };
 
   const mpcResponse = {
     data: {
@@ -71,6 +73,10 @@ describe('SignService', () => {
         .fn()
         .mockResolvedValue({ allowed: true, count: 1, limit: 100 }),
     };
+    billing = {
+      recordSigned: jest.fn().mockResolvedValue(undefined),
+      recordBroadcast: jest.fn().mockResolvedValue(undefined),
+    };
 
     const moduleRef = await Test.createTestingModule({
       providers: [
@@ -82,6 +88,7 @@ describe('SignService', () => {
         { provide: EthereumService, useValue: ethereum },
         { provide: PolicyService, useValue: policy },
         { provide: RiskService, useValue: risk },
+        { provide: BillingService, useValue: billing },
       ],
     }).compile();
 
@@ -96,6 +103,7 @@ describe('SignService', () => {
     expect(result.broadcasted).toBe(false);
     expect(postgres.saveTransaction).toHaveBeenCalledTimes(1);
     expect(postgres.saveTransaction.mock.calls[0][0].customerId).toBe('demo');
+    expect(billing.recordSigned).toHaveBeenCalledWith('demo');
 
     const auditedTypes = audit.logEvent.mock.calls.map((c) => c[0].type);
     expect(auditedTypes).toContain('SIGN_REQUEST_RECEIVED');

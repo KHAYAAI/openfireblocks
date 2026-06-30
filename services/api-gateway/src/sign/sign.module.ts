@@ -7,6 +7,7 @@ import { PrepareService } from '../blockchain/prepare.service';
 import { CustomersModule } from '../customers/customers.module';
 import { PolicyModule } from '../policies/policy.module';
 import { RiskModule } from '../risk/risk.module';
+import { BillingModule } from '../billing/billing.module';
 
 // Bundles the tenant-facing signing API with its MPC-signer HTTP client, the
 // Ethereum broadcast service, tenant auth (CustomersModule) and policy checks.
@@ -17,6 +18,7 @@ import { RiskModule } from '../risk/risk.module';
     CustomersModule,
     PolicyModule,
     RiskModule,
+    BillingModule,
   ],
   controllers: [SignController],
   providers: [SignService, EthereumService, PrepareService],

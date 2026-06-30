@@ -49,6 +49,24 @@ CREATE INDEX IF NOT EXISTS idx_tx_customer_id    ON signing.transactions(custome
 --   USING (customer_id = current_setting('app.current_customer', true));
 
 -- ---------------------------------------------------------------------------
+-- Usage metering (billing foundation). One row per tenant per month; consumed
+-- by the billing integration (e.g. Kill Bill) to drive metered invoicing.
+-- ---------------------------------------------------------------------------
+CREATE SCHEMA IF NOT EXISTS billing;
+
+CREATE TABLE IF NOT EXISTS billing.usage (
+  id              BIGSERIAL PRIMARY KEY,
+  customer_id     VARCHAR(255) NOT NULL,
+  period          CHAR(7)      NOT NULL,        -- 'YYYY-MM'
+  signed_count    BIGINT       NOT NULL DEFAULT 0,
+  broadcast_count BIGINT       NOT NULL DEFAULT 0,
+  updated_at      TIMESTAMPTZ  DEFAULT NOW(),
+  UNIQUE (customer_id, period)
+);
+
+CREATE INDEX IF NOT EXISTS idx_usage_customer ON billing.usage(customer_id);
+
+-- ---------------------------------------------------------------------------
 -- Seed a demo tenant for local development. Remove in production.
 -- API keys are stored as SHA-256 hashes; the plaintext key for this row is
 -- "dev-demo-key" (sha256 below). Authenticate with: Authorization: Bearer dev-demo-key

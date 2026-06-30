@@ -37,7 +37,9 @@ Status legend: ✅ done · 🟡 partial · ⬜ not started
 - ⬜ Multi-region / DR with RTO/RPO < 1h
 - ⬜ Secrets via external-secrets / sealed-secrets (no plaintext in cluster)
 
-## Compliance
+## Compliance & billing
+- 🟡 Usage metering (per-tenant signed/broadcast counts) — billing engine
+  (Kill Bill) integration still to wire
 - ⬜ SOC 2 Type II
 - ⬜ ISO 27001
 - 🟡 OFAC sanctions screening (address denylist enforced in policy-service;

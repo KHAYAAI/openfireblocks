@@ -122,6 +122,7 @@ The audit trail for one of the tenant's transactions.
 | GET | `/admin/customers/:id` | Get a tenant |
 | PUT | `/admin/customers/:id/policies` | Set per-tenant policy overrides `{ policies: { whitelist?, blockedCountries? } }` |
 | PUT | `/admin/customers/:id/status` | `{ status: "active"\|"suspended"\|"deleted" }` |
+| GET | `/admin/customers/:id/usage` | Metered usage per month (signed + broadcast counts) for billing |
 
 ## Observability
 

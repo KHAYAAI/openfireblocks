@@ -67,7 +67,7 @@ cd services/api-gateway && npm install && npm run start:dev && npm test
 - [API reference](docs/api.md)
 - [Policies (OPA)](docs/policies.md)
 - [Deployment (Compose / K8s / Helm)](docs/deployment.md)
-- [Troubleshooting](docs/troubleshooting.md)
+- [Troubleshooting](docs/troubleshooting.md) · [Operations runbook](docs/runbook.md)
 - [Security: threat model](docs/security/threat-model.md) ·
   [audit checklist](docs/security/audit-checklist.md)
 - Checklists: [Phase 0](docs/phase-0-checklist.md) · [Phase 1](docs/phase-1-checklist.md)

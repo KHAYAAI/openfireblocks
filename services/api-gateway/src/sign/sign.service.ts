@@ -12,6 +12,7 @@ import { AuditService } from '../database/audit.service';
 import { EthereumService } from '../blockchain/ethereum.service';
 import { PolicyService } from '../policies/policy.service';
 import { RiskService } from '../risk/risk.service';
+import { BillingService } from '../billing/billing.service';
 import { MetricsService } from '../monitoring/metrics.service';
 import { Customer } from '../customers/customer.service';
 import { SignRequestDto } from './dto/sign-request.dto';
@@ -50,6 +51,7 @@ export class SignService {
     private readonly ethereum: EthereumService,
     private readonly policy: PolicyService,
     private readonly risk: RiskService,
+    private readonly billing: BillingService,
     private readonly metrics: MetricsService,
   ) {}
 
@@ -153,6 +155,9 @@ export class SignService {
         status: 'signed',
       });
 
+      // Meter usage (best-effort; never blocks signing).
+      await this.billing.recordSigned(customerId);
+
       // 4. Broadcast to the network if an RPC endpoint is configured.
       let broadcasted = false;
       let finalHash = txHash;
@@ -161,6 +166,7 @@ export class SignService {
           finalHash = await this.ethereum.broadcastTransaction(signedTx);
           broadcasted = true;
           await this.postgres.updateStatus(requestId, 'broadcasted', finalHash);
+          await this.billing.recordBroadcast(customerId);
           await this.audit.logEvent({
             type: 'BROADCAST_SUCCESS',
             requestId,
