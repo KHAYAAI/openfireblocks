@@ -7,8 +7,12 @@ coverage/
 .env.*
 !.env.example
 
-# Go
+# Go — compiled service binaries (each main package builds to a binary named
+# after its directory; never commit these).
 /services/mpc-signer/mpc-signer
+/services/policy-service/policy-service
+/services/temporal-worker/temporal-worker
+/services/temporal-worker/worker
 *.test
 
 # Editor / OS
