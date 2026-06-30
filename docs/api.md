@@ -20,7 +20,7 @@ to Sepolia. Runs a fail-closed policy check first. Requires a tenant API key.
 ```json
 {
   "chainId": 11155111,
-  "to": "0x742d35Cc6634C0532925a3b844Bc9e7595f42bE",
+  "to": "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
   "data": "0x",
   "value": "0",
   "gasLimit": 21000,
@@ -36,8 +36,14 @@ to Sepolia. Runs a fail-closed policy check first. Requires a tenant API key.
 | `data` | string? | 0x-prefixed call data; omit or `"0x"` for a plain transfer |
 | `value` | string? | wei as a base-10 string; defaults to `"0"` |
 | `gasLimit` | number | ≥ 21000 |
-| `gasPrice` | string | wei per gas as a base-10 string |
+| `gasPrice` | string? | legacy fee, wei per gas (base-10). Omit when using EIP-1559 |
+| `maxFeePerGas` | string? | EIP-1559 fee cap (wei). Requires `maxPriorityFeePerGas` |
+| `maxPriorityFeePerGas` | string? | EIP-1559 priority tip (wei). Requires `maxFeePerGas` |
 | `nonce` | number | sender account nonce |
+| `country` | string? | ISO country code for geographic policy checks |
+
+Supply **either** `gasPrice` (legacy) **or** both `maxFeePerGas` +
+`maxPriorityFeePerGas` (EIP-1559 dynamic fee).
 
 ### Response `200 OK`
 

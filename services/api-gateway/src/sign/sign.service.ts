@@ -136,7 +136,8 @@ export class SignService {
         data: req.data ?? '',
         value: req.value ?? '0',
         gasLimit: req.gasLimit,
-        gasPrice: req.gasPrice,
+        // Record the effective fee: legacy gasPrice, else the 1559 fee cap.
+        gasPrice: req.gasPrice ?? req.maxFeePerGas ?? '',
         nonce: req.nonce,
         signedTx,
         txHash,

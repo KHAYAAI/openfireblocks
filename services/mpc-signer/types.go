@@ -5,14 +5,22 @@ package main
 // can communicate over JSON without a shared schema registry (Phase 0).
 
 // SignRequest is an unsigned Ethereum transaction the caller wants signed.
+//
+// Fee model: if MaxFeePerGas and MaxPriorityFeePerGas are both set, an EIP-1559
+// dynamic-fee transaction is produced; otherwise a legacy (EIP-155) transaction
+// using GasPrice.
 type SignRequest struct {
 	ChainID  int    `json:"chainId"`  // 11155111 for Sepolia, 1 for mainnet
 	To       string `json:"to"`       // 0x-prefixed recipient address
 	Data     string `json:"data"`     // 0x-prefixed call data, or "" / "0x" for a plain transfer
 	Value    string `json:"value"`    // amount in wei as a base-10 string ("0" allowed)
 	GasLimit uint64 `json:"gasLimit"` // gas units, >= 21000
-	GasPrice string `json:"gasPrice"` // wei per gas as a base-10 string
+	GasPrice string `json:"gasPrice"` // legacy: wei per gas as a base-10 string
 	Nonce    uint64 `json:"nonce"`    // sender account nonce
+
+	// EIP-1559 dynamic fee fields (both required to select the 1559 path).
+	MaxFeePerGas         string `json:"maxFeePerGas,omitempty"`
+	MaxPriorityFeePerGas string `json:"maxPriorityFeePerGas,omitempty"`
 }
 
 // SignResponse is returned on a successful signing.

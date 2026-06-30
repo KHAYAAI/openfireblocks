@@ -34,7 +34,7 @@ test('sign sends auth header and returns parsed body', async () => {
 
   const res = await client.sign({
     chainId: 11155111,
-    to: '0x742d35Cc6634C0532925a3b844Bc9e7595f42bE',
+    to: '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045',
     gasLimit: 21000,
     gasPrice: '20000000000',
     nonce: 0,

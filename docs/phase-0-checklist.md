@@ -35,7 +35,7 @@
 cd infrastructure && docker compose up -d --build
 curl -s http://localhost:3000/health
 curl -X POST http://localhost:3000/sign -H "Content-Type: application/json" -d '{
-  "chainId": 11155111, "to": "0x742d35Cc6634C0532925a3b844Bc9e7595f42bE",
+  "chainId": 11155111, "to": "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
   "data": "0x", "value": "0", "gasLimit": 21000, "gasPrice": "20000000000", "nonce": 0
 }'
 docker compose exec postgres psql -U app -d openfireblocks \

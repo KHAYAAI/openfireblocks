@@ -39,7 +39,7 @@ func main() {
 		CustomerID:   getenv("CUSTOMER_ID", "demo"),
 		CustomerTier: getenv("CUSTOMER_TIER", "pro"),
 		ChainID:      11155111,
-		To:           getenv("TO", "0x742d35Cc6634C0532925a3b844Bc9e7595f42bE"),
+		To:           getenv("TO", "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045"),
 		Value:        getenv("VALUE", "0"),
 		GasLimit:     21000,
 		GasPrice:     getenv("GAS_PRICE", "20000000000"),

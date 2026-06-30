@@ -21,8 +21,21 @@ export class SignRequestDto {
   @Min(21000)
   gasLimit: number;
 
+  // Legacy fee. Optional when EIP-1559 fields are supplied instead.
+  @IsOptional()
   @Matches(/^[0-9]+$/, { message: 'gasPrice must be a base-10 wei string' })
-  gasPrice: string;
+  gasPrice?: string;
+
+  // EIP-1559 dynamic fee (both required together to select the 1559 path).
+  @IsOptional()
+  @Matches(/^[0-9]+$/, { message: 'maxFeePerGas must be a base-10 wei string' })
+  maxFeePerGas?: string;
+
+  @IsOptional()
+  @Matches(/^[0-9]+$/, {
+    message: 'maxPriorityFeePerGas must be a base-10 wei string',
+  })
+  maxPriorityFeePerGas?: string;
 
   @IsNumber()
   @Min(0)

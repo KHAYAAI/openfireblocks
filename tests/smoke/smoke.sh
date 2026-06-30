@@ -31,7 +31,7 @@ code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE_URL/sign" \
 say "authenticated sign (demo tenant)"
 SIGN=$(curl -fsS -X POST "$BASE_URL/sign" \
   -H "Authorization: Bearer $DEMO_KEY" -H 'Content-Type: application/json' \
-  -d '{"chainId":11155111,"to":"0x742d35Cc6634C0532925a3b844Bc9e7595f42bE","value":"0","gasLimit":21000,"gasPrice":"20000000000","nonce":0}')
+  -d '{"chainId":11155111,"to":"0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045","value":"0","gasLimit":21000,"gasPrice":"20000000000","nonce":0}')
 echo "$SIGN"
 REQ_ID=$(printf '%s' "$SIGN" | sed -n 's/.*"requestId":"\([^"]*\)".*/\1/p')
 [ -n "$REQ_ID" ] || fail "no requestId"

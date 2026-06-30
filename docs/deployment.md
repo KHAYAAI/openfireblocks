@@ -17,7 +17,7 @@ Provision a tenant and sign (the demo tenant `dev-demo-key` is seeded):
 curl -X POST http://localhost:3000/sign \
   -H "Authorization: Bearer dev-demo-key" \
   -H "Content-Type: application/json" \
-  -d '{"chainId":11155111,"to":"0x742d35Cc6634C0532925a3b844Bc9e7595f42bE","value":"0","gasLimit":21000,"gasPrice":"20000000000","nonce":0}'
+  -d '{"chainId":11155111,"to":"0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045","value":"0","gasLimit":21000,"gasPrice":"20000000000","nonce":0}'
 ```
 
 Create a new tenant (admin token defaults to `dev-admin-key`):
