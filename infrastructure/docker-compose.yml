@@ -1,0 +1,81 @@
+# OpenFireblocks Phase 0 local development stack.
+# Run from this directory:  docker compose up -d --build
+#
+# Brings up PostgreSQL (audit + tx metadata), immudb (immutable ledger),
+# Redis (reserved for Phase 1), the Go MPC signer and the NestJS API gateway.
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: openfireblocks
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: dev-only
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d openfireblocks"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  immudb:
+    image: codenotary/immudb:1.9.5
+    ports:
+      - "3322:3322" # gRPC API
+      - "9497:9497" # metrics
+    environment:
+      IMMUDB_ADMIN_PASSWORD: immudb
+    # immudb's image is distroless (no shell/curl), so we rely on the signer's
+    # built-in retry/degrade behaviour rather than a container healthcheck.
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  mpc-signer:
+    build:
+      context: ../services/mpc-signer
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      PORT: "8080"
+      IMMUDB_URL: immudb:3322
+      IMMUDB_USER: immudb
+      IMMUDB_PASSWORD: immudb
+      # Optional: pin a stable signer address across restarts (testnet only).
+      MPC_SIGNER_PRIVATE_KEY: ${MPC_SIGNER_PRIVATE_KEY:-}
+    depends_on:
+      - immudb
+
+  api:
+    build:
+      context: ../services/api-gateway
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      PORT: "3000"
+      DATABASE_URL: postgresql://app:dev-only@postgres:5432/openfireblocks
+      MPC_SIGNER_URL: http://mpc-signer:8080
+      # Set to a real Sepolia RPC URL to enable on-chain broadcasting.
+      ETHEREUM_RPC_SEPOLIA: ${ETHEREUM_RPC_SEPOLIA:-}
+      NODE_ENV: production
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mpc-signer:
+        condition: service_started
+
+volumes:
+  postgres_data:
