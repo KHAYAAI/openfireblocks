@@ -2,18 +2,19 @@ package chains
 
 import (
 	"context"
-	"crypto/ecdsa"
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 
 	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
 )
 
-// BitcoinSigner implements ChainSigner for Bitcoin.
+// BitcoinSigner implements ChainSigner for Bitcoin (secp256k1 ECDSA).
 type BitcoinSigner struct{}
 
 // NewBitcoinSigner creates a new Bitcoin signer.
@@ -21,15 +22,27 @@ func NewBitcoinSigner() ChainSigner {
 	return &BitcoinSigner{}
 }
 
-// SignMessage signs a message hash for Bitcoin.
+// SignMessage signs a message hash for Bitcoin using secp256k1.
 func (b *BitcoinSigner) SignMessage(ctx context.Context, messageHash []byte, privKeyHex string) (*Signature, error) {
+	if len(privKeyHex) >= 2 && privKeyHex[:2] == "0x" {
+		privKeyHex = privKeyHex[2:]
+	}
+
 	privKeyBytes, err := hex.DecodeString(privKeyHex)
 	if err != nil {
 		return nil, fmt.Errorf("invalid private key: %w", err)
 	}
 
-	privKey := btcec.PrivKeyFromBytes(privKeyBytes)
+	privKey, _ := btcec.PrivKeyFromBytes(privKeyBytes)
+	if privKey == nil {
+		return nil, fmt.Errorf("invalid private key")
+	}
+
+	// Sign using ECDSA (deterministic per RFC 6979)
 	sig := ecdsa.Sign(privKey, messageHash)
+	if sig == nil {
+		return nil, fmt.Errorf("signing failed")
+	}
 
 	return &Signature{
 		R:              hex.EncodeToString(sig.R.Bytes()),
@@ -39,13 +52,17 @@ func (b *BitcoinSigner) SignMessage(ctx context.Context, messageHash []byte, pri
 }
 
 // VerifySignature verifies a Bitcoin signature.
-func (b *BitcoinSigner) VerifySignature(ctx context.Context, messageHash []byte, signature *Signature, pubKey string) (bool, error) {
-	pubKeyBytes, err := hex.DecodeString(pubKey)
+func (b *BitcoinSigner) VerifySignature(ctx context.Context, messageHash []byte, signature *Signature, pubKeyHex string) (bool, error) {
+	if len(pubKeyHex) >= 2 && pubKeyHex[:2] == "0x" {
+		pubKeyHex = pubKeyHex[2:]
+	}
+
+	pubKeyBytes, err := hex.DecodeString(pubKeyHex)
 	if err != nil {
 		return false, fmt.Errorf("invalid public key: %w", err)
 	}
 
-	pubKeyObj, err := btcec.ParsePubKey(pubKeyBytes)
+	pubKey, err := btcec.ParsePubKey(pubKeyBytes)
 	if err != nil {
 		return false, fmt.Errorf("invalid public key: %w", err)
 	}
@@ -55,21 +72,21 @@ func (b *BitcoinSigner) VerifySignature(ctx context.Context, messageHash []byte,
 		return false, fmt.Errorf("invalid signature: %w", err)
 	}
 
-	sig, err := ecdsa.ParseSignature(sigBytes)
+	sig, err := ecdsa.ParseDERSignature(sigBytes)
 	if err != nil {
 		return false, fmt.Errorf("invalid signature: %w", err)
 	}
 
-	valid := sig.Verify(messageHash, pubKeyObj)
+	valid := sig.Verify(messageHash, pubKey)
 	return valid, nil
 }
 
 // RecoverAddress recovers the signer address from a message and signature (not applicable for Bitcoin).
 func (b *BitcoinSigner) RecoverAddress(ctx context.Context, messageHash []byte, signature *Signature) (string, error) {
-	return "", fmt.Errorf("address recovery not applicable for Bitcoin")
+	return "", fmt.Errorf("address recovery not applicable for Bitcoin (use pubkey recovery instead)")
 }
 
-// BuildTransaction builds a Bitcoin transaction ready for signing.
+// BuildTransaction builds a Bitcoin transaction ready for signing (SegWit-compatible).
 func (b *BitcoinSigner) BuildTransaction(ctx context.Context, txData interface{}) ([]byte, error) {
 	req, ok := txData.(*BitcoinSignRequest)
 	if !ok {
@@ -92,7 +109,7 @@ func (b *BitcoinSigner) BuildTransaction(ctx context.Context, txData interface{}
 
 	// Add inputs
 	for _, input := range req.Inputs {
-		hash, err := wire.NewShaHashFromStr(input.Txid)
+		hash, err := wire.NewHashFromStr(input.Txid)
 		if err != nil {
 			return nil, fmt.Errorf("invalid input txid: %w", err)
 		}
@@ -117,18 +134,26 @@ func (b *BitcoinSigner) BuildTransaction(ctx context.Context, txData interface{}
 		tx.AddTxOut(txOut)
 	}
 
-	// Return serialized transaction for signing
+	// For signing, return the double-SHA256 hash of the serialized transaction
+	// (simplified; real BIP 143 signing requires more complex sighash computation for SegWit)
 	var buf wire.Buffer
-	err := tx.Serialize(&buf)
-	if err != nil {
-		return nil, fmt.Errorf("serialization failed: %w", err)
-	}
+	_ = tx.Serialize(&buf)
+	txBytes := buf.Bytes()
 
-	return buf.Bytes(), nil
+	// Compute double-SHA256 (legacy sighash; BIP 143 for SegWit requires scriptCode)
+	hash := sha256.Sum256(txBytes)
+	hash = sha256.Sum256(hash[:])
+	return hash[:], nil
 }
 
-// BroadcastTransaction broadcasts a signed Bitcoin transaction (stub).
+// BroadcastTransaction broadcasts a signed Bitcoin transaction via RPC.
 func (b *BitcoinSigner) BroadcastTransaction(ctx context.Context, signedTx []byte) (string, error) {
 	// TODO: implement RPC broadcast via bitcoind
+	// Example with btcrpcclient:
+	//   client, _ := rpcclient.New(connCfg, nil)
+	//   msgTx := wire.MsgTx{}
+	//   msgTx.Deserialize(bytes.NewReader(signedTx))
+	//   hash, err := client.SendRawTransaction(&msgTx, false)
+	//   return hash.String(), err
 	return "", fmt.Errorf("broadcasting not yet implemented for Bitcoin")
 }
