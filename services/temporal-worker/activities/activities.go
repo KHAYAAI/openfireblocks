@@ -3,6 +3,7 @@ package activities
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"github.com/ethereum/go-ethereum/ethclient"
 	"go.temporal.io/sdk/activity"
 
+	"forge-crypto/temporal-worker/db"
 	"forge-crypto/temporal-worker/workflows"
 )
 
@@ -26,19 +28,29 @@ type Activities struct {
 	EthereumRPC           string
 	RequiredConfirmations int64
 	httpClient            *http.Client
+	db                    *sql.DB
+	roundStore            *db.CeremonyRoundStore
 }
 
 // NewActivities builds an Activities with sane defaults.
-func NewActivities(policyURL, mpcURL, ethRPC string, confirmations int64) *Activities {
+func NewActivities(policyURL, mpcURL, ethRPC string, confirmations int64, database *sql.DB) *Activities {
 	if confirmations <= 0 {
 		confirmations = 3
 	}
+
+	var roundStore *db.CeremonyRoundStore
+	if database != nil {
+		roundStore = db.NewCeremonyRoundStore(database)
+	}
+
 	return &Activities{
 		PolicyURL:             policyURL,
 		MpcSignerURL:          mpcURL,
 		EthereumRPC:           ethRPC,
 		RequiredConfirmations: confirmations,
 		httpClient:            &http.Client{Timeout: 15 * time.Second},
+		db:                    database,
+		roundStore:            roundStore,
 	}
 }
 

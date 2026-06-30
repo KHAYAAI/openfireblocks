@@ -3,6 +3,7 @@ package activities
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 
 	"go.temporal.io/sdk/activity"
 
+	"forge-crypto/temporal-worker/db"
 	"forge-crypto/temporal-worker/workflows"
 )
 
