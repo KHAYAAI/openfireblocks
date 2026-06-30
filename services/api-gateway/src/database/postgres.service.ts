@@ -5,6 +5,7 @@ import { PG_POOL } from './database.module';
 // Transaction metadata to persist alongside the immutable audit trail.
 export interface TransactionRecord {
   requestId: string;
+  customerId: string;
   chain: string;
   to: string;
   data: string;
@@ -26,9 +27,9 @@ export class PostgresService {
   async saveTransaction(tx: TransactionRecord) {
     const query = `
       INSERT INTO signing.transactions (
-        request_id, chain, to_address, amount, data,
+        request_id, customer_id, chain, to_address, amount, data,
         gas_limit, gas_price, nonce, signed_tx, tx_hash, status
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
       ON CONFLICT (request_id)
       DO UPDATE SET
         signed_tx = EXCLUDED.signed_tx,
@@ -39,6 +40,7 @@ export class PostgresService {
 
     await this.pool.query(query, [
       tx.requestId,
+      tx.customerId,
       tx.chain,
       tx.to,
       tx.value,
@@ -62,11 +64,28 @@ export class PostgresService {
     await this.pool.query(query, [requestId, status, txHash ?? null]);
   }
 
-  async getTransaction(requestId: string) {
-    const result = await this.pool.query(
-      `SELECT * FROM signing.transactions WHERE request_id = $1`,
-      [requestId],
-    );
+  // Fetches a transaction, scoped to a tenant when customerId is provided so a
+  // customer can never read another tenant's transaction.
+  async getTransaction(requestId: string, customerId?: string) {
+    const result = customerId
+      ? await this.pool.query(
+          `SELECT * FROM signing.transactions WHERE request_id = $1 AND customer_id = $2`,
+          [requestId, customerId],
+        )
+      : await this.pool.query(
+          `SELECT * FROM signing.transactions WHERE request_id = $1`,
+          [requestId],
+        );
     return result.rows[0] ?? null;
+  }
+
+  // Lists a tenant's transactions, most recent first.
+  async listTransactions(customerId: string, limit = 100) {
+    const result = await this.pool.query(
+      `SELECT * FROM signing.transactions
+       WHERE customer_id = $1 ORDER BY id DESC LIMIT $2`,
+      [customerId, limit],
+    );
+    return result.rows;
   }
 }

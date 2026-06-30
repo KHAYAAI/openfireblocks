@@ -5,6 +5,7 @@ import { PG_POOL } from './database.module';
 export interface AuditEvent {
   type: string;
   requestId: string;
+  customerId?: string; // tenant the event belongs to; 'system' actor when absent
   message?: string;
   signature?: string;
   hash?: string;
@@ -27,15 +28,16 @@ export class AuditService {
   async logEvent(event: AuditEvent): Promise<number | null> {
     const query = `
       INSERT INTO audit.events (
-        event_type, actor, request_id, message, signature, hash, chain, status, error_message
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        event_type, actor, customer_id, request_id, message, signature, hash, chain, status, error_message
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
       RETURNING id
     `;
 
     try {
       const result = await this.pool.query(query, [
         event.type,
-        'system', // Phase 1 replaces this with the authenticated customer id
+        event.customerId ?? 'system',
+        event.customerId ?? null,
         event.requestId,
         event.message ?? null,
         event.signature ?? null,
@@ -55,11 +57,16 @@ export class AuditService {
     }
   }
 
-  async getAuditTrail(requestId: string) {
-    const result = await this.pool.query(
-      `SELECT * FROM audit.events WHERE request_id = $1 ORDER BY timestamp ASC`,
-      [requestId],
-    );
+  async getAuditTrail(requestId: string, customerId?: string) {
+    const result = customerId
+      ? await this.pool.query(
+          `SELECT * FROM audit.events WHERE request_id = $1 AND customer_id = $2 ORDER BY timestamp ASC`,
+          [requestId, customerId],
+        )
+      : await this.pool.query(
+          `SELECT * FROM audit.events WHERE request_id = $1 ORDER BY timestamp ASC`,
+          [requestId],
+        );
     return result.rows;
   }
 }

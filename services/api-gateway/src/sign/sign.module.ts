@@ -3,11 +3,18 @@ import { HttpModule } from '@nestjs/axios';
 import { SignController } from './sign.controller';
 import { SignService } from './sign.service';
 import { EthereumService } from '../blockchain/ethereum.service';
+import { CustomersModule } from '../customers/customers.module';
+import { PolicyModule } from '../policies/policy.module';
 
-// Bundles the /sign endpoint with its HTTP client (to the MPC signer) and the
-// Ethereum broadcast service. Database services come from the global DatabaseModule.
+// Bundles the tenant-facing signing API with its MPC-signer HTTP client, the
+// Ethereum broadcast service, tenant auth (CustomersModule) and policy checks.
+// Database + metrics services come from the global modules.
 @Module({
-  imports: [HttpModule.register({ timeout: 10000 })],
+  imports: [
+    HttpModule.register({ timeout: 10000 }),
+    CustomersModule,
+    PolicyModule,
+  ],
   controllers: [SignController],
   providers: [SignService, EthereumService],
 })

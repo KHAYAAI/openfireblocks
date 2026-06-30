@@ -27,4 +27,8 @@ export class SignRequestDto {
   @IsNumber()
   @Min(0)
   nonce: number;
+
+  @IsOptional()
+  @IsString()
+  country?: string; // ISO country code for geographic policy checks
 }
