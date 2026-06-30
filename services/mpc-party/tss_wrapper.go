@@ -11,27 +11,41 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/crypto"
+	tss "github.com/bnb-chain/tss-lib/v2/tss"
+	"github.com/bnb-chain/tss-lib/v2/common"
+	"github.com/bnb-chain/tss-lib/v2/ecdsa/keygen"
+	"github.com/bnb-chain/tss-lib/v2/ecdsa/signing"
 )
 
 // TSSWrapper wraps Binance TSS-lib functionality for DKG and threshold signing.
-// Phase 2 implementation uses simplified keygen; real deployment uses full TSS-lib.
+// Uses the official bnb-chain/tss-lib library for production-grade cryptography.
 type TSSWrapper struct {
-	partyID      int
-	n            int
-	k            int
-	keyShare     *big.Int
-	commitments  []*big.Int
-	publicKey    *big.Int
-	dlProof      []byte
+	partyID           int
+	n                 int
+	k                 int
+	keyShare          *keygen.LocalPartySaveData
+	publicKey         *big.Int
+	threshold         int
+	totalParties      int
+	outgoingMessages  chan tss.Message
+	incomingMessages  map[int][]tss.Message
+	roundRx           chan *tss.Message
+	roundComplete     chan *keygen.LocalPartySaveData
+	signingRoundReady chan bool
 }
 
 // NewTSSWrapper creates a new TSS wrapper for a party.
 func NewTSSWrapper(partyID, n, k int) *TSSWrapper {
 	return &TSSWrapper{
-		partyID:     partyID,
-		n:           n,
-		k:           k,
-		commitments: make([]*big.Int, k+1),
+		partyID:          partyID,
+		n:                n,
+		k:                k,
+		threshold:        k,
+		totalParties:     n,
+		outgoingMessages: make(chan tss.Message, 100),
+		incomingMessages: make(map[int][]tss.Message),
+		roundRx:          make(chan *tss.Message, 100),
+		roundComplete:    make(chan *keygen.LocalPartySaveData),
 	}
 }
 
