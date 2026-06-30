@@ -13,22 +13,27 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"openfireblocks.com/services/mpc-signer/chains"
 )
 
 // main.go wires the MPC signer's HTTP API.
 //
 // Endpoints:
-//   POST /sign    -> sign an Ethereum transaction, audit-log the lifecycle
-//   GET  /address -> return the shared signer address (useful for funding on testnet)
-//   GET  /health  -> liveness/readiness probe
+//   POST /sign            -> sign an Ethereum transaction (Phase 0)
+//   POST /sign-multi-chain -> sign on any supported blockchain (Phase 2)
+//   POST /broadcast       -> broadcast a signed transaction (Phase 2)
+//   GET  /address         -> return the shared signer address (useful for funding on testnet)
+//   GET  /health          -> liveness/readiness probe
 //
 // The audit logger is best-effort: if immudb is unreachable at startup the
 // service still boots and serves /sign, recording a warning per request. This
 // keeps the Phase 0 happy path working even when immudb is slow to come up.
 
 type server struct {
-	signer *MPCSigner
-	audit  *AuditLogger // may be nil if immudb was unavailable at startup
+	signer       *MPCSigner
+	audit        *AuditLogger // may be nil if immudb was unavailable at startup
+	signerRouter *chains.SignerRouter
+	privKeyHex   string
 }
 
 func (s *server) log(ctx context.Context, event AuditEvent) uint64 {
@@ -100,8 +105,102 @@ func (s *server) handleAddress(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"address": s.signer.Address()})
 }
 
+func (s *server) handleSignMultiChain(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	requestID := uuid.NewString()
+
+	var req MultiChainSignRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{
+			"error":     "invalid request body",
+			"requestId": requestID,
+		})
+		return
+	}
+
+	if !s.signerRouter.IsValidChainId(req.ChainID) {
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{
+			"error":     fmt.Sprintf("unsupported chain: %s", req.ChainID),
+			"requestId": requestID,
+		})
+		return
+	}
+
+	signReq := &chains.ChainSignRequest{
+		ChainId: req.ChainID,
+		Message: []byte(req.Message),
+	}
+
+	resp, err := s.signerRouter.SignMultiChain(ctx, signReq, s.privKeyHex)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]interface{}{
+			"error":     err.Error(),
+			"requestId": requestID,
+			"chainId":   req.ChainID,
+			"status":    "failed",
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"requestId":   requestID,
+		"chainId":     resp.ChainID,
+		"signature":   resp.Signature.SignatureBytes,
+		"signedTx":    resp.SignedTx,
+		"from":        resp.From,
+		"status":      resp.Status,
+		"broadcasted": resp.Broadcasted,
+	})
+}
+
+func (s *server) handleBroadcast(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	var req BroadcastRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{
+			"error": "invalid request body",
+		})
+		return
+	}
+
+	if !s.signerRouter.IsValidChainId(req.ChainID) {
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{
+			"error": fmt.Sprintf("unsupported chain: %s", req.ChainID),
+		})
+		return
+	}
+
+	txHash, err := s.signerRouter.BroadcastTransaction(ctx, req.ChainID, []byte(req.SignedTx))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]interface{}{
+			"error":   err.Error(),
+			"chainId": req.ChainID,
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"txHash": txHash,
+		"status": "broadcasted",
+	})
+}
+
 func handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// MultiChainSignRequest is the request body for /sign-multi-chain.
+type MultiChainSignRequest struct {
+	ChainID  string                 `json:"chainId"`
+	Message  string                 `json:"message"`
+	Metadata map[string]interface{} `json:"metadata,omitempty"`
+}
+
+// BroadcastRequest is the request body for /broadcast.
+type BroadcastRequest struct {
+	ChainID string `json:"chainId"`
+	SignedTx string `json:"signedTx"`
 }
 
 func writeJSON(w http.ResponseWriter, status int, body interface{}) {
@@ -142,11 +241,22 @@ func main() {
 		log.Printf("connected to immudb at %s", immudbURL)
 	}
 
-	s := &server{signer: signer, audit: audit}
+	// Initialize multi-chain signer router
+	signerRouter := chains.NewSignerRouter()
+	log.Printf("Initialized signer router with chains: %v", signerRouter.SupportedChains())
+
+	s := &server{
+		signer:       signer,
+		audit:        audit,
+		signerRouter: signerRouter,
+		privKeyHex:   keyHex,
+	}
 
 	router := mux.NewRouter()
 	router.HandleFunc("/sign", s.handleSign).Methods(http.MethodPost)
 	router.HandleFunc("/address", s.handleAddress).Methods(http.MethodGet)
+	router.HandleFunc("/sign-multi-chain", s.handleSignMultiChain).Methods(http.MethodPost)
+	router.HandleFunc("/broadcast", s.handleBroadcast).Methods(http.MethodPost)
 	router.HandleFunc("/health", handleHealth).Methods(http.MethodGet)
 	router.Handle("/metrics", promhttp.Handler()).Methods(http.MethodGet)
 
