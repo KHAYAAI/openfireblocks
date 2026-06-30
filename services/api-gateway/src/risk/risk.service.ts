@@ -1,11 +1,19 @@
-import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
-import Redis from 'ioredis';
+import { Inject, Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
+import type { Redis } from 'ioredis';
+import { REDIS_CLIENT } from './risk.module';
 
 export interface VelocityDecision {
   allowed: boolean;
   count: number;
   limit: number;
   reason?: string;
+}
+
+// Minimal Redis surface the risk control needs (keeps it unit-testable).
+export interface RiskRedis {
+  incr(key: string): Promise<number>;
+  expire(key: string, seconds: number): Promise<unknown>;
+  quit(): Promise<unknown>;
 }
 
 // Per-tenant velocity limits (transactions per rolling hour) by tier.
@@ -19,26 +27,20 @@ const TIER_HOURLY_LIMITS: Record<string, number> = {
 // transactions in the current hour window and denies once the tier limit is hit.
 //
 // Behaviour:
-//   - REDIS_URL unset  → disabled (no-op, always allowed). Logged once.
-//   - Redis error      → fail-open (allow) with a warning + metric, so a Redis
-//     outage degrades the control rather than halting all signing. For
-//     high-assurance deployments set RISK_FAIL_CLOSED=true.
+//   - no Redis client  → disabled (no-op, always allowed).
+//   - Redis error      → fail-open (allow) with a warning, so a Redis outage
+//     degrades the control rather than halting all signing. Set
+//     RISK_FAIL_CLOSED=true to fail closed instead.
 @Injectable()
 export class RiskService implements OnModuleDestroy {
   private readonly logger = new Logger(RiskService.name);
-  private readonly redis: Redis | null;
   private readonly failClosed = process.env.RISK_FAIL_CLOSED === 'true';
 
-  constructor() {
-    const url = process.env.REDIS_URL;
-    if (!url) {
+  constructor(
+    @Inject(REDIS_CLIENT) private readonly redis: RiskRedis | null,
+  ) {
+    if (!redis) {
       this.logger.warn('REDIS_URL not set; velocity limiting disabled');
-      this.redis = null;
-    } else {
-      this.redis = new Redis(url, { lazyConnect: true, maxRetriesPerRequest: 1 });
-      this.redis.connect().catch((err) =>
-        this.logger.error(`redis connect failed: ${err.message}`),
-      );
     }
   }
 
@@ -86,8 +88,6 @@ export class RiskService implements OnModuleDestroy {
   }
 
   async onModuleDestroy() {
-    if (this.redis) {
-      await this.redis.quit().catch(() => undefined);
-    }
+    await (this.redis as Redis | null)?.quit().catch(() => undefined);
   }
 }
