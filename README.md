@@ -63,6 +63,7 @@ cd services/api-gateway && npm install && npm run start:dev && npm test
 
 ## Documentation
 
+- [Readiness brief](docs/readiness-brief.md) — capability + bank-readiness summary
 - [Architecture](docs/architecture.md)
 - [API reference](docs/api.md)
 - [Policies (OPA)](docs/policies.md)
