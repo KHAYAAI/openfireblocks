@@ -101,6 +101,22 @@ a sign request. Requires an RPC endpoint. Query params: `to` (required),
 
 Returns `503` when no RPC endpoint is configured.
 
+## Durable settlements (Temporal)
+
+For settlement that must survive crashes and support a human-approval step, use
+the durable workflow API instead of synchronous `/sign`. Requires the gateway to
+have `TEMPORAL_HOSTPORT` configured and a running temporal-worker; otherwise
+these return `503`.
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| POST | `/settlements` | Start a settlement workflow (same body as `/sign`). Returns `202` + `{ workflowId }` |
+| GET | `/settlements/:workflowId` | `{ workflowId, status, result? }` (result present when COMPLETED) |
+| POST | `/settlements/:workflowId/approve` | `{ approved: boolean }` — sends the approval signal for a high-value settlement |
+
+Workflow ids are namespaced per tenant; a customer can only see their own
+(others return `404`).
+
 ## GET /transactions
 
 List the authenticated tenant's transactions (most recent first).

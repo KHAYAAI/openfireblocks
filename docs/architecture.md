@@ -74,7 +74,9 @@ Two settlement paths exist:
    optional broadcast. Low latency; used for the p99 < 500ms SLO.
 2. **Durable** Temporal workflow — `policy → sign → broadcast → monitor` with
    retries, timeouts, confirmation tracking and a human-approval signal for
-   high-value transactions. Used when settlement finality must survive crashes.
+   high-value transactions. Started from the gateway via `POST /settlements`
+   (the gateway holds a lazy Temporal client) and executed by the
+   temporal-worker. Used when settlement finality must survive crashes.
 
 Both call the same policy-service and mpc-signer, so policy enforcement is
 identical regardless of path.

@@ -33,6 +33,12 @@ export interface PreparedTx {
   gasPrice?: string;
 }
 
+export interface SettlementStatus {
+  workflowId: string;
+  status: string;
+  result?: unknown;
+}
+
 export interface TransactionRecord {
   request_id: string;
   customer_id: string;
@@ -145,6 +151,31 @@ export class OpenFireblocksClient {
       'GET',
       `/transactions/${encodeURIComponent(requestId)}/audit`,
     );
+  }
+
+  // --- Durable settlements (Temporal-backed) ---
+
+  // Start a durable settlement workflow. Returns its workflow id.
+  startSettlement(req: SignRequest): Promise<{ workflowId: string }> {
+    return this.request<{ workflowId: string }>('POST', '/settlements', req);
+  }
+
+  // Get a settlement's status (and result once COMPLETED).
+  getSettlement(workflowId: string): Promise<SettlementStatus> {
+    return this.request<SettlementStatus>(
+      'GET',
+      `/settlements/${encodeURIComponent(workflowId)}`,
+    );
+  }
+
+  // Approve or reject a high-value settlement awaiting manual approval.
+  approveSettlement(
+    workflowId: string,
+    approved: boolean,
+  ): Promise<{ workflowId: string; approved: boolean }> {
+    return this.request('POST', `/settlements/${encodeURIComponent(workflowId)}/approve`, {
+      approved,
+    });
   }
 }
 

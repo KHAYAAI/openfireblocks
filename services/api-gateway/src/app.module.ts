@@ -6,6 +6,7 @@ import { SignModule } from './sign/sign.module';
 import { DatabaseModule } from './database/database.module';
 import { CustomersModule } from './customers/customers.module';
 import { BillingModule } from './billing/billing.module';
+import { SettlementsModule } from './settlements/settlements.module';
 import { MetricsModule } from './monitoring/metrics.module';
 import { MetricsInterceptor } from './monitoring/metrics.interceptor';
 
@@ -26,6 +27,7 @@ import { MetricsInterceptor } from './monitoring/metrics.interceptor';
     CustomersModule,
     BillingModule,
     SignModule,
+    SettlementsModule,
   ],
   controllers: [AppController],
   providers: [
