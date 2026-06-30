@@ -1,0 +1,21 @@
+OpenFireblocks {{ .Chart.AppVersion }} deployed as release "{{ .Release.Name }}".
+
+Components:
+{{- if .Values.apiGateway.enabled }}
+  - api-gateway     ({{ .Values.apiGateway.replicas }} replicas, autoscaling={{ .Values.apiGateway.autoscaling.enabled }})
+{{- end }}
+{{- if .Values.mpcSigner.enabled }}
+  - mpc-signer      ({{ .Values.mpcSigner.replicas }} replicas)
+{{- end }}
+{{- if .Values.policyService.enabled }}
+  - policy-service  ({{ .Values.policyService.replicas }} replicas)
+{{- end }}
+{{- if .Values.temporalWorker.enabled }}
+  - temporal-worker ({{ .Values.temporalWorker.replicas }} replicas)
+{{- end }}
+
+Reminder: create the "{{ .Values.external.databaseUrlSecret }}" secret before traffic
+(keys: database-url, admin-api-key[, vault-token]). See templates/secret.yaml.
+
+Reach the API:
+  kubectl port-forward svc/{{ include "ofb.fullname" . }}-api-gateway {{ .Values.apiGateway.port }}:{{ .Values.apiGateway.port }}

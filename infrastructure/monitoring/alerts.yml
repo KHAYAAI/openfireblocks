@@ -1,0 +1,46 @@
+# Alerting rules mirroring the Phase 1 SLOs.
+groups:
+  - name: openfireblocks-slos
+    rules:
+      - alert: MpcSigningErrorRateHigh
+        expr: |
+          sum(rate(mpc_sign_total{result="failed"}[5m]))
+            / clamp_min(sum(rate(mpc_sign_total[5m])), 1e-9) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "MPC signing error rate > 5%"
+          description: "More than 5% of MPC sign operations are failing over the last 5m."
+
+      - alert: BroadcastFailureRateHigh
+        expr: |
+          sum(rate(broadcast_errors_total[5m]))
+            / clamp_min(sum(rate(sign_requests_total[5m])), 1e-9) > 0.02
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Broadcast failure rate > 2%"
+          description: "More than 2% of sign requests are failing to broadcast over the last 5m."
+
+      - alert: PolicyDenialRateHigh
+        expr: |
+          sum(rate(policy_denials_total[15m]))
+            / clamp_min(sum(rate(sign_requests_total[15m])), 1e-9) > 0.10
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Policy denial rate > 10%"
+          description: "More than 10% of sign requests are being denied by policy — possible misconfiguration or abuse."
+
+      - alert: ApiLatencyP99High
+        expr: |
+          histogram_quantile(0.99, sum(rate(sign_latency_seconds_bucket[5m])) by (le)) > 0.5
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Sign latency p99 > 500ms"
+          description: "The p99 end-to-end signing latency SLO (500ms) is being violated."

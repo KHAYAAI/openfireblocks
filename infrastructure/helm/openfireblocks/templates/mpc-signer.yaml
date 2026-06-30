@@ -1,0 +1,78 @@
+{{- if .Values.mpcSigner.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ofb.fullname" . }}-mpc-signer
+  labels:
+    {{- include "ofb.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mpc-signer
+spec:
+  replicas: {{ .Values.mpcSigner.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: mpc-signer
+  template:
+    metadata:
+      labels:
+        {{- include "ofb.labels" . | nindent 8 }}
+        app.kubernetes.io/component: mpc-signer
+    spec:
+      serviceAccountName: {{ include "ofb.fullname" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: mpc-signer
+          image: {{ include "ofb.image" (dict "root" . "image" .Values.mpcSigner.image "tag" .Values.mpcSigner.tag) }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.mpcSigner.port }}
+          env:
+            - name: PORT
+              value: {{ .Values.mpcSigner.port | quote }}
+            {{- if .Values.mpcSigner.vault.addr }}
+            - name: VAULT_ADDR
+              value: {{ .Values.mpcSigner.vault.addr | quote }}
+            - name: VAULT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.mpcSigner.vault.tokenSecret }}
+                  key: vault-token
+            {{- end }}
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          resources:
+            {{- toYaml .Values.mpcSigner.resources | nindent 12 }}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/component: mpc-signer
+                topologyKey: kubernetes.io/hostname
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ofb.fullname" . }}-mpc-signer
+  labels:
+    {{- include "ofb.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mpc-signer
+spec:
+  selector:
+    app.kubernetes.io/component: mpc-signer
+  ports:
+    - name: http
+      port: {{ .Values.mpcSigner.port }}
+      targetPort: http
+{{- end }}

@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openfireblocks-config
+  namespace: openfireblocks
+data:
+  MPC_SIGNER_URL: "http://mpc-signer:8080"
+  POLICY_SERVICE_URL: "http://policy-service:8081"
+  TEMPORAL_HOSTPORT: "temporal-frontend:7233"
+  TEMPORAL_NAMESPACE: "default"
+  REQUIRED_CONFIRMATIONS: "6"
+  NODE_ENV: "production"
+  # Set to a real Sepolia/mainnet RPC URL to enable broadcasting.
+  ETHEREUM_RPC_SEPOLIA: ""

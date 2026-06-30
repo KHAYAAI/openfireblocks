@@ -1,0 +1,183 @@
+# Standalone Kubernetes deployments for the OpenFireblocks services.
+# For production prefer the Helm chart (../helm/openfireblocks); these raw
+# manifests are a self-contained alternative / reference.
+# Apply order: namespace.yaml, secrets.example.yaml, configmap.yaml, this file, services.yaml.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-gateway
+  namespace: openfireblocks
+  labels:
+    app.kubernetes.io/part-of: openfireblocks
+    app.kubernetes.io/component: api-gateway
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: api-gateway
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: openfireblocks
+        app.kubernetes.io/component: api-gateway
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+        - name: api-gateway
+          image: openfireblocks/api-gateway:latest
+          ports:
+            - name: http
+              containerPort: 3000
+          envFrom:
+            - configMapRef:
+                name: openfireblocks-config
+          env:
+            - name: PORT
+              value: "3000"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: openfireblocks-secrets
+                  key: database-url
+            - name: ADMIN_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: openfireblocks-secrets
+                  key: admin-api-key
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 250m, memory: 512Mi }
+            limits: { cpu: "1", memory: 1Gi }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mpc-signer
+  namespace: openfireblocks
+  labels:
+    app.kubernetes.io/part-of: openfireblocks
+    app.kubernetes.io/component: mpc-signer
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: mpc-signer
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: openfireblocks
+        app.kubernetes.io/component: mpc-signer
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+        - name: mpc-signer
+          image: openfireblocks/mpc-signer:latest
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: PORT
+              value: "8080"
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 250m, memory: 256Mi }
+            limits: { cpu: "1", memory: 512Mi }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: policy-service
+  namespace: openfireblocks
+  labels:
+    app.kubernetes.io/part-of: openfireblocks
+    app.kubernetes.io/component: policy-service
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: policy-service
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: openfireblocks
+        app.kubernetes.io/component: policy-service
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+        - name: policy-service
+          image: openfireblocks/policy-service:latest
+          ports:
+            - name: http
+              containerPort: 8081
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { cpu: 500m, memory: 256Mi }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: temporal-worker
+  namespace: openfireblocks
+  labels:
+    app.kubernetes.io/part-of: openfireblocks
+    app.kubernetes.io/component: temporal-worker
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: temporal-worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: openfireblocks
+        app.kubernetes.io/component: temporal-worker
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+        - name: temporal-worker
+          image: openfireblocks/temporal-worker:latest
+          envFrom:
+            - configMapRef:
+                name: openfireblocks-config
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { cpu: 500m, memory: 256Mi }

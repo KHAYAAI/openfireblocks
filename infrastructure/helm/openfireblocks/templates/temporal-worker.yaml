@@ -1,0 +1,44 @@
+{{- if .Values.temporalWorker.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ofb.fullname" . }}-temporal-worker
+  labels:
+    {{- include "ofb.labels" . | nindent 4 }}
+    app.kubernetes.io/component: temporal-worker
+spec:
+  replicas: {{ .Values.temporalWorker.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: temporal-worker
+  template:
+    metadata:
+      labels:
+        {{- include "ofb.labels" . | nindent 8 }}
+        app.kubernetes.io/component: temporal-worker
+    spec:
+      serviceAccountName: {{ include "ofb.fullname" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: temporal-worker
+          image: {{ include "ofb.image" (dict "root" . "image" .Values.temporalWorker.image "tag" .Values.temporalWorker.tag) }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          env:
+            - name: TEMPORAL_HOSTPORT
+              value: {{ .Values.external.temporalHostPort | quote }}
+            - name: TEMPORAL_NAMESPACE
+              value: {{ .Values.external.temporalNamespace | quote }}
+            - name: POLICY_SERVICE_URL
+              value: http://{{ include "ofb.fullname" . }}-policy-service:{{ .Values.policyService.port }}
+            - name: MPC_SIGNER_URL
+              value: http://{{ include "ofb.fullname" . }}-mpc-signer:{{ .Values.mpcSigner.port }}
+            - name: ETHEREUM_RPC_SEPOLIA
+              value: {{ .Values.external.ethereumRpcSepolia | quote }}
+            - name: REQUIRED_CONFIRMATIONS
+              value: {{ .Values.external.requiredConfirmations | quote }}
+          resources:
+            {{- toYaml .Values.temporalWorker.resources | nindent 12 }}
+{{- end }}

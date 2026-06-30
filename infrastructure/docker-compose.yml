@@ -1,8 +1,9 @@
-# OpenFireblocks Phase 0 local development stack.
+# OpenFireblocks local development stack.
 # Run from this directory:  docker compose up -d --build
 #
-# Brings up PostgreSQL (audit + tx metadata), immudb (immutable ledger),
-# Redis (reserved for Phase 1), the Go MPC signer and the NestJS API gateway.
+# Phase 0 core:   postgres, immudb, redis, mpc-signer, api
+# Phase 1 adds:   vault, policy-service, temporal (+ UI), temporal-worker,
+#                 prometheus, grafana
 
 services:
   postgres:
@@ -26,12 +27,10 @@ services:
   immudb:
     image: codenotary/immudb:1.9.5
     ports:
-      - "3322:3322" # gRPC API
-      - "9497:9497" # metrics
+      - "3322:3322"
+      - "9497:9497"
     environment:
       IMMUDB_ADMIN_PASSWORD: immudb
-    # immudb's image is distroless (no shell/curl), so we rely on the signer's
-    # built-in retry/degrade behaviour rather than a container healthcheck.
 
   redis:
     image: redis:7-alpine
@@ -42,6 +41,50 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+
+  # HashiCorp Vault in dev mode (root token = "root"). Dev mode is in-memory and
+  # resets on restart — never use for anything but local development.
+  vault:
+    image: hashicorp/vault:1.17
+    cap_add:
+      - IPC_LOCK
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: root
+      VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+    ports:
+      - "8200:8200"
+
+  # Temporal server (auto-setup creates its schemas in the shared postgres).
+  temporal:
+    image: temporalio/auto-setup:1.25.2
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB: postgres12
+      DB_PORT: "5432"
+      POSTGRES_USER: app
+      POSTGRES_PWD: dev-only
+      POSTGRES_SEEDS: postgres
+    ports:
+      - "7233:7233"
+
+  temporal-ui:
+    image: temporalio/ui:2.31.2
+    depends_on:
+      - temporal
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_CORS_ORIGINS: http://localhost:3000
+    ports:
+      - "8088:8080"
+
+  policy-service:
+    build:
+      context: ../services/policy-service
+      dockerfile: Dockerfile
+    ports:
+      - "8081:8081"
 
   mpc-signer:
     build:
@@ -54,10 +97,28 @@ services:
       IMMUDB_URL: immudb:3322
       IMMUDB_USER: immudb
       IMMUDB_PASSWORD: immudb
-      # Optional: pin a stable signer address across restarts (testnet only).
       MPC_SIGNER_PRIVATE_KEY: ${MPC_SIGNER_PRIVATE_KEY:-}
+      # To source the key from Vault instead, set:
+      #   VAULT_ADDR: http://vault:8200
+      #   VAULT_TOKEN: root
     depends_on:
       - immudb
+
+  temporal-worker:
+    build:
+      context: ../services/temporal-worker
+      dockerfile: Dockerfile
+    environment:
+      TEMPORAL_HOSTPORT: temporal:7233
+      TEMPORAL_NAMESPACE: default
+      POLICY_SERVICE_URL: http://policy-service:8081
+      MPC_SIGNER_URL: http://mpc-signer:8080
+      ETHEREUM_RPC_SEPOLIA: ${ETHEREUM_RPC_SEPOLIA:-}
+      REQUIRED_CONFIRMATIONS: "3"
+    depends_on:
+      - temporal
+      - policy-service
+      - mpc-signer
 
   api:
     build:
@@ -69,14 +130,41 @@ services:
       PORT: "3000"
       DATABASE_URL: postgresql://app:dev-only@postgres:5432/openfireblocks
       MPC_SIGNER_URL: http://mpc-signer:8080
-      # Set to a real Sepolia RPC URL to enable on-chain broadcasting.
+      POLICY_SERVICE_URL: http://policy-service:8081
       ETHEREUM_RPC_SEPOLIA: ${ETHEREUM_RPC_SEPOLIA:-}
+      ADMIN_API_KEY: ${ADMIN_API_KEY:-dev-admin-key}
       NODE_ENV: production
     depends_on:
       postgres:
         condition: service_healthy
       mpc-signer:
         condition: service_started
+      policy-service:
+        condition: service_started
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro
+    ports:
+      - "9090:9090"
+    depends_on:
+      - api
+      - mpc-signer
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3001:3000"
+    depends_on:
+      - prometheus
 
 volumes:
   postgres_data:
