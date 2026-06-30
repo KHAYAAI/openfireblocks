@@ -100,7 +100,9 @@ The audit trail for one of the tenant's transactions.
 ## Observability
 
 - `GET /health` → `{ "status": "ok", "service": "api-gateway" }`
+- `GET /health/ready` → readiness (checks PostgreSQL; 503 when not ready)
 - `GET /metrics` → Prometheus exposition (unauthenticated; restrict by network policy)
+- `GET /docs` → Swagger UI (OpenAPI JSON at `/docs-json`)
 
 ---
 
