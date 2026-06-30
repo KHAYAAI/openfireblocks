@@ -5,7 +5,7 @@ go 1.24
 
 require (
 	github.com/ethereum/go-ethereum v1.14.11
-	github.com/stretchr/testify v1.9.0
+	github.com/stretchr/testify v1.11.1
 	go.temporal.io/sdk v1.29.1
 )
 
