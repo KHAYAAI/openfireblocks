@@ -20,7 +20,9 @@ openfireblocks/
 │   ├── policy-service/   # Go + OPA/Rego: amount/whitelist/approval/geo policies
 │   └── temporal-worker/  # Go: durable settlement workflow (policy→sign→broadcast→monitor)
 ├── sdks/
-│   └── sdk-js/           # TypeScript client SDK
+│   ├── sdk-js/           # TypeScript client SDK
+│   ├── sdk-go/           # Go client SDK
+│   └── sdk-python/       # Python client SDK
 ├── infrastructure/       # docker-compose, init SQL, K8s manifests, Helm chart, monitoring
 ├── contracts/            # Solidity (Phase 2+; placeholder)
 ├── docs/                 # architecture, API, policies, deployment, security, checklists
