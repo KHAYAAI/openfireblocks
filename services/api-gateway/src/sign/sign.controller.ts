@@ -7,6 +7,7 @@ import {
   NotFoundException,
   Param,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { SignService } from './sign.service';
@@ -16,6 +17,7 @@ import { CurrentCustomer } from '../auth/current-customer.decorator';
 import { Customer } from '../customers/customer.service';
 import { PostgresService } from '../database/postgres.service';
 import { AuditService } from '../database/audit.service';
+import { PrepareService } from '../blockchain/prepare.service';
 
 // Tenant-facing signing + read API. Every route requires a valid API key and is
 // scoped to the authenticated customer.
@@ -26,6 +28,7 @@ export class SignController {
     private readonly signService: SignService,
     private readonly postgres: PostgresService,
     private readonly audit: AuditService,
+    private readonly prepare: PrepareService,
   ) {}
 
   @Post('sign')
@@ -35,6 +38,17 @@ export class SignController {
     @Body() req: SignRequestDto,
   ) {
     return this.signService.sign(customer, req);
+  }
+
+  // Suggests nonce/gas/fees (from live network data) for building a sign
+  // request. Requires an RPC endpoint to be configured.
+  @Get('prepare')
+  async prepareTx(
+    @Query('to') to: string,
+    @Query('data') data?: string,
+    @Query('value') value?: string,
+  ) {
+    return this.prepare.prepare({ to, data, value });
   }
 
   @Get('transactions')

@@ -23,6 +23,16 @@ export interface SignResult {
   broadcasted: boolean;
 }
 
+export interface PreparedTx {
+  from: string;
+  chainId: number;
+  nonce: number;
+  gasLimit: number;
+  maxFeePerGas?: string;
+  maxPriorityFeePerGas?: string;
+  gasPrice?: string;
+}
+
 export interface TransactionRecord {
   request_id: string;
   customer_id: string;
@@ -105,6 +115,18 @@ export class OpenFireblocksClient {
   // Sign (and optionally broadcast) a transaction.
   sign(req: SignRequest): Promise<SignResult> {
     return this.request<SignResult>('POST', '/sign', req);
+  }
+
+  // Suggest nonce/gas/fees for building a sign request (requires server RPC).
+  prepare(params: {
+    to: string;
+    data?: string;
+    value?: string;
+  }): Promise<PreparedTx> {
+    const q = new URLSearchParams({ to: params.to });
+    if (params.data) q.set('data', params.data);
+    if (params.value) q.set('value', params.value);
+    return this.request<PreparedTx>('GET', `/prepare?${q.toString()}`);
   }
 
   listTransactions(): Promise<TransactionRecord[]> {

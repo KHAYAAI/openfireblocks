@@ -51,4 +51,25 @@ export class EthereumService {
     if (!this.provider) throw new Error('Ethereum RPC not configured');
     return this.provider.getTransactionCount(address, 'pending');
   }
+
+  async getChainId(): Promise<number> {
+    if (!this.provider) throw new Error('Ethereum RPC not configured');
+    const net = await this.provider.getNetwork();
+    return Number(net.chainId);
+  }
+
+  async estimateGas(tx: {
+    from?: string;
+    to: string;
+    data?: string;
+    value?: string;
+  }): Promise<bigint> {
+    if (!this.provider) throw new Error('Ethereum RPC not configured');
+    return this.provider.estimateGas({
+      from: tx.from,
+      to: tx.to,
+      data: tx.data && tx.data !== '' ? tx.data : '0x',
+      value: tx.value ? BigInt(tx.value) : 0n,
+    });
+  }
 }

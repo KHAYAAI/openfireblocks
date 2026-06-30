@@ -81,6 +81,26 @@ Returned for validation failures (bad address, gasLimit < 21000, unknown fields)
 { "error": "policy denied", "denials": ["pro tier limited to 50 ETH per transaction"], "requiresApproval": false, "requestId": "uuid" }
 ```
 
+## GET /prepare
+
+Suggest `nonce`, `gasLimit` and fee fields (from live network data) for building
+a sign request. Requires an RPC endpoint. Query params: `to` (required),
+`data`, `value`.
+
+```json
+{
+  "from": "0x...",
+  "chainId": 11155111,
+  "nonce": 4,
+  "gasLimit": 21000,
+  "maxFeePerGas": "30000000000",
+  "maxPriorityFeePerGas": "2000000000",
+  "gasPrice": "25000000000"
+}
+```
+
+Returns `503` when no RPC endpoint is configured.
+
 ## GET /transactions
 
 List the authenticated tenant's transactions (most recent first).
