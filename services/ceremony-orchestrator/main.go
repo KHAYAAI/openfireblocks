@@ -8,24 +8,29 @@ import (
 	"os"
 
 	"github.com/gin-gonic/gin"
+	"go.temporal.io/sdk/client"
 )
 
 // CeremonyOrchestrator manages distributed key generation ceremonies.
 type CeremonyOrchestrator struct {
-	db     *PostgresDB
-	vault  *VaultClient
-	router *gin.Engine
+	db              *PostgresDB
+	vault           *VaultClient
+	temporalClient  client.Client
+	temporalTaskQueue string
+	router          *gin.Engine
 }
 
 // NewCeremonyOrchestrator creates a new orchestrator.
-func NewCeremonyOrchestrator() *CeremonyOrchestrator {
+func NewCeremonyOrchestrator(temporalClient client.Client) *CeremonyOrchestrator {
 	db := NewPostgresDB()
 	vault := NewVaultClient()
 
 	return &CeremonyOrchestrator{
-		db:     db,
-		vault:  vault,
-		router: gin.Default(),
+		db:                db,
+		vault:             vault,
+		temporalClient:    temporalClient,
+		temporalTaskQueue: "transaction-settlement",
+		router:            gin.Default(),
 	}
 }
 
@@ -57,12 +62,20 @@ func (co *CeremonyOrchestrator) createCeremony(c *gin.Context) {
 		return
 	}
 
+	// Extract customer ID from request context (set by auth middleware)
+	customerID, ok := c.Get("customerId")
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "missing customer ID"})
+		return
+	}
+
 	// Create ceremony in DB
 	ceremony := &Ceremony{
-		ChainID: req.ChainID,
-		N:       req.N,
-		K:       req.K,
-		Status:  CeremonyPending,
+		CustomerID: customerID.(string),
+		ChainID:    req.ChainID,
+		N:          req.N,
+		K:          req.K,
+		Status:     CeremonyPending,
 	}
 
 	id, err := co.db.CreateCeremony(c.Request.Context(), ceremony)
@@ -72,12 +85,35 @@ func (co *CeremonyOrchestrator) createCeremony(c *gin.Context) {
 		return
 	}
 
-	// TODO: trigger Temporal workflow to start DKG
+	// Start Temporal DKG workflow
+	workflowOptions := client.StartWorkflowOptions{
+		ID:        "ceremony_" + id,
+		TaskQueue: co.temporalTaskQueue,
+	}
+
+	dkgReq := map[string]interface{}{
+		"customerId":    customerID.(string),
+		"ceremonyId":    id,
+		"chainId":       req.ChainID,
+		"n":             req.N,
+		"k":             req.K,
+		"partyIds":      req.PartyIDs,
+		"partyEndpoints": req.PartyEndpoints,
+	}
+
+	we, err := co.temporalClient.ExecuteWorkflow(c.Request.Context(), workflowOptions, "DKGCeremonyWorkflow", dkgReq)
+	if err != nil {
+		log.Printf("failed to start DKG workflow: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to start ceremony"})
+		return
+	}
+
+	log.Printf("DKG workflow started: %s", we.GetID())
 
 	c.JSON(http.StatusCreated, CreateCeremonyResponse{
 		ID:      id,
 		Status:  CeremonyPending,
-		Message: "Ceremony initiated. Awaiting parties.",
+		Message: "Ceremony initiated. DKG workflow started.",
 	})
 }
 
@@ -160,7 +196,29 @@ func main() {
 		port = "7001"
 	}
 
-	co := NewCeremonyOrchestrator()
+	// Connect to Temporal
+	temporalHostPort := os.Getenv("TEMPORAL_HOSTPORT")
+	if temporalHostPort == "" {
+		temporalHostPort = "localhost:7233"
+	}
+
+	temporalNamespace := os.Getenv("TEMPORAL_NAMESPACE")
+	if temporalNamespace == "" {
+		temporalNamespace = "default"
+	}
+
+	temporalClient, err := client.Dial(client.Options{
+		HostPort:  temporalHostPort,
+		Namespace: temporalNamespace,
+	})
+	if err != nil {
+		log.Fatalf("failed to connect to Temporal: %v", err)
+	}
+	defer temporalClient.Close()
+
+	log.Printf("connected to Temporal at %s/%s", temporalHostPort, temporalNamespace)
+
+	co := NewCeremonyOrchestrator(temporalClient)
 	if err := co.Start(port); err != nil {
 		log.Fatalf("failed to start: %v", err)
 	}

@@ -54,10 +54,20 @@ func main() {
 	)
 
 	w := worker.New(c, taskQueue, worker.Options{})
+
+	// Phase 1: Transaction settlement workflows
 	w.RegisterWorkflow(workflows.TransactionSettlementWorkflow)
+
+	// Phase 2: DKG ceremony workflows
+	w.RegisterWorkflow(workflows.DKGCeremonyWorkflow)
+	w.RegisterWorkflow(workflows.ThresholdSigningWorkflow)
+	w.RegisterWorkflow(workflows.KeyRotationWorkflow)
+
+	// Register all activities
 	w.RegisterActivity(acts)
 
 	log.Printf("temporal-worker polling task queue %q at %s/%s", taskQueue, hostPort, namespace)
+	log.Printf("registered workflows: TransactionSettlement, DKGCeremony, ThresholdSigning, KeyRotation")
 	if err := w.Run(worker.InterruptCh()); err != nil {
 		log.Fatalf("worker stopped: %v", err)
 	}
