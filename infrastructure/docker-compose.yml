@@ -131,11 +131,14 @@ services:
       DATABASE_URL: postgresql://app:dev-only@postgres:5432/openfireblocks
       MPC_SIGNER_URL: http://mpc-signer:8080
       POLICY_SERVICE_URL: http://policy-service:8081
+      REDIS_URL: redis://redis:6379
       ETHEREUM_RPC_SEPOLIA: ${ETHEREUM_RPC_SEPOLIA:-}
       ADMIN_API_KEY: ${ADMIN_API_KEY:-dev-admin-key}
       NODE_ENV: production
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
       mpc-signer:
         condition: service_started

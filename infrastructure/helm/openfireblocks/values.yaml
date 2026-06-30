@@ -23,6 +23,7 @@ external:
   temporalNamespace: default
   ethereumRpcSepolia: "" # set to enable broadcasting
   requiredConfirmations: "6"
+  redisUrl: "" # e.g. redis://redis-master:6379 — empty disables velocity limiting
 
 # Static admin token for customer provisioning (replace with Keycloak in prod).
 adminApiKeySecret: openfireblocks-secrets # secret holding key "admin-api-key"

@@ -5,6 +5,7 @@ import { SignService } from './sign.service';
 import { EthereumService } from '../blockchain/ethereum.service';
 import { CustomersModule } from '../customers/customers.module';
 import { PolicyModule } from '../policies/policy.module';
+import { RiskModule } from '../risk/risk.module';
 
 // Bundles the tenant-facing signing API with its MPC-signer HTTP client, the
 // Ethereum broadcast service, tenant auth (CustomersModule) and policy checks.
@@ -14,6 +15,7 @@ import { PolicyModule } from '../policies/policy.module';
     HttpModule.register({ timeout: 10000 }),
     CustomersModule,
     PolicyModule,
+    RiskModule,
   ],
   controllers: [SignController],
   providers: [SignService, EthereumService],

@@ -61,6 +61,8 @@ spec:
               value: http://{{ include "ofb.fullname" . }}-policy-service:{{ .Values.policyService.port }}
             - name: ETHEREUM_RPC_SEPOLIA
               value: {{ .Values.external.ethereumRpcSepolia | quote }}
+            - name: REDIS_URL
+              value: {{ .Values.external.redisUrl | quote }}
           livenessProbe:
             httpGet: { path: /health, port: http }
             initialDelaySeconds: 10

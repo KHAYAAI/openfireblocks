@@ -35,6 +35,13 @@ export class MetricsService {
     registers: [this.registry],
   });
 
+  readonly riskDenials = new Counter({
+    name: 'risk_denials_total',
+    help: 'Total risk/velocity denials',
+    labelNames: ['reason'] as const,
+    registers: [this.registry],
+  });
+
   readonly broadcastErrors = new Counter({
     name: 'broadcast_errors_total',
     help: 'Total broadcast errors',

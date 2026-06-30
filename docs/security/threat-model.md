@@ -29,7 +29,8 @@ temporal-worker) and its data stores. Methodology: STRIDE per trust boundary.
 | **Repudiation** | "I didn't authorize this" | Per-tenant audit trail of every lifecycle event with request ids. |
 | **Information disclosure** | Key leakage | Keys live only in Vault / signer memory; never logged, never returned by the API. Containers run read-only, non-root. |
 | **Information disclosure** | Cross-tenant data read | All queries scoped by `customer_id`; RLS scaffolding available; tenant-scoped read endpoints. |
-| **Denial of service** | Request flood | Rate limiting at the gateway/ingress (Kong/Envoy) — **to be enabled**; HPA for capacity. |
+| **Denial of service** | Request flood | Per-IP rate limiting (in-app throttler) + HPA for capacity; edge WAF (Kong/Envoy) still to be enabled. |
+| **Abuse / fraud** | Rapid drain via many txns | Per-tenant velocity limits (Redis, tier-based hourly caps), audited + metered. |
 | **Elevation of privilege** | Bypass policy | Policy check is mandatory and fail-closed in the gateway and the workflow before any signing. |
 
 ## Known gaps (tracked for Phase 2/3)

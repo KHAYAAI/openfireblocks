@@ -6,6 +6,7 @@ metadata:
 data:
   MPC_SIGNER_URL: "http://mpc-signer:8080"
   POLICY_SERVICE_URL: "http://policy-service:8081"
+  REDIS_URL: "redis://redis:6379"
   TEMPORAL_HOSTPORT: "temporal-frontend:7233"
   TEMPORAL_NAMESPACE: "default"
   REQUIRED_CONFIRMATIONS: "6"

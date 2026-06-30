@@ -14,8 +14,10 @@ Status legend: ✅ done · 🟡 partial · ⬜ not started
 - ✅ Admin endpoints behind a separate fail-closed admin token
 - ✅ Strict request validation (reject unknown fields)
 - ✅ Fail-closed policy enforcement before signing
-- ⬜ API keys hashed at rest (bcrypt/argon2)
-- ⬜ Rate limiting / WAF enabled (Kong/Envoy)
+- ✅ Per-tenant velocity limiting (Redis, tier-based hourly caps)
+- ✅ API keys hashed at rest (SHA-256; plaintext shown once)
+- 🟡 Rate limiting (per-IP throttler in-app; WAF/Kong at the edge still ⬜)
+- ✅ Security headers (helmet)
 - ⬜ External penetration test
 
 ## Tenant isolation & data

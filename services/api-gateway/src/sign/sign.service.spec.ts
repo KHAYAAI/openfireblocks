@@ -7,6 +7,7 @@ import { PostgresService } from '../database/postgres.service';
 import { AuditService } from '../database/audit.service';
 import { EthereumService } from '../blockchain/ethereum.service';
 import { PolicyService } from '../policies/policy.service';
+import { RiskService } from '../risk/risk.service';
 import { MetricsService } from '../monitoring/metrics.service';
 import { Customer } from '../customers/customer.service';
 import { SignRequestDto } from './dto/sign-request.dto';
@@ -18,6 +19,7 @@ describe('SignService', () => {
   let audit: { logEvent: jest.Mock };
   let postgres: { saveTransaction: jest.Mock; updateStatus: jest.Mock };
   let policy: { evaluate: jest.Mock };
+  let risk: { checkAndRecord: jest.Mock };
 
   const mpcResponse = {
     data: {
@@ -64,6 +66,11 @@ describe('SignService', () => {
       updateStatus: jest.fn().mockResolvedValue(undefined),
     };
     policy = { evaluate: jest.fn().mockResolvedValue(approve()) };
+    risk = {
+      checkAndRecord: jest
+        .fn()
+        .mockResolvedValue({ allowed: true, count: 1, limit: 100 }),
+    };
 
     const moduleRef = await Test.createTestingModule({
       providers: [
@@ -74,6 +81,7 @@ describe('SignService', () => {
         { provide: AuditService, useValue: audit },
         { provide: EthereumService, useValue: ethereum },
         { provide: PolicyService, useValue: policy },
+        { provide: RiskService, useValue: risk },
       ],
     }).compile();
 
@@ -125,5 +133,22 @@ describe('SignService', () => {
     expect(postgres.saveTransaction).not.toHaveBeenCalled();
     const auditedTypes = audit.logEvent.mock.calls.map((c) => c[0].type);
     expect(auditedTypes).toContain('POLICY_DENIED');
+  });
+
+  it('denies and does not sign when velocity limit is exceeded', async () => {
+    const service = await build({ canBroadcast: false });
+    risk.checkAndRecord.mockResolvedValueOnce({
+      allowed: false,
+      count: 101,
+      limit: 100,
+      reason: 'velocity limit exceeded',
+    });
+
+    await expect(service.sign(customer, validReq)).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+    expect(postgres.saveTransaction).not.toHaveBeenCalled();
+    const auditedTypes = audit.logEvent.mock.calls.map((c) => c[0].type);
+    expect(auditedTypes).toContain('RISK_DENIED');
   });
 });

@@ -11,6 +11,7 @@ import { PostgresService } from '../database/postgres.service';
 import { AuditService } from '../database/audit.service';
 import { EthereumService } from '../blockchain/ethereum.service';
 import { PolicyService } from '../policies/policy.service';
+import { RiskService } from '../risk/risk.service';
 import { MetricsService } from '../monitoring/metrics.service';
 import { Customer } from '../customers/customer.service';
 import { SignRequestDto } from './dto/sign-request.dto';
@@ -48,6 +49,7 @@ export class SignService {
     private readonly audit: AuditService,
     private readonly ethereum: EthereumService,
     private readonly policy: PolicyService,
+    private readonly risk: RiskService,
     private readonly metrics: MetricsService,
   ) {}
 
@@ -94,6 +96,25 @@ export class SignService {
           error: 'policy denied',
           denials: decision.denials,
           requiresApproval: decision.requiresApproval,
+          requestId,
+        });
+      }
+
+      // 1b. Velocity / risk control (per-tenant hourly transaction limit).
+      const velocity = await this.risk.checkAndRecord(customerId, customer.tier);
+      if (!velocity.allowed) {
+        this.metrics.riskDenials.inc({ reason: 'velocity' });
+        await this.audit.logEvent({
+          type: 'RISK_DENIED',
+          requestId,
+          customerId,
+          message: velocity.reason,
+          status: 'denied',
+        });
+        this.metrics.signRequests.inc({ status: 'denied', chain: 'ethereum' });
+        throw new ForbiddenException({
+          error: 'risk denied',
+          reason: velocity.reason,
           requestId,
         });
       }
