@@ -1,11 +1,15 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe, Logger } from '@nestjs/common';
+import helmet from 'helmet';
 import { AppModule } from './app.module';
 
 // Bootstraps the NestJS API gateway. Enables strict request validation so
 // malformed sign requests are rejected before they reach the MPC signer.
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+
+  // Security headers (HSTS, no-sniff, frameguard, etc.).
+  app.use(helmet());
 
   app.useGlobalPipes(
     new ValidationPipe({

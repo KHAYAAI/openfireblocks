@@ -2,6 +2,7 @@ import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { Pool } from 'pg';
 import { randomUUID } from 'crypto';
 import { PG_POOL } from '../database/database.module';
+import { generateApiKey, hashApiKey } from '../auth/api-key.util';
 
 export interface Customer {
   id: number;
@@ -19,30 +20,33 @@ export interface Customer {
 export class CustomerService {
   constructor(@Inject(PG_POOL) private readonly pool: Pool) {}
 
+  // Creates a tenant. The plaintext API key is returned exactly once (as
+  // `api_key`); only its SHA-256 hash is persisted.
   async createCustomer(input: {
     customerId?: string;
     email: string;
     tier?: string;
   }): Promise<Customer> {
     const customerId = input.customerId ?? randomUUID();
-    const apiKey = `ofb_${randomUUID().replace(/-/g, '')}`;
+    const plaintextKey = generateApiKey();
 
     const result = await this.pool.query(
       `INSERT INTO customers (customer_id, email, api_key, status, tier)
        VALUES ($1, $2, $3, 'active', $4)
-       RETURNING id, customer_id, email, api_key, status, tier, policies`,
-      [customerId, input.email, apiKey, input.tier ?? 'free'],
+       RETURNING id, customer_id, email, status, tier, policies`,
+      [customerId, input.email, hashApiKey(plaintextKey), input.tier ?? 'free'],
     );
-    return result.rows[0];
+    // Surface the plaintext key to the caller; it is never retrievable again.
+    return { ...result.rows[0], api_key: plaintextKey };
   }
 
-  // Looks up an active customer by API key. Returns null when missing/suspended
-  // so the auth guard can reject without leaking which case occurred.
+  // Looks up an active customer by API key (hashed before lookup). Returns null
+  // when missing/suspended so the auth guard can reject without leaking which.
   async getByApiKey(apiKey: string): Promise<Customer | null> {
     const result = await this.pool.query(
       `SELECT id, customer_id, email, api_key, status, tier, policies
        FROM customers WHERE api_key = $1 AND status = 'active'`,
-      [apiKey],
+      [hashApiKey(apiKey)],
     );
     return result.rows[0] ?? null;
   }
