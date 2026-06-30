@@ -40,7 +40,8 @@ Status legend: ✅ done · 🟡 partial · ⬜ not started
 ## Compliance
 - ⬜ SOC 2 Type II
 - ⬜ ISO 27001
-- ⬜ AML/KYC + OFAC sanctions screening
+- 🟡 OFAC sanctions screening (address denylist enforced in policy-service;
+  needs an automated feed sync + AML/KYC onboarding)
 - ⬜ Regulatory reporting (SAR/CTR; POPIA/SARS for ZA)
 
 ## Go/No-go

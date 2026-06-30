@@ -74,6 +74,14 @@ func TestPolicyEvaluation(t *testing.T) {
 			wantApproved: false,
 		},
 		{
+			name: "sanctioned destination denied (case-insensitive)",
+			req: PolicyRequest{
+				CustomerTier: "enterprise", Value: "1000",
+				To: "0x8589427373d6d84e98730d7795d8f6f8731fda16",
+			},
+			wantApproved: false,
+		},
+		{
 			name:             "high value over 10 ETH flags approval",
 			req:              PolicyRequest{CustomerTier: "enterprise", Value: tenEth + "1", To: "0xabc"},
 			wantApproved:     true,

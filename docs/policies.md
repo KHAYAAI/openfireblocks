@@ -41,6 +41,15 @@ treats only `approved` as gating.
 | Approval | Flag `> 10 ETH` for manual approval |
 | Whitelist | When a tenant supplies a non-empty `whitelist`, deny recipients not on it (case-insensitive) |
 | Geographic | Deny when `country` is in the tenant's `blockedCountries` |
+| Sanctions | Deny when `to` is on the sanctions list (`data.sanctions.addresses`, loaded from `sanctions.json`) |
+
+## Sanctions list
+
+`services/policy-service/sanctions.json` holds the screened address list, loaded
+into OPA as `data.sanctions.addresses` at startup. The bundled file is a
+**sample** — in production sync it from the official OFAC SDN crypto-address feed
+(and any local-jurisdiction lists) on a schedule and redeploy, or move it to a
+mounted ConfigMap / external data source for hot updates.
 
 Per-tenant `whitelist` / `blockedCountries` come from the customer's `policies`
 JSON (set via `PUT /admin/customers/:id/policies`).

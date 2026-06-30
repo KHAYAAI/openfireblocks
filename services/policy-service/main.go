@@ -12,7 +12,11 @@ import (
 	"time"
 
 	"github.com/open-policy-agent/opa/rego"
+	"github.com/open-policy-agent/opa/storage/inmem"
 )
+
+//go:embed sanctions.json
+var sanctionsJSON []byte
 
 // policy-service evaluates OPA/Rego policies for every transaction the platform
 // is asked to sign. The api-gateway calls POST /evaluate before signing; this
@@ -65,7 +69,14 @@ func newEvaluator(ctx context.Context) (*evaluator, error) {
 		modules[name] = string(content)
 	}
 
-	opts := []func(*rego.Rego){rego.Query("data.policies")}
+	// Load the sanctions list as OPA data (data.sanctions.addresses).
+	var sanctions map[string]interface{}
+	if err := json.Unmarshal(sanctionsJSON, &sanctions); err != nil {
+		return nil, fmt.Errorf("invalid sanctions.json: %w", err)
+	}
+	store := inmem.NewFromObject(map[string]interface{}{"sanctions": sanctions})
+
+	opts := []func(*rego.Rego){rego.Query("data.policies"), rego.Store(store)}
 	for name, src := range modules {
 		opts = append(opts, rego.Module(name, src))
 	}
