@@ -92,15 +92,22 @@ func (a *Activities) ExecuteDKGRound(ctx context.Context, req workflows.DKGRound
 func (a *Activities) SealKeyShares(ctx context.Context, req workflows.SealKeySharesRequest) (*workflows.SealKeySharesResult, error) {
 	logger := activity.GetLogger(ctx)
 
-	logger.Info("sealing key shares", "ceremonyId", req.CeremonyID, "customerid", req.CustomerID, "partyCount", len(req.PartyIDs))
+	logger.Info("sealing key shares", "ceremonyId", req.CeremonyID, "customerId", req.CustomerID, "partyCount", len(req.PartyIDs))
 
 	// TODO: Implement key share sealing
 	// This would involve:
-	// 1. Retrieving key shares from orchestrator DB
+	// 1. Retrieving key shares from orchestrator DB (from ceremony_parties table)
 	// 2. Encrypting and sealing in Vault under path:
 	//    secret/customers/{customerId}/ceremonies/{ceremonyId}/party/{partyId}
-	// 3. Audit logging every Vault operation
-	// 4. Verifying at least k+1 shares exist
+	// 3. Audit logging every Vault operation (log to immudb + PostgreSQL)
+	// 4. Verifying at least k+1 shares exist before returning success
+	//
+	// Pseudocode:
+	// for partyId := range PartyIDs {
+	//   share := db.GetKeyShare(req.CeremonyID, partyId)
+	//   vaultClient.SealKeyShare(ctx, req.CustomerID, req.CeremonyID, partyId, share)
+	//   auditLog("KEY_SHARE_SEALED", partyId, ceremonyId)
+	// }
 
 	sealed := len(req.PartyIDs) // Placeholder: assume all sealing succeeds
 	return &workflows.SealKeySharesResult{

@@ -13,18 +13,15 @@ import (
 
 // CeremonyOrchestrator manages distributed key generation ceremonies.
 type CeremonyOrchestrator struct {
-	db              *PostgresDB
-	vault           *VaultClient
-	temporalClient  client.Client
+	db                *PostgresDB
+	vault             *VaultClient
+	temporalClient    client.Client
 	temporalTaskQueue string
-	router          *gin.Engine
+	router            *gin.Engine
 }
 
 // NewCeremonyOrchestrator creates a new orchestrator.
-func NewCeremonyOrchestrator(temporalClient client.Client) *CeremonyOrchestrator {
-	db := NewPostgresDB()
-	vault := NewVaultClient()
-
+func NewCeremonyOrchestrator(temporalClient client.Client, db *PostgresDB, vault *VaultClient) *CeremonyOrchestrator {
 	return &CeremonyOrchestrator{
 		db:                db,
 		vault:             vault,
@@ -218,7 +215,22 @@ func main() {
 
 	log.Printf("connected to Temporal at %s/%s", temporalHostPort, temporalNamespace)
 
-	co := NewCeremonyOrchestrator(temporalClient)
+	// Connect to PostgreSQL
+	db, err := NewPostgresDB()
+	if err != nil {
+		log.Fatalf("failed to connect to database: %v", err)
+	}
+	defer db.Close()
+
+	// Connect to Vault
+	vault, err := NewVaultClient()
+	if err != nil {
+		log.Fatalf("failed to connect to Vault: %v", err)
+	}
+
+	log.Printf("connected to Vault")
+
+	co := NewCeremonyOrchestrator(temporalClient, db, vault)
 	if err := co.Start(port); err != nil {
 		log.Fatalf("failed to start: %v", err)
 	}
