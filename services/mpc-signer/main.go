@@ -11,6 +11,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 // main.go wires the MPC signer's HTTP API.
@@ -31,13 +33,16 @@ type server struct {
 
 func (s *server) log(ctx context.Context, event AuditEvent) uint64 {
 	if s.audit == nil {
+		auditWriteTotal.WithLabelValues("skipped").Inc()
 		return 0
 	}
 	id, err := s.audit.LogEvent(ctx, event)
 	if err != nil {
+		auditWriteTotal.WithLabelValues("failed").Inc()
 		log.Printf("warning: audit log failed for %s (%s): %v", event.RequestID, event.Type, err)
 		return 0
 	}
+	auditWriteTotal.WithLabelValues("success").Inc()
 	return id
 }
 
@@ -45,8 +50,12 @@ func (s *server) handleSign(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	requestID := uuid.NewString()
 
+	timer := prometheus.NewTimer(signDuration)
+	defer timer.ObserveDuration()
+
 	var req SignRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		signTotal.WithLabelValues("invalid").Inc()
 		s.log(ctx, AuditEvent{Type: "SIGN_REQUEST_INVALID", RequestID: requestID, Message: err.Error(), Status: "failed"})
 		writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: "invalid request body", RequestID: requestID})
 		return
@@ -61,10 +70,12 @@ func (s *server) handleSign(w http.ResponseWriter, r *http.Request) {
 
 	signed, err := s.signer.SignTransaction(ctx, &req)
 	if err != nil {
+		signTotal.WithLabelValues("failed").Inc()
 		s.log(ctx, AuditEvent{Type: "SIGN_FAILED", RequestID: requestID, Message: err.Error(), Status: "failed"})
 		writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: err.Error(), RequestID: requestID})
 		return
 	}
+	signTotal.WithLabelValues("success").Inc()
 
 	auditID := s.log(ctx, AuditEvent{
 		Type:      "SIGN_SUCCESS",
@@ -107,7 +118,13 @@ func getenv(key, fallback string) string {
 }
 
 func main() {
-	signer, err := NewMPCSigner(os.Getenv("MPC_SIGNER_PRIVATE_KEY"))
+	// Resolve the signing key from Vault (preferred), env, or generate ephemeral.
+	keyHex, err := ResolveSigningKey(context.Background(), os.Getenv)
+	if err != nil {
+		log.Fatalf("failed to resolve signing key: %v", err)
+	}
+
+	signer, err := NewMPCSigner(keyHex)
 	if err != nil {
 		log.Fatalf("failed to init MPC signer: %v", err)
 	}
@@ -131,6 +148,7 @@ func main() {
 	router.HandleFunc("/sign", s.handleSign).Methods(http.MethodPost)
 	router.HandleFunc("/address", s.handleAddress).Methods(http.MethodGet)
 	router.HandleFunc("/health", handleHealth).Methods(http.MethodGet)
+	router.Handle("/metrics", promhttp.Handler()).Methods(http.MethodGet)
 
 	addr := ":" + getenv("PORT", "8080")
 	srv := &http.Server{
