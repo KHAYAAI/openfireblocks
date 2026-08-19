@@ -1,4 +1,4 @@
-package compliance
+package main
 
 import (
 	"context"
@@ -19,10 +19,10 @@ const (
 type AuditType string
 
 const (
-	AuditTypeSOC2       AuditType = "soc2"
-	AuditTypeISO27001   AuditType = "iso27001"
-	AuditTypeGDPR       AuditType = "gdpr"
-	AuditTypePCI        AuditType = "pci_dss"
+	AuditTypeSOC2          AuditType = "soc2"
+	AuditTypeISO27001      AuditType = "iso27001"
+	AuditTypeGDPR          AuditType = "gdpr"
+	AuditTypePCI           AuditType = "pci_dss"
 	AuditTypeComprehensive AuditType = "comprehensive"
 )
 
@@ -30,69 +30,69 @@ const (
 type AuditStatus string
 
 const (
-	AuditStatusPlanned      AuditStatus = "planned"
-	AuditStatusInProgress   AuditStatus = "in_progress"
-	AuditStatusCompleted    AuditStatus = "completed"
-	AuditStatusRemediation  AuditStatus = "remediation"
-	AuditStatusCertified    AuditStatus = "certified"
+	AuditStatusPlanned     AuditStatus = "planned"
+	AuditStatusInProgress  AuditStatus = "in_progress"
+	AuditStatusCompleted   AuditStatus = "completed"
+	AuditStatusRemediation AuditStatus = "remediation"
+	AuditStatusCertified   AuditStatus = "certified"
 )
 
 // AuditFinding represents a finding from an audit
 type AuditFinding struct {
-	ID              string            `json:"id"`
-	AuditID         string            `json:"audit_id"`
-	ControlID       string            `json:"control_id"`
-	Title           string            `json:"title"`
-	Description     string            `json:"description"`
-	Severity        string            `json:"severity"`        // critical, high, medium, low
-	Category        string            `json:"category"`
-	Evidence        []string          `json:"evidence"`
-	RootCause       string            `json:"root_cause"`
-	Recommendation  string            `json:"recommendation"`
-	RemediationPlan string            `json:"remediation_plan"`
-	Status          string            `json:"status"`          // open, acknowledged, remediation_in_progress, remediated, waived
-	DueDate         time.Time         `json:"due_date"`
-	ResolvedAt      time.Time         `json:"resolved_at,omitempty"`
-	CreatedAt       time.Time         `json:"created_at"`
-	UpdatedAt       time.Time         `json:"updated_at"`
+	ID              string    `json:"id"`
+	AuditID         string    `json:"audit_id"`
+	ControlID       string    `json:"control_id"`
+	Title           string    `json:"title"`
+	Description     string    `json:"description"`
+	Severity        string    `json:"severity"` // critical, high, medium, low
+	Category        string    `json:"category"`
+	Evidence        []string  `json:"evidence"`
+	RootCause       string    `json:"root_cause"`
+	Recommendation  string    `json:"recommendation"`
+	RemediationPlan string    `json:"remediation_plan"`
+	Status          string    `json:"status"` // open, acknowledged, remediation_in_progress, remediated, waived
+	DueDate         time.Time `json:"due_date"`
+	ResolvedAt      time.Time `json:"resolved_at,omitempty"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }
 
 // SecurityAudit represents a security audit engagement
 type SecurityAudit struct {
-	ID              string            `json:"id"`
-	Type            AuditType         `json:"type"`
-	Scope           AuditScope        `json:"scope"`
-	Status          AuditStatus       `json:"status"`
-	ScheduledStart  time.Time         `json:"scheduled_start"`
-	ScheduledEnd    time.Time         `json:"scheduled_end"`
-	ActualStart     time.Time         `json:"actual_start"`
-	ActualEnd       time.Time         `json:"actual_end,omitempty"`
-	Auditor         string            `json:"auditor"`         // Internal team or external firm
-	Findings        []AuditFinding    `json:"findings"`
-	CriticalCount   int               `json:"critical_count"`
-	HighCount       int               `json:"high_count"`
-	MediumCount     int               `json:"medium_count"`
-	LowCount        int               `json:"low_count"`
-	Score           float64           `json:"score"`           // 0-100
-	ReportPath      string            `json:"report_path"`
-	CertificatePath string            `json:"certificate_path,omitempty"`
-	Notes           string            `json:"notes"`
+	ID              string         `json:"id"`
+	Type            AuditType      `json:"type"`
+	Scope           AuditScope     `json:"scope"`
+	Status          AuditStatus    `json:"status"`
+	ScheduledStart  time.Time      `json:"scheduled_start"`
+	ScheduledEnd    time.Time      `json:"scheduled_end"`
+	ActualStart     time.Time      `json:"actual_start"`
+	ActualEnd       time.Time      `json:"actual_end,omitempty"`
+	Auditor         string         `json:"auditor"` // Internal team or external firm
+	Findings        []AuditFinding `json:"findings"`
+	CriticalCount   int            `json:"critical_count"`
+	HighCount       int            `json:"high_count"`
+	MediumCount     int            `json:"medium_count"`
+	LowCount        int            `json:"low_count"`
+	Score           float64        `json:"score"` // 0-100
+	ReportPath      string         `json:"report_path"`
+	CertificatePath string         `json:"certificate_path,omitempty"`
+	Notes           string         `json:"notes"`
 }
 
 // AuditChecklist defines a checklist for audit execution
 type AuditChecklist struct {
-	ID            string            `json:"id"`
-	AuditID       string            `json:"audit_id"`
-	ControlID     string            `json:"control_id"`
-	ControlName   string            `json:"control_name"`
-	TestMethod    string            `json:"test_method"`      // walkthrough, testing, observation
-	TestingSteps  []string          `json:"testing_steps"`
-	Evidence      []string          `json:"evidence"`
-	Status        string            `json:"status"`           // not_started, in_progress, complete
-	Result        string            `json:"result"`           // pass, fail, n/a
-	Notes         string            `json:"notes"`
-	TestedAt      time.Time         `json:"tested_at"`
-	TestedBy      string            `json:"tested_by"`
+	ID           string    `json:"id"`
+	AuditID      string    `json:"audit_id"`
+	ControlID    string    `json:"control_id"`
+	ControlName  string    `json:"control_name"`
+	TestMethod   string    `json:"test_method"` // walkthrough, testing, observation
+	TestingSteps []string  `json:"testing_steps"`
+	Evidence     []string  `json:"evidence"`
+	Status       string    `json:"status"` // not_started, in_progress, complete
+	Result       string    `json:"result"` // pass, fail, n/a
+	Notes        string    `json:"notes"`
+	TestedAt     time.Time `json:"tested_at"`
+	TestedBy     string    `json:"tested_by"`
 }
 
 // AuditManager manages security audits
@@ -114,13 +114,13 @@ func NewAuditManager() *AuditManager {
 // PlanAudit schedules a security audit
 func (a *AuditManager) PlanAudit(ctx context.Context, auditType AuditType, scope AuditScope, startDate, endDate time.Time) (*SecurityAudit, error) {
 	audit := &SecurityAudit{
-		ID:              fmt.Sprintf("audit-%d", time.Now().UnixNano()),
-		Type:            auditType,
-		Scope:           scope,
-		Status:          AuditStatusPlanned,
-		ScheduledStart:  startDate,
-		ScheduledEnd:    endDate,
-		Findings:        []AuditFinding{},
+		ID:             fmt.Sprintf("audit-%d", time.Now().UnixNano()),
+		Type:           auditType,
+		Scope:          scope,
+		Status:         AuditStatusPlanned,
+		ScheduledStart: startDate,
+		ScheduledEnd:   endDate,
+		Findings:       []AuditFinding{},
 	}
 
 	a.audits[audit.ID] = audit

@@ -1,4 +1,4 @@
-package compliance
+package main
 
 import (
 	"context"
@@ -13,20 +13,20 @@ import (
 type KYCStatus string
 
 const (
-	KYCStatusPending   KYCStatus = "pending"
-	KYCStatusVerified  KYCStatus = "verified"
-	KYCStatusRejected  KYCStatus = "rejected"
-	KYCStatusExpired   KYCStatus = "expired"
+	KYCStatusPending  KYCStatus = "pending"
+	KYCStatusVerified KYCStatus = "verified"
+	KYCStatusRejected KYCStatus = "rejected"
+	KYCStatusExpired  KYCStatus = "expired"
 )
 
 // AMLStatus represents the status of an AML check
 type AMLStatus string
 
 const (
-	AMLStatusClean      AMLStatus = "clean"
-	AMLStatusFlagged    AMLStatus = "flagged"
-	AMLStatusBlocked    AMLStatus = "blocked"
-	AMLStatusUnchecked  AMLStatus = "unchecked"
+	AMLStatusClean     AMLStatus = "clean"
+	AMLStatusFlagged   AMLStatus = "flagged"
+	AMLStatusBlocked   AMLStatus = "blocked"
+	AMLStatusUnchecked AMLStatus = "unchecked"
 )
 
 // KYCProfile represents a customer's KYC verification profile
@@ -50,14 +50,14 @@ type KYCProfile struct {
 
 // AMLCheckResult represents the result of an AML check
 type AMLCheckResult struct {
-	CustomerID        string    `json:"customer_id"`
-	Address           string    `json:"address"`
-	Status            AMLStatus `json:"status"`
-	MatchedLists      []string  `json:"matched_lists"`      // e.g., ["OFAC_SDN", "EU_SANCTIONS"]
-	RiskScore         float32   `json:"risk_score"`         // 0.0 - 1.0
-	CheckedAt         time.Time `json:"checked_at"`
-	ExpiresAt         time.Time `json:"expires_at"`
-	InvestigationNotes string   `json:"investigation_notes"`
+	CustomerID         string    `json:"customer_id"`
+	Address            string    `json:"address"`
+	Status             AMLStatus `json:"status"`
+	MatchedLists       []string  `json:"matched_lists"` // e.g., ["OFAC_SDN", "EU_SANCTIONS"]
+	RiskScore          float32   `json:"risk_score"`    // 0.0 - 1.0
+	CheckedAt          time.Time `json:"checked_at"`
+	ExpiresAt          time.Time `json:"expires_at"`
+	InvestigationNotes string    `json:"investigation_notes"`
 }
 
 // KYCValidator provides KYC verification functionality
@@ -163,8 +163,8 @@ func (k *KYCValidator) assessRiskLevel(profile *KYCProfile) string {
 
 	// Risk assessment based on document type
 	riskDocuments := map[string]bool{
-		"passport": false, // Low risk
-		"national_id": false,
+		"passport":       false, // Low risk
+		"national_id":    false,
 		"driver_license": true, // Medium risk
 	}
 
@@ -177,14 +177,16 @@ func (k *KYCValidator) assessRiskLevel(profile *KYCProfile) string {
 
 // AMLChecker provides AML screening functionality
 type AMLChecker struct {
-	kvStore     KVStore
-	ofacClient  *OFACClient
+	db           *PostgresDB
+	kvStore      KVStore
+	ofacClient   *OFACClient
 	sanctionsTTL time.Duration
 }
 
 // NewAMLChecker creates a new AML checker
-func NewAMLChecker(kvStore KVStore, ofacClient *OFACClient) *AMLChecker {
+func NewAMLChecker(db *PostgresDB, kvStore KVStore, ofacClient *OFACClient) *AMLChecker {
 	return &AMLChecker{
+		db:           db,
 		kvStore:      kvStore,
 		ofacClient:   ofacClient,
 		sanctionsTTL: 24 * time.Hour, // Cache sanctions lists for 24 hours
@@ -278,11 +280,16 @@ func (a *AMLChecker) CheckTransaction(ctx context.Context, customerID, fromAddre
 	return result, nil
 }
 
-// countSuspiciousTransactions counts suspicious transactions for a customer
+// suspiciousTransactionWindow is the structuring-detection lookback: many
+// small transactions clustered in a short window is a classic attempt to
+// stay under a per-transaction reporting threshold.
+const suspiciousTransactionWindow = 24 * time.Hour
+
+// countSuspiciousTransactions counts a customer's signing requests in the
+// last suspiciousTransactionWindow, used by CheckTransaction as a structuring
+// signal (many small transactions in a short window).
 func (a *AMLChecker) countSuspiciousTransactions(ctx context.Context, customerID string) (int, error) {
-	// This would query the transaction database
-	// For now, return 0 (would be implemented with real database)
-	return 0, nil
+	return a.db.CountRecentSigningRequests(ctx, customerID, time.Now().Add(-suspiciousTransactionWindow))
 }
 
 // OFACClient provides integration with OFAC sanctions lists
@@ -303,28 +310,33 @@ func NewOFACClient(baseURL, apiKey string, kvStore KVStore) *OFACClient {
 	}
 }
 
-// CheckSDN checks if an address matches OFAC SDN (Specially Designated Nationals) list
+// CheckSDN checks if an address matches OFAC SDN (Specially Designated Nationals) list.
+//
+// If no screening provider is configured (baseURL/apiKey empty), this
+// returns an error rather than an empty match list. An empty result here
+// means "not sanctioned" to every caller (see CheckAddress, which sets
+// AMLStatusClean on a nil error with zero matches) -- silently returning
+// that for every address just because no real provider is wired up would
+// make every AML check pass by default, the opposite of fail-safe for a
+// sanctions control. Wire in a real screening provider (e.g. Chainalysis,
+// ComplyAdvantage, TRM Labs) before deploying this to handle real funds.
 func (o *OFACClient) CheckSDN(ctx context.Context, address string) ([]string, error) {
-	// In production, this would call the OFAC API
-	// For now, return empty (no matches)
-	// Real implementation would:
-	// 1. Normalize address format
-	// 2. Call OFAC screening service
-	// 3. Cache results with TTL
-	// 4. Log all checks to audit trail
+	if o.baseURL == "" || o.apiKey == "" {
+		return nil, fmt.Errorf("OFAC/sanctions screening not configured: no provider baseURL/apiKey set")
+	}
 
-	// Check cache first
+	// Check cache first so repeated screens of the same address within the
+	// TTL don't re-hit the (rate-limited, billed-per-call) provider.
 	if matches, exists := o.cache[address]; exists {
 		return matches, nil
 	}
 
-	// Placeholder: would call actual OFAC service
-	matches := []string{}
-
-	// Store in cache
-	o.cache[address] = matches
-
-	return matches, nil
+	// TODO: call the configured screening provider's API here. Left
+	// unimplemented rather than guessing at a request/response shape for a
+	// vendor this codebase hasn't picked yet -- a fabricated call against an
+	// unverified contract would be exactly the kind of code that looks done
+	// but silently isn't.
+	return nil, fmt.Errorf("OFAC/sanctions screening provider configured but CheckSDN is not yet implemented")
 }
 
 // Utility functions

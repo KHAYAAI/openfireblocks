@@ -1,4 +1,4 @@
-package compliance
+package main
 
 import (
 	"context"
@@ -8,39 +8,39 @@ import (
 
 // ComplianceMetric represents a measured compliance metric
 type ComplianceMetric struct {
-	ID            string            `json:"id"`
-	Name          string            `json:"name"`
-	Category      string            `json:"category"`      // SOC2, ISO27001, GDPR, etc.
-	Value         float64           `json:"value"`
-	Unit          string            `json:"unit"`
-	Threshold     float64           `json:"threshold"`
-	Status        string            `json:"status"`        // pass, warning, fail
-	MeasuredAt    time.Time         `json:"measured_at"`
-	Description   string            `json:"description"`
-	Target        float64           `json:"target"`
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	Category    string    `json:"category"` // SOC2, ISO27001, GDPR, etc.
+	Value       float64   `json:"value"`
+	Unit        string    `json:"unit"`
+	Threshold   float64   `json:"threshold"`
+	Status      string    `json:"status"` // pass, warning, fail
+	MeasuredAt  time.Time `json:"measured_at"`
+	Description string    `json:"description"`
+	Target      float64   `json:"target"`
 }
 
 // ComplianceAlert represents a compliance alert
 type ComplianceAlert struct {
-	ID            string            `json:"id"`
-	MetricID      string            `json:"metric_id"`
-	Severity      string            `json:"severity"`      // critical, high, medium, low
-	Message       string            `json:"message"`
-	RecommendedAction string        `json:"recommended_action"`
-	CreatedAt     time.Time         `json:"created_at"`
-	ResolvedAt    time.Time         `json:"resolved_at,omitempty"`
-	Status        string            `json:"status"`        // open, acknowledged, resolved
+	ID                string    `json:"id"`
+	MetricID          string    `json:"metric_id"`
+	Severity          string    `json:"severity"` // critical, high, medium, low
+	Message           string    `json:"message"`
+	RecommendedAction string    `json:"recommended_action"`
+	CreatedAt         time.Time `json:"created_at"`
+	ResolvedAt        time.Time `json:"resolved_at,omitempty"`
+	Status            string    `json:"status"` // open, acknowledged, resolved
 }
 
 // ComplianceDashboard aggregates compliance metrics and status
 type ComplianceDashboard struct {
-	ID                string              `json:"id"`
-	Timestamp         time.Time           `json:"timestamp"`
-	Metrics           []ComplianceMetric  `json:"metrics"`
-	Alerts            []ComplianceAlert   `json:"alerts"`
-	OverallStatus     string              `json:"overall_status"`    // compliant, warning, non_compliant
-	ComplianceScore   float64             `json:"compliance_score"` // 0-100
-	LastUpdatedAt     time.Time           `json:"last_updated_at"`
+	ID              string             `json:"id"`
+	Timestamp       time.Time          `json:"timestamp"`
+	Metrics         []ComplianceMetric `json:"metrics"`
+	Alerts          []ComplianceAlert  `json:"alerts"`
+	OverallStatus   string             `json:"overall_status"`   // compliant, warning, non_compliant
+	ComplianceScore float64            `json:"compliance_score"` // 0-100
+	LastUpdatedAt   time.Time          `json:"last_updated_at"`
 }
 
 // ComplianceMonitor monitors compliance metrics
@@ -83,9 +83,9 @@ func (c *ComplianceMonitor) RecordMetric(ctx context.Context, metric ComplianceM
 // createAlert creates a compliance alert
 func (c *ComplianceMonitor) createAlert(ctx context.Context, metric ComplianceMetric) {
 	alert := ComplianceAlert{
-		ID:       fmt.Sprintf("alert-%d", time.Now().UnixNano()),
-		MetricID: metric.ID,
-		Status:   "open",
+		ID:        fmt.Sprintf("alert-%d", time.Now().UnixNano()),
+		MetricID:  metric.ID,
+		Status:    "open",
 		CreatedAt: time.Now(),
 	}
 

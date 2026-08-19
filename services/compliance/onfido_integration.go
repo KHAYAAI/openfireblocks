@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"time"
 
@@ -18,15 +20,15 @@ type OnfidoService struct {
 }
 
 type OnfidoApplicant struct {
-	ID           string `json:"id"`
-	CreatedAt    string `json:"created_at"`
-	Email        string `json:"email"`
-	FirstName    string `json:"first_name"`
-	LastName     string `json:"last_name"`
-	Address      *Address `json:"address"`
-	CountryOfBirth string `json:"country_of_birth"`
-	DateOfBirth  string `json:"date_of_birth"`
-	VerificationStatus string `json:"verification_status"`
+	ID                 string   `json:"id"`
+	CreatedAt          string   `json:"created_at"`
+	Email              string   `json:"email"`
+	FirstName          string   `json:"first_name"`
+	LastName           string   `json:"last_name"`
+	Address            *Address `json:"address"`
+	CountryOfBirth     string   `json:"country_of_birth"`
+	DateOfBirth        string   `json:"date_of_birth"`
+	VerificationStatus string   `json:"verification_status"`
 }
 
 type Address struct {
@@ -40,12 +42,12 @@ type Address struct {
 }
 
 type OnfidoDocument struct {
-	ID          string `json:"id"`
-	CreatedAt   string `json:"created_at"`
-	Type        string `json:"type"` // passport, driving_licence, national_identity_card, visa
-	SubType     string `json:"subtype,omitempty"`
-	Front       FileUpload `json:"front,omitempty"`
-	Back        FileUpload `json:"back,omitempty"`
+	ID           string       `json:"id"`
+	CreatedAt    string       `json:"created_at"`
+	Type         string       `json:"type"` // passport, driving_licence, national_identity_card, visa
+	SubType      string       `json:"subtype,omitempty"`
+	Front        FileUpload   `json:"front,omitempty"`
+	Back         FileUpload   `json:"back,omitempty"`
 	PageMetadata PageMetadata `json:"page_metadata,omitempty"`
 }
 
@@ -61,32 +63,32 @@ type PageMetadata struct {
 }
 
 type OnfidoLiveness struct {
-	ID          string `json:"id"`
-	CreatedAt   string `json:"created_at"`
-	Status      string `json:"status"` // pending, complete
-	GrantID     string `json:"grant_id"`
-	DocumentID  string `json:"document_id"`
+	ID         string `json:"id"`
+	CreatedAt  string `json:"created_at"`
+	Status     string `json:"status"` // pending, complete
+	GrantID    string `json:"grant_id"`
+	DocumentID string `json:"document_id"`
 }
 
 type OnfidoCheck struct {
-	ID              string `json:"id"`
-	CreatedAt       string `json:"created_at"`
-	ApplicantID     string `json:"applicant_id"`
-	Status          string `json:"status"` // pending, in_progress, complete
-	Result          string `json:"result"` // clear, consider, unknown
-	BuilderOutputID string `json:"builder_output_id"`
-	CheckType       string `json:"check_type"`
+	ID              string         `json:"id"`
+	CreatedAt       string         `json:"created_at"`
+	ApplicantID     string         `json:"applicant_id"`
+	Status          string         `json:"status"` // pending, in_progress, complete
+	Result          string         `json:"result"` // clear, consider, unknown
+	BuilderOutputID string         `json:"builder_output_id"`
+	CheckType       string         `json:"check_type"`
 	Reports         []OnfidoReport `json:"reports"`
 }
 
 type OnfidoReport struct {
-	ID           string `json:"id"`
-	CreatedAt    string `json:"created_at"`
-	Name         string `json:"name"`
-	Status       string `json:"status"` // pending, in_progress, complete
-	Result       string `json:"result"` // clear, consider, unknown
-	Breakdown    map[string]interface{} `json:"breakdown"`
-	Properties   map[string]interface{} `json:"properties"`
+	ID         string                 `json:"id"`
+	CreatedAt  string                 `json:"created_at"`
+	Name       string                 `json:"name"`
+	Status     string                 `json:"status"` // pending, in_progress, complete
+	Result     string                 `json:"result"` // clear, consider, unknown
+	Breakdown  map[string]interface{} `json:"breakdown"`
+	Properties map[string]interface{} `json:"properties"`
 }
 
 type OnfidoWebhook struct {
@@ -97,23 +99,23 @@ type OnfidoWebhook struct {
 	Payload   string `json:"payload"`
 }
 
-type KYCVerification struct {
-	VerificationID     string    `json:"verification_id"`
-	CustomerID         string    `json:"customer_id"`
-	OnfidoApplicantID  string    `json:"onfido_applicant_id"`
-	OnfidoCheckID      string    `json:"onfido_check_id"`
-	Status             string    `json:"status"` // pending, verified, rejected, need_review
-	VerificationLevel  string    `json:"verification_level"` // individual, business, institutional
-	DocumentType       string    `json:"document_type"`
-	DocumentStatus     string    `json:"document_status"`
-	LivenessStatus     string    `json:"liveness_status"`
-	RiskAssessment     string    `json:"risk_assessment"` // clear, consider, unknown
-	CheckResult        string    `json:"check_result"`
-	VerifiedAt         *time.Time `json:"verified_at"`
-	ExpiresAt          *time.Time `json:"expires_at"`
-	Metadata           map[string]interface{} `json:"metadata"`
-	CreatedAt          time.Time `json:"created_at"`
-	UpdatedAt          time.Time `json:"updated_at"`
+type OnfidoKYCVerification struct {
+	VerificationID    string                 `json:"verification_id"`
+	CustomerID        string                 `json:"customer_id"`
+	OnfidoApplicantID string                 `json:"onfido_applicant_id"`
+	OnfidoCheckID     string                 `json:"onfido_check_id"`
+	Status            string                 `json:"status"`             // pending, verified, rejected, need_review
+	VerificationLevel string                 `json:"verification_level"` // individual, business, institutional
+	DocumentType      string                 `json:"document_type"`
+	DocumentStatus    string                 `json:"document_status"`
+	LivenessStatus    string                 `json:"liveness_status"`
+	RiskAssessment    string                 `json:"risk_assessment"` // clear, consider, unknown
+	CheckResult       string                 `json:"check_result"`
+	VerifiedAt        *time.Time             `json:"verified_at"`
+	ExpiresAt         *time.Time             `json:"expires_at"`
+	Metadata          map[string]interface{} `json:"metadata"`
+	CreatedAt         time.Time              `json:"created_at"`
+	UpdatedAt         time.Time              `json:"updated_at"`
 }
 
 func NewOnfidoService(apiKey string, db *PostgresDB) *OnfidoService {
@@ -257,9 +259,9 @@ func (s *OnfidoService) GetCheck(ctx context.Context, checkID string) (*OnfidoCh
 }
 
 // ProcessCheckResult processes Onfido check webhook
-func (s *OnfidoService) ProcessCheckResult(ctx context.Context, check *OnfidoCheck, customerID string) (*KYCVerification, error) {
+func (s *OnfidoService) ProcessCheckResult(ctx context.Context, check *OnfidoCheck, customerID string) (*OnfidoKYCVerification, error) {
 	verificationID := uuid.New().String()
-	
+
 	// Determine verification status
 	status := "need_review"
 	if check.Result == "clear" {
@@ -271,7 +273,7 @@ func (s *OnfidoService) ProcessCheckResult(ctx context.Context, check *OnfidoChe
 	now := time.Now()
 	expiresAt := now.AddDate(1, 0, 0) // Expires in 1 year
 
-	verification := &KYCVerification{
+	verification := &OnfidoKYCVerification{
 		VerificationID:    verificationID,
 		CustomerID:        customerID,
 		OnfidoApplicantID: check.ApplicantID,
@@ -298,15 +300,22 @@ func (s *OnfidoService) ProcessCheckResult(ctx context.Context, check *OnfidoChe
 	}
 
 	// Store in database
-	if err := s.db.CreateKYCVerification(ctx, verification); err != nil {
+	if err := s.db.CreateOnfidoVerification(ctx, verification); err != nil {
 		return nil, fmt.Errorf("failed to store verification: %w", err)
 	}
 
-	// Update customer compliance status
+	// Update the customer's denormalized current KYC status. The
+	// verification record above (CreateOnfidoVerification) is the durable
+	// source of truth and already succeeded, so a failure here is logged
+	// rather than failing the whole webhook -- the underlying event is safe.
+	var updateErr error
 	if status == "verified" {
-		s.db.UpdateCustomerKYCStatus(ctx, customerID, "approved", now)
+		updateErr = s.db.UpdateCustomerKYCStatus(ctx, customerID, "approved", now)
 	} else if status == "need_review" {
-		s.db.UpdateCustomerKYCStatus(ctx, customerID, "under_review", time.Time{})
+		updateErr = s.db.UpdateCustomerKYCStatus(ctx, customerID, "under_review", time.Time{})
+	}
+	if updateErr != nil {
+		log.Printf("failed to update customer %s KYC status: %v", customerID, updateErr)
 	}
 
 	return verification, nil
@@ -315,10 +324,10 @@ func (s *OnfidoService) ProcessCheckResult(ctx context.Context, check *OnfidoChe
 // RegisterWebhook registers webhook for Onfido events
 func (s *OnfidoService) RegisterWebhook(ctx context.Context, webhookURL string) (*OnfidoWebhook, error) {
 	payload := map[string]interface{}{
-		"url":      webhookURL,
-		"enabled":  true,
-		"payload":  "full",
-		"events":   []string{"check.completed", "report.completed"},
+		"url":     webhookURL,
+		"enabled": true,
+		"payload": "full",
+		"events":  []string{"check.completed", "report.completed"},
 	}
 
 	body, _ := json.Marshal(payload)
@@ -342,12 +351,11 @@ func (s *OnfidoService) RegisterWebhook(ctx context.Context, webhookURL string) 
 
 func (s *OnfidoService) HandleKYCStart(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	claims := ctx.Value("claims").(*JWTClaims)
 
 	var req struct {
-		FirstName string `json:"first_name"`
-		LastName  string `json:"last_name"`
-		Email     string `json:"email"`
+		FirstName string   `json:"first_name"`
+		LastName  string   `json:"last_name"`
+		Email     string   `json:"email"`
 		Address   *Address `json:"address"`
 	}
 
@@ -376,9 +384,13 @@ func (s *OnfidoService) HandleKYCStart(w http.ResponseWriter, r *http.Request) {
 
 func (s *OnfidoService) HandleKYCStatus(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	claims := ctx.Value("claims").(*JWTClaims)
+	customerID := r.Header.Get("X-Customer-ID")
+	if customerID == "" {
+		http.Error(w, "X-Customer-ID header required", http.StatusBadRequest)
+		return
+	}
 
-	verification, err := s.db.GetLatestKYCVerification(ctx, claims.UserID)
+	verification, err := s.db.GetLatestOnfidoVerification(ctx, customerID)
 	if err != nil {
 		http.Error(w, "No verification found", http.StatusNotFound)
 		return
@@ -387,9 +399,3 @@ func (s *OnfidoService) HandleKYCStatus(w http.ResponseWriter, r *http.Request) 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(verification)
 }
-
-// Missing import
-import (
-	"bytes"
-)
-

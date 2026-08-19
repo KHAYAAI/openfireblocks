@@ -18,28 +18,29 @@ type ComplianceReportService struct {
 
 // ComplianceReport represents a generated compliance report
 type ComplianceReport struct {
-	ReportID       string         `json:"report_id"`
-	CustomerID     string         `json:"customer_id,omitempty"`
-	ReportType     string         `json:"report_type"` // audit, compliance, risk, kyc
-	Period         string         `json:"period"`      // monthly, quarterly, yearly
-	StartDate      time.Time      `json:"start_date"`
-	EndDate        time.Time      `json:"end_date"`
-	Status         string         `json:"status"` // generating, completed, failed
-	Data           *ReportData    `json:"data,omitempty"`
-	FileURL        string         `json:"file_url,omitempty"`
-	GeneratedAt    time.Time      `json:"generated_at"`
-	ExpiresAt      time.Time      `json:"expires_at"`
+	ReportID    string      `json:"report_id"`
+	CustomerID  string      `json:"customer_id,omitempty"`
+	ReportType  string      `json:"report_type"` // audit, compliance, risk, kyc
+	Period      string      `json:"period"`      // monthly, quarterly, yearly
+	StartDate   time.Time   `json:"start_date"`
+	EndDate     time.Time   `json:"end_date"`
+	Status      string      `json:"status"` // generating, completed, failed
+	Data        *ReportData `json:"data,omitempty"`
+	FileURL     string      `json:"file_url,omitempty"`
+	GeneratedAt time.Time   `json:"generated_at"`
+	ExpiresAt   time.Time   `json:"expires_at"`
 }
 
 // ReportData contains the report data
 type ReportData struct {
-	Summary        *ReportSummary `json:"summary"`
-	Transactions   *TransactionStats `json:"transactions,omitempty"`
-	Compliance     *ComplianceStats `json:"compliance,omitempty"`
-	Risk           *RiskStats     `json:"risk,omitempty"`
-	KeyManagement  *KeyStats      `json:"key_management,omitempty"`
-	Users          *UserStats     `json:"users,omitempty"`
-	Incidents      []*Incident    `json:"incidents,omitempty"`
+	Summary       *ReportSummary    `json:"summary"`
+	Transactions  *TransactionStats `json:"transactions,omitempty"`
+	Compliance    *ComplianceStats  `json:"compliance,omitempty"`
+	Risk          *RiskStats        `json:"risk,omitempty"`
+	KeyManagement *KeyStats         `json:"key_management,omitempty"`
+	Users         *UserStats        `json:"users,omitempty"`
+	Incidents     []*Incident       `json:"incidents,omitempty"`
+	AuditLogs     []*AuditLog       `json:"audit_logs,omitempty"`
 }
 
 // ReportSummary contains high-level report summary
@@ -65,73 +66,73 @@ type TransactionStats struct {
 
 // ComplianceStats contains compliance metrics
 type ComplianceStats struct {
-	VerifiedCustomers     int     `json:"verified_customers"`
-	PendingVerifications  int     `json:"pending_verifications"`
-	FailedVerifications   int     `json:"failed_verifications"`
-	VerificationRate      float64 `json:"verification_rate"`
-	RejectedTransactions  int64   `json:"rejected_transactions"`
-	SanctionsMatches      int     `json:"sanctions_matches"`
-	HighRiskDetected      int     `json:"high_risk_detected"`
-	ComplianceScore       int     `json:"compliance_score"` // 0-100
+	VerifiedCustomers    int     `json:"verified_customers"`
+	PendingVerifications int     `json:"pending_verifications"`
+	FailedVerifications  int     `json:"failed_verifications"`
+	VerificationRate     float64 `json:"verification_rate"`
+	RejectedTransactions int64   `json:"rejected_transactions"`
+	SanctionsMatches     int     `json:"sanctions_matches"`
+	HighRiskDetected     int     `json:"high_risk_detected"`
+	ComplianceScore      int     `json:"compliance_score"` // 0-100
 }
 
 // RiskStats contains risk assessment metrics
 type RiskStats struct {
-	TotalRiskAlerts     int     `json:"total_risk_alerts"`
-	HighRiskAlerts      int     `json:"high_risk_alerts"`
-	MediumRiskAlerts    int     `json:"medium_risk_alerts"`
-	LowRiskAlerts       int     `json:"low_risk_alerts"`
-	FalsePositiveRate   float64 `json:"false_positive_rate"`
-	AverageRiskScore    float64 `json:"average_risk_score"`
-	MaxRiskScore        float64 `json:"max_risk_score"`
+	TotalRiskAlerts   int     `json:"total_risk_alerts"`
+	HighRiskAlerts    int     `json:"high_risk_alerts"`
+	MediumRiskAlerts  int     `json:"medium_risk_alerts"`
+	LowRiskAlerts     int     `json:"low_risk_alerts"`
+	FalsePositiveRate float64 `json:"false_positive_rate"`
+	AverageRiskScore  float64 `json:"average_risk_score"`
+	MaxRiskScore      float64 `json:"max_risk_score"`
 }
 
 // KeyStats contains key management metrics
 type KeyStats struct {
-	TotalKeys          int     `json:"total_keys"`
-	ActiveKeys         int     `json:"active_keys"`
-	PendingKeys        int     `json:"pending_keys"`
-	CompromisedKeys    int     `json:"compromised_keys"`
-	KeyRotationRate    float64 `json:"key_rotation_rate"` // keys rotated/month
-	AverageKeyAge      int     `json:"average_key_age_days"`
-	UnusedKeys         int     `json:"unused_keys_30_days"`
+	TotalKeys       int     `json:"total_keys"`
+	ActiveKeys      int     `json:"active_keys"`
+	PendingKeys     int     `json:"pending_keys"`
+	CompromisedKeys int     `json:"compromised_keys"`
+	KeyRotationRate float64 `json:"key_rotation_rate"` // keys rotated/month
+	AverageKeyAge   int     `json:"average_key_age_days"`
+	UnusedKeys      int     `json:"unused_keys_30_days"`
 }
 
 // UserStats contains user activity metrics
 type UserStats struct {
-	TotalUsers         int `json:"total_users"`
-	ActiveUsers        int `json:"active_users"`
-	AdminUsers         int `json:"admin_users"`
-	APIKeyCount        int `json:"api_key_count"`
+	TotalUsers          int `json:"total_users"`
+	ActiveUsers         int `json:"active_users"`
+	AdminUsers          int `json:"admin_users"`
+	APIKeyCount         int `json:"api_key_count"`
 	FailedLoginAttempts int `json:"failed_login_attempts"`
-	PasswordChanges    int `json:"password_changes"`
+	PasswordChanges     int `json:"password_changes"`
 }
 
 // Incident represents a security incident
 type Incident struct {
-	IncidentID    string `json:"incident_id"`
-	Type          string `json:"type"`
-	Severity      string `json:"severity"` // low, medium, high, critical
-	Description   string `json:"description"`
-	DetectedAt    string `json:"detected_at"`
-	ResolvedAt    string `json:"resolved_at,omitempty"`
-	Status        string `json:"status"` // open, investigating, resolved
-	Notes         string `json:"notes,omitempty"`
+	IncidentID  string `json:"incident_id"`
+	Type        string `json:"type"`
+	Severity    string `json:"severity"` // low, medium, high, critical
+	Description string `json:"description"`
+	DetectedAt  string `json:"detected_at"`
+	ResolvedAt  string `json:"resolved_at,omitempty"`
+	Status      string `json:"status"` // open, investigating, resolved
+	Notes       string `json:"notes,omitempty"`
 }
 
 // AuditLog represents an audit trail entry
 type AuditLog struct {
-	LogID       string    `json:"log_id"`
-	CustomerID  string    `json:"customer_id,omitempty"`
-	Action      string    `json:"action"`
-	Actor       string    `json:"actor"`
-	ResourceID  string    `json:"resource_id"`
-	ResourceType string   `json:"resource_type"`
-	Changes     string    `json:"changes"`
-	IPAddress   string    `json:"ip_address,omitempty"`
-	UserAgent   string    `json:"user_agent,omitempty"`
-	Status      string    `json:"status"`
-	CreatedAt   time.Time `json:"created_at"`
+	LogID        string    `json:"log_id"`
+	CustomerID   string    `json:"customer_id,omitempty"`
+	Action       string    `json:"action"`
+	Actor        string    `json:"actor"`
+	ResourceID   string    `json:"resource_id"`
+	ResourceType string    `json:"resource_type"`
+	Changes      string    `json:"changes"`
+	IPAddress    string    `json:"ip_address,omitempty"`
+	UserAgent    string    `json:"user_agent,omitempty"`
+	Status       string    `json:"status"`
+	CreatedAt    time.Time `json:"created_at"`
 }
 
 // NewComplianceReportService creates a new report service
@@ -181,6 +182,12 @@ func (s *ComplianceReportService) GenerateAuditReport(ctx context.Context, custo
 		log.Printf("Failed to get compliance stats: %v", err)
 	}
 
+	findings := "No high-risk transactions or sanctions matches in this period"
+	if complianceStats != nil && (complianceStats.HighRiskDetected > 0 || complianceStats.SanctionsMatches > 0) {
+		findings = fmt.Sprintf("%d high-risk detection(s), %d sanctions match(es) in this period -- review required",
+			complianceStats.HighRiskDetected, complianceStats.SanctionsMatches)
+	}
+
 	// Create report data
 	report.Data = &ReportData{
 		Summary: &ReportSummary{
@@ -188,11 +195,12 @@ func (s *ComplianceReportService) GenerateAuditReport(ctx context.Context, custo
 			PeriodCoverage: fmt.Sprintf("%s to %s", startDate.Format("2006-01-02"), endDate.Format("2006-01-02")),
 			GeneratedDate:  time.Now().Format("2006-01-02"),
 			Status:         "completed",
-			Findings:       "No critical issues detected",
+			Findings:       findings,
 		},
-		Transactions: txStats,
+		Transactions:  txStats,
 		KeyManagement: keyStats,
 		Compliance:    complianceStats,
+		AuditLogs:     auditLogs,
 	}
 
 	report.Status = "completed"
@@ -274,43 +282,15 @@ func (s *ComplianceReportService) LogAuditEvent(ctx context.Context, log *AuditL
 // Helper methods
 
 func (s *ComplianceReportService) getTransactionStats(ctx context.Context, customerID string, startDate, endDate time.Time) (*TransactionStats, error) {
-	// In production, fetch from database
-	// For now, return mock data
-	return &TransactionStats{
-		TotalTransactions:  150,
-		SuccessfulTxs:      145,
-		FailedTxs:          5,
-		SuccessRate:        96.67,
-		TotalVolume:        "2500 ETH",
-		AverageAmount:      "16.67 ETH",
-		AverageConfirmTime: 45,
-		PeakTransactionTime: "14:30 UTC",
-	}, nil
+	return s.db.GetTransactionStats(ctx, customerID, startDate, endDate)
 }
 
 func (s *ComplianceReportService) getKeyStats(ctx context.Context, customerID string, startDate, endDate time.Time) (*KeyStats, error) {
-	return &KeyStats{
-		TotalKeys:       12,
-		ActiveKeys:      10,
-		PendingKeys:     2,
-		CompromisedKeys: 0,
-		KeyRotationRate: 0.25,
-		AverageKeyAge:   45,
-		UnusedKeys:      1,
-	}, nil
+	return s.db.GetKeyStats(ctx, customerID, startDate, endDate)
 }
 
 func (s *ComplianceReportService) getComplianceStats(ctx context.Context, customerID string, startDate, endDate time.Time) (*ComplianceStats, error) {
-	return &ComplianceStats{
-		VerifiedCustomers:    1,
-		PendingVerifications: 0,
-		FailedVerifications:  0,
-		VerificationRate:     100,
-		RejectedTransactions: 2,
-		SanctionsMatches:     0,
-		HighRiskDetected:     0,
-		ComplianceScore:      98,
-	}, nil
+	return s.db.GetCustomerComplianceStats(ctx, customerID, startDate, endDate)
 }
 
 // HTTP Handlers

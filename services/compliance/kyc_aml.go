@@ -6,18 +6,18 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
 )
 
 // KYCAMLService handles KYC/AML verification for customers and transactions.
+// Verifications are persisted through db, not held in memory -- an in-memory
+// map here would silently diverge from the database and wouldn't survive a
+// restart or be visible to any other instance of this service.
 type KYCAMLService struct {
-	db              *PostgresDB
-	thirdparties    map[string]ThirdPartyProvider
-	verificationMu  sync.RWMutex
-	verifications   map[string]*KYCVerification
+	db           *PostgresDB
+	thirdparties map[string]ThirdPartyProvider
 }
 
 // ThirdPartyProvider is an interface for KYC/AML service providers.
@@ -42,40 +42,40 @@ type KYCVerification struct {
 
 // CustomerVerificationRequest is the request for customer KYC verification.
 type CustomerVerificationRequest struct {
-	CustomerID   string `json:"customer_id"`
-	FullName     string `json:"full_name"`
-	Email        string `json:"email"`
-	PhoneNumber  string `json:"phone_number"`
-	Country      string `json:"country"`
-	IDDocType    string `json:"id_doc_type"`    // passport, driver_license, national_id
-	IDDocNumber  string `json:"id_doc_number"`
-	DateOfBirth  string `json:"date_of_birth"` // YYYY-MM-DD
-	Address      string `json:"address"`
-	City         string `json:"city"`
-	PostalCode   string `json:"postal_code"`
+	CustomerID  string `json:"customer_id"`
+	FullName    string `json:"full_name"`
+	Email       string `json:"email"`
+	PhoneNumber string `json:"phone_number"`
+	Country     string `json:"country"`
+	IDDocType   string `json:"id_doc_type"` // passport, driver_license, national_id
+	IDDocNumber string `json:"id_doc_number"`
+	DateOfBirth string `json:"date_of_birth"` // YYYY-MM-DD
+	Address     string `json:"address"`
+	City        string `json:"city"`
+	PostalCode  string `json:"postal_code"`
 }
 
 // VerificationResult is the result of customer verification.
 type VerificationResult struct {
-	Status        string                 `json:"status"` // approved, rejected, pending_review
-	RiskLevel     string                 `json:"risk_level"`
-	Confidence    float64                `json:"confidence"` // 0.0-1.0
-	Details       map[string]interface{} `json:"details,omitempty"`
-	Restrictions  []string               `json:"restrictions,omitempty"`
-	VerifiedAt    time.Time              `json:"verified_at"`
+	Status       string                 `json:"status"` // approved, rejected, pending_review
+	RiskLevel    string                 `json:"risk_level"`
+	Confidence   float64                `json:"confidence"` // 0.0-1.0
+	Details      map[string]interface{} `json:"details,omitempty"`
+	Restrictions []string               `json:"restrictions,omitempty"`
+	VerifiedAt   time.Time              `json:"verified_at"`
 }
 
 // TransactionVerificationRequest is the request for transaction verification.
 type TransactionVerificationRequest struct {
-	TransactionID  string `json:"transaction_id"`
-	CustomerID     string `json:"customer_id"`
-	Amount         string `json:"amount"` // in base units
-	Currency       string `json:"currency"`
-	FromAddress    string `json:"from_address"`
-	ToAddress      string `json:"to_address"`
-	Blockchain     string `json:"blockchain"`
+	TransactionID   string `json:"transaction_id"`
+	CustomerID      string `json:"customer_id"`
+	Amount          string `json:"amount"` // in base units
+	Currency        string `json:"currency"`
+	FromAddress     string `json:"from_address"`
+	ToAddress       string `json:"to_address"`
+	Blockchain      string `json:"blockchain"`
 	TransactionType string `json:"transaction_type"` // transfer, withdrawal, deposit
-	Country        string `json:"country"`
+	Country         string `json:"country"`
 }
 
 // RiskAssessment represents the risk level of a transaction.
@@ -91,18 +91,17 @@ type RiskAssessment struct {
 
 // ProviderStatus represents the status from a third-party provider.
 type ProviderStatus struct {
-	Provider   string    `json:"provider"`
-	Status     string    `json:"status"`
-	LastCheck  time.Time `json:"last_check"`
-	Latency    int       `json:"latency_ms"`
+	Provider  string    `json:"provider"`
+	Status    string    `json:"status"`
+	LastCheck time.Time `json:"last_check"`
+	Latency   int       `json:"latency_ms"`
 }
 
 // NewKYCAMLService creates a new KYC/AML service.
 func NewKYCAMLService(db *PostgresDB) *KYCAMLService {
 	return &KYCAMLService{
-		db:            db,
-		thirdparties:  make(map[string]ThirdPartyProvider),
-		verifications: make(map[string]*KYCVerification),
+		db:           db,
+		thirdparties: make(map[string]ThirdPartyProvider),
 	}
 }
 
@@ -151,13 +150,12 @@ func (k *KYCAMLService) VerifyCustomer(ctx context.Context, req *CustomerVerific
 		verification.VerifiedAt = &now
 	}
 
-	k.verificationMu.Lock()
-	k.verifications[verificationID] = verification
-	k.verificationMu.Unlock()
-
-	// Store in database
+	// A verification that reports "approved" to the caller but fails to
+	// persist would look unverified again on the next lookup or from any
+	// other instance of this service -- for a compliance record, a failed
+	// write must fail the whole call, not just log and continue.
 	if err := k.db.StoreKYCVerification(ctx, verification); err != nil {
-		log.Printf("Failed to store verification: %v", err)
+		return nil, fmt.Errorf("verification succeeded but failed to persist: %w", err)
 	}
 
 	return verification, nil
@@ -216,7 +214,7 @@ func (k *KYCAMLService) VerifyTransaction(ctx context.Context, req *TransactionV
 	}
 
 	// Store assessment in database
-	if err := k.db.StoreRiskAssessment(ctx, assessment); err != nil {
+	if err := k.db.StoreRiskAssessment(ctx, req.CustomerID, assessment); err != nil {
 		log.Printf("Failed to store risk assessment: %v", err)
 	}
 
@@ -236,10 +234,16 @@ func (k *KYCAMLService) ListRestrictedCountries(ctx context.Context) ([]string, 
 }
 
 // CheckSanctionsList checks if an address is on a sanctions list.
+//
+// No sanctions data source is wired up in this service (that lives in
+// AMLChecker/OFACClient in aml_kyc.go, which has the same limitation --
+// see the comment there). This deliberately returns an error rather than
+// (true/false, nil): a stub that silently answered "false" would tell every
+// caller "not sanctioned" for every address, which is a false negative on a
+// control this platform's compliance posture depends on. Callers must treat
+// an error here as "screening unavailable" and block, not proceed.
 func (k *KYCAMLService) CheckSanctionsList(ctx context.Context, address, blockchain string) (bool, error) {
-	// Integrate with OFAC, EU, UN sanctions lists
-	// Returns true if address is on any sanctions list
-	return false, nil
+	return false, fmt.Errorf("sanctions screening not configured: no OFAC/EU/UN list provider is wired up for KYCAMLService")
 }
 
 // HandleKYCVerification is the HTTP handler for customer verification.
