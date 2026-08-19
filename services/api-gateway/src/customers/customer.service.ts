@@ -1,7 +1,7 @@
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { Pool } from 'pg';
 import { randomUUID } from 'crypto';
-import { PG_POOL } from '../database/database.module';
+import { PG_POOL } from '../database/pg-pool.token';
 import { generateApiKey, hashApiKey } from '../auth/api-key.util';
 
 export interface Customer {
