@@ -1,9 +1,18 @@
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
+  }
+}
+
 resource "aws_db_instance" "main" {
-  identifier          = "openfireblocks-${var.environment}-db"
-  engine              = "postgres"
-  engine_version      = "16.1"
-  instance_class      = var.db_instance_class
-  allocated_storage   = var.allocated_storage
+  identifier            = "openfireblocks-${var.environment}-db"
+  engine                = "postgres"
+  engine_version        = "16.1"
+  instance_class        = var.db_instance_class
+  allocated_storage     = var.allocated_storage
   max_allocated_storage = var.max_allocated_storage
 
   db_name  = var.db_name
@@ -14,33 +23,31 @@ resource "aws_db_instance" "main" {
   db_subnet_group_name   = var.db_subnet_group_name
   parameter_group_name   = aws_db_parameter_group.main.name
 
-  multi_az              = var.multi_az
-  publicly_accessible   = var.publicly_accessible
-  skip_final_snapshot   = var.skip_final_snapshot
+  multi_az                  = var.multi_az
+  publicly_accessible       = var.publicly_accessible
+  skip_final_snapshot       = var.skip_final_snapshot
   final_snapshot_identifier = var.final_snapshot_identifier
 
   backup_retention_period = var.backup_retention_days
-  backup_window          = var.backup_window
-  maintenance_window     = var.maintenance_window
-  copy_tags_to_snapshot  = true
+  backup_window           = var.backup_window
+  maintenance_window      = var.maintenance_window
+  copy_tags_to_snapshot   = true
 
-  storage_encrypted       = true
-  kms_key_id             = var.kms_key_id
-  storage_type           = "gp3"
-  iops                   = 3000
-  storage_throughput     = 125
+  storage_encrypted  = true
+  kms_key_id         = var.kms_key_id
+  storage_type       = "gp3"
+  iops               = 3000
+  storage_throughput = 125
 
   enabled_cloudwatch_logs_exports = ["postgresql"]
 
-  performance_insights_enabled    = var.enable_performance_insights
+  performance_insights_enabled          = var.enable_performance_insights
   performance_insights_retention_period = 7
-  performance_insights_kms_key_id = var.kms_key_id
+  performance_insights_kms_key_id       = var.kms_key_id
 
-  monitoring_interval           = var.enable_enhanced_monitoring ? 60 : 0
-  monitoring_role_arn          = var.enable_enhanced_monitoring ? aws_iam_role.rds_monitoring[0].arn : null
-  enable_iam_database_authentication = true
-
-  enable_http_endpoint = false
+  monitoring_interval                 = var.enable_enhanced_monitoring ? 60 : 0
+  monitoring_role_arn                 = var.enable_enhanced_monitoring ? aws_iam_role.rds_monitoring[0].arn : null
+  iam_database_authentication_enabled = true
 
   tags = merge(
     var.tags,
@@ -133,6 +140,16 @@ resource "aws_db_parameter_group" "main" {
   parameter {
     name  = "shared_buffers"
     value = "{DBInstanceClassMemory/4}"
+  }
+
+  # Rejects any client connection that doesn't negotiate TLS. Without this,
+  # "encryption in transit" is only ever a client-side choice, not enforced
+  # by the server -- required for the SOC 2 / PCI encryption-in-transit
+  # control this database backs.
+  parameter {
+    name         = "rds.force_ssl"
+    value        = "1"
+    apply_method = "pending-reboot"
   }
 
   tags = merge(

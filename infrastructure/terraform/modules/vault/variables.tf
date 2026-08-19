@@ -3,6 +3,11 @@ variable "environment" {
   type        = string
 }
 
+variable "region" {
+  description = "AWS region this Vault cluster runs in (used in vault.hcl for the S3 storage backend and awskms seal, not just the provider block)"
+  type        = string
+}
+
 variable "vault_instance_count" {
   description = "Number of Vault nodes in HA cluster"
   type        = number
@@ -38,18 +43,6 @@ variable "kms_key_id" {
 variable "s3_bucket_name" {
   description = "S3 bucket name for Vault storage"
   type        = string
-}
-
-variable "enable_tls" {
-  description = "Enable TLS for Vault"
-  type        = bool
-  default     = true
-}
-
-variable "tls_cert_arn" {
-  description = "ACM certificate ARN for TLS"
-  type        = string
-  default     = ""
 }
 
 variable "instance_profile_name" {

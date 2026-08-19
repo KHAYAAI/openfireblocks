@@ -1,3 +1,12 @@
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
+  }
+}
+
 resource "aws_ecs_cluster" "main" {
   name = var.cluster_name
 
@@ -67,8 +76,8 @@ resource "aws_iam_role_policy_attachment" "ecs_task_execution_role_policy" {
 
 # Additional policy for CloudWatch logs encryption
 resource "aws_iam_role_policy" "ecs_task_execution_kms" {
-  name   = "${var.cluster_name}-task-execution-kms"
-  role   = aws_iam_role.ecs_task_execution_role.id
+  name = "${var.cluster_name}-task-execution-kms"
+  role = aws_iam_role.ecs_task_execution_role.id
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
@@ -106,8 +115,8 @@ resource "aws_iam_role" "ecs_task_role" {
 
 # Policy for task to access S3, Secrets Manager, etc.
 resource "aws_iam_role_policy" "ecs_task_role_policy" {
-  name   = "${var.cluster_name}-task-role-policy"
-  role   = aws_iam_role.ecs_task_role.id
+  name = "${var.cluster_name}-task-role-policy"
+  role = aws_iam_role.ecs_task_role.id
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
@@ -146,12 +155,12 @@ resource "aws_iam_role_policy" "ecs_task_role_policy" {
 
 # Auto Scaling Group for ECS
 resource "aws_autoscaling_group" "ecs" {
-  name                = "${var.cluster_name}-asg"
-  vpc_zone_identifier = var.private_subnet_ids
-  min_size            = var.min_capacity
-  max_size            = var.max_capacity
-  desired_capacity    = var.desired_capacity
-  health_check_type   = "ELB"
+  name                      = "${var.cluster_name}-asg"
+  vpc_zone_identifier       = var.private_subnet_ids
+  min_size                  = var.min_capacity
+  max_size                  = var.max_capacity
+  desired_capacity          = var.desired_capacity
+  health_check_type         = "ELB"
   health_check_grace_period = 300
 
   launch_template {

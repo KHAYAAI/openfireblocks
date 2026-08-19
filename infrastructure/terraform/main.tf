@@ -138,10 +138,10 @@ module "vpc_secondary" {
 
 # VPC Peering for cross-region communication
 resource "aws_vpc_peering_connection" "primary_to_secondary" {
-  vpc_id            = module.vpc_primary.vpc_id
-  peer_vpc_id       = module.vpc_secondary.vpc_id
-  peer_region       = var.secondary_region
-  auto_accept       = false
+  vpc_id      = module.vpc_primary.vpc_id
+  peer_vpc_id = module.vpc_secondary.vpc_id
+  peer_region = var.secondary_region
+  auto_accept = false
 
   tags = {
     Name = "openfireblocks-primary-to-secondary"
@@ -166,25 +166,23 @@ module "rds_primary" {
     aws = aws
   }
 
-  environment                   = var.environment
-  db_name                      = var.db_name
-  db_username                  = var.db_username
-  db_password                  = var.db_password
-  db_instance_class            = var.db_instance_class
-  allocated_storage            = var.db_allocated_storage
-  max_allocated_storage        = var.db_max_allocated_storage
-  vpc_id                       = module.vpc_primary.vpc_id
-  db_subnet_group_name         = module.vpc_primary.db_subnet_group_name
-  multi_az                     = true
-  enable_backups               = true
-  backup_retention_days        = 30
-  backup_window               = "00:00-01:00"
-  maintenance_window          = "sun:01:00-sun:02:00"
-  enable_performance_insights = true
-  enable_enhanced_monitoring   = true
+  environment                 = var.environment
+  db_name                     = var.db_name
+  db_username                 = var.db_username
+  db_password                 = var.db_password
+  db_instance_class           = var.db_instance_class
+  allocated_storage           = var.db_allocated_storage
+  max_allocated_storage       = var.db_max_allocated_storage
+  vpc_id                      = module.vpc_primary.vpc_id
+  db_subnet_group_name        = module.vpc_primary.db_subnet_group_name
+  multi_az                    = true
+  backup_retention_days       = var.backup_retention_days
+  backup_window               = var.backup_window
+  maintenance_window          = var.maintenance_window
+  enable_performance_insights = var.enable_performance_insights
+  enable_enhanced_monitoring  = var.enable_enhanced_monitoring
   kms_key_id                  = aws_kms_key.primary.arn
   publicly_accessible         = false
-  enable_ssl                  = true
   skip_final_snapshot         = false
   final_snapshot_identifier   = "openfireblocks-primary-final-snapshot"
 
@@ -203,15 +201,15 @@ module "rds_secondary" {
     aws = aws.secondary
   }
 
-  environment                  = var.environment
-  source_db_instance_id        = module.rds_primary.db_instance_id
-  replica_instance_class       = var.db_instance_class
-  vpc_id                       = module.vpc_secondary.vpc_id
-  db_subnet_group_name         = module.vpc_secondary.db_subnet_group_name
-  enable_performance_insights  = true
-  enable_enhanced_monitoring   = true
-  kms_key_id                   = aws_kms_key.secondary.arn
-  publicly_accessible          = false
+  environment                 = var.environment
+  source_db_instance_id       = module.rds_primary.db_instance_id
+  replica_instance_class      = var.db_instance_class
+  vpc_id                      = module.vpc_secondary.vpc_id
+  db_subnet_group_name        = module.vpc_secondary.db_subnet_group_name
+  enable_performance_insights = true
+  enable_enhanced_monitoring  = true
+  kms_key_id                  = aws_kms_key.secondary.arn
+  publicly_accessible         = false
 
   security_group_ids = [aws_security_group.rds_secondary.id]
 
@@ -228,17 +226,16 @@ module "vault_primary" {
     aws = aws
   }
 
-  environment            = var.environment
-  vault_instance_count   = var.vault_node_count
-  vault_instance_type    = var.vault_instance_type
-  vpc_id                 = module.vpc_primary.vpc_id
-  private_subnet_ids     = module.vpc_primary.private_subnet_ids
-  security_group_ids     = [aws_security_group.vault_primary.id]
+  environment           = var.environment
+  region                = var.primary_region
+  vault_instance_count  = var.vault_node_count
+  vault_instance_type   = var.vault_instance_type
+  vpc_id                = module.vpc_primary.vpc_id
+  private_subnet_ids    = module.vpc_primary.private_subnet_ids
+  security_group_ids    = [aws_security_group.vault_primary.id]
   kms_key_id            = aws_kms_key.primary.id
   enable_s3_backend     = true
   s3_bucket_name        = aws_s3_bucket.vault_backend_primary.id
-  enable_tls            = true
-  tls_cert_arn          = aws_acm_certificate.vault_primary.arn
   instance_profile_name = aws_iam_instance_profile.vault_primary.name
 
   tags = {
@@ -259,17 +256,16 @@ module "vault_secondary" {
     aws = aws.secondary
   }
 
-  environment            = var.environment
-  vault_instance_count   = var.vault_node_count
-  vault_instance_type    = var.vault_instance_type
-  vpc_id                 = module.vpc_secondary.vpc_id
-  private_subnet_ids     = module.vpc_secondary.private_subnet_ids
-  security_group_ids     = [aws_security_group.vault_secondary.id]
+  environment           = var.environment
+  region                = var.secondary_region
+  vault_instance_count  = var.vault_node_count
+  vault_instance_type   = var.vault_instance_type
+  vpc_id                = module.vpc_secondary.vpc_id
+  private_subnet_ids    = module.vpc_secondary.private_subnet_ids
+  security_group_ids    = [aws_security_group.vault_secondary.id]
   kms_key_id            = aws_kms_key.secondary.id
   enable_s3_backend     = true
   s3_bucket_name        = aws_s3_bucket.vault_backend_secondary.id
-  enable_tls            = true
-  tls_cert_arn          = aws_acm_certificate.vault_secondary.arn
   instance_profile_name = aws_iam_instance_profile.vault_secondary.name
 
   tags = {
@@ -368,14 +364,15 @@ module "ecs_primary" {
     aws = aws
   }
 
-  environment           = var.environment
-  cluster_name          = "openfireblocks-primary"
-  vpc_id                = module.vpc_primary.vpc_id
-  private_subnet_ids    = module.vpc_primary.private_subnet_ids
-  public_subnet_ids     = module.vpc_primary.public_subnet_ids
-  security_group_ids    = [aws_security_group.ecs_primary.id]
+  environment               = var.environment
+  cluster_name              = "openfireblocks-primary"
+  vpc_id                    = module.vpc_primary.vpc_id
+  private_subnet_ids        = module.vpc_primary.private_subnet_ids
+  public_subnet_ids         = module.vpc_primary.public_subnet_ids
+  security_group_ids        = [aws_security_group.ecs_primary.id]
+  kms_key_id                = aws_kms_key.primary.arn
   enable_container_insights = true
-  cloudwatch_log_group_name  = aws_cloudwatch_log_group.ecs_primary.name
+  cloudwatch_log_group_name = aws_cloudwatch_log_group.ecs_primary.name
 
   tags = {
     Name = "openfireblocks-primary-ecs"
@@ -390,14 +387,15 @@ module "ecs_secondary" {
     aws = aws.secondary
   }
 
-  environment           = var.environment
-  cluster_name          = "openfireblocks-secondary"
-  vpc_id                = module.vpc_secondary.vpc_id
-  private_subnet_ids    = module.vpc_secondary.private_subnet_ids
-  public_subnet_ids     = module.vpc_secondary.public_subnet_ids
-  security_group_ids    = [aws_security_group.ecs_secondary.id]
+  environment               = var.environment
+  cluster_name              = "openfireblocks-secondary"
+  vpc_id                    = module.vpc_secondary.vpc_id
+  private_subnet_ids        = module.vpc_secondary.private_subnet_ids
+  public_subnet_ids         = module.vpc_secondary.public_subnet_ids
+  security_group_ids        = [aws_security_group.ecs_secondary.id]
+  kms_key_id                = aws_kms_key.secondary.arn
   enable_container_insights = true
-  cloudwatch_log_group_name  = aws_cloudwatch_log_group.ecs_secondary.name
+  cloudwatch_log_group_name = aws_cloudwatch_log_group.ecs_secondary.name
 
   tags = {
     Name = "openfireblocks-secondary-ecs"
@@ -475,48 +473,5 @@ resource "aws_s3_bucket" "backups_secondary" {
   }
 }
 
-# Outputs
-output "primary_vpc_id" {
-  value       = module.vpc_primary.vpc_id
-  description = "Primary region VPC ID"
-}
-
-output "secondary_vpc_id" {
-  value       = module.vpc_secondary.vpc_id
-  description = "Secondary region VPC ID"
-}
-
-output "primary_rds_endpoint" {
-  value       = module.rds_primary.db_instance_endpoint
-  description = "Primary RDS endpoint"
-}
-
-output "secondary_rds_endpoint" {
-  value       = module.rds_secondary.db_instance_endpoint
-  description = "Secondary RDS replica endpoint"
-}
-
-output "vault_primary_security_group_id" {
-  value       = aws_security_group.vault_primary.id
-  description = "Primary Vault security group"
-}
-
-output "ecs_primary_cluster_name" {
-  value       = module.ecs_primary.cluster_name
-  description = "Primary ECS cluster name"
-}
-
-output "ecs_secondary_cluster_name" {
-  value       = module.ecs_secondary.cluster_name
-  description = "Secondary ECS cluster name"
-}
-
-output "backup_bucket_name" {
-  value       = aws_s3_bucket.backups.id
-  description = "Backup S3 bucket name"
-}
-
-output "backup_secondary_bucket_name" {
-  value       = aws_s3_bucket.backups_secondary.id
-  description = "Secondary backup S3 bucket name"
-}
+# Outputs live in outputs.tf (kept as the single source of truth to avoid
+# duplicate-output errors between the two files).

@@ -95,13 +95,13 @@ output "vpc_peering_connection_id" {
 
 output "deployment_summary" {
   value = {
-    primary_region       = var.primary_region
-    secondary_region     = var.secondary_region
-    environment          = var.environment
-    database_name        = var.db_name
+    primary_region        = var.primary_region
+    secondary_region      = var.secondary_region
+    environment           = var.environment
+    database_name         = var.db_name
     backup_retention_days = var.backup_retention_days
-    vault_node_count     = var.vault_node_count
-    description          = "OpenFireblocks multi-region HA infrastructure deployed successfully"
+    vault_node_count      = var.vault_node_count
+    description           = "OpenFireblocks multi-region HA infrastructure deployed successfully"
   }
   description = "Deployment summary"
 }

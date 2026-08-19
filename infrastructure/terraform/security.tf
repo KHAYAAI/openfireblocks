@@ -94,12 +94,12 @@ resource "aws_security_group_rule" "rds_secondary_from_ecs" {
 }
 
 resource "aws_security_group_rule" "rds_secondary_egress" {
-  provider      = aws.secondary
-  type          = "egress"
-  from_port     = 0
-  to_port       = 0
-  protocol      = "-1"
-  cidr_blocks   = ["0.0.0.0/0"]
+  provider          = aws.secondary
+  type              = "egress"
+  from_port         = 0
+  to_port           = 0
+  protocol          = "-1"
+  cidr_blocks       = ["0.0.0.0/0"]
   security_group_id = aws_security_group.rds_secondary.id
 }
 
@@ -177,34 +177,34 @@ resource "aws_security_group" "vault_secondary" {
 }
 
 resource "aws_security_group_rule" "vault_secondary_api" {
-  provider      = aws.secondary
-  type          = "ingress"
-  from_port     = 8200
-  to_port       = 8200
-  protocol      = "tcp"
-  cidr_blocks   = [module.vpc_secondary.vpc_cidr]
+  provider          = aws.secondary
+  type              = "ingress"
+  from_port         = 8200
+  to_port           = 8200
+  protocol          = "tcp"
+  cidr_blocks       = [module.vpc_secondary.vpc_cidr]
   security_group_id = aws_security_group.vault_secondary.id
-  description   = "Vault API"
+  description       = "Vault API"
 }
 
 resource "aws_security_group_rule" "vault_secondary_cluster" {
-  provider      = aws.secondary
-  type          = "ingress"
-  from_port     = 8201
-  to_port       = 8201
-  protocol      = "tcp"
-  cidr_blocks   = [module.vpc_secondary.vpc_cidr]
+  provider          = aws.secondary
+  type              = "ingress"
+  from_port         = 8201
+  to_port           = 8201
+  protocol          = "tcp"
+  cidr_blocks       = [module.vpc_secondary.vpc_cidr]
   security_group_id = aws_security_group.vault_secondary.id
-  description   = "Vault cluster"
+  description       = "Vault cluster"
 }
 
 resource "aws_security_group_rule" "vault_secondary_egress" {
-  provider      = aws.secondary
-  type          = "egress"
-  from_port     = 0
-  to_port       = 0
-  protocol      = "-1"
-  cidr_blocks   = ["0.0.0.0/0"]
+  provider          = aws.secondary
+  type              = "egress"
+  from_port         = 0
+  to_port           = 0
+  protocol          = "-1"
+  cidr_blocks       = ["0.0.0.0/0"]
   security_group_id = aws_security_group.vault_secondary.id
 }
 
@@ -292,45 +292,45 @@ resource "aws_security_group" "ecs_secondary" {
 }
 
 resource "aws_security_group_rule" "ecs_secondary_alb" {
-  provider      = aws.secondary
-  type          = "ingress"
-  from_port     = 80
-  to_port       = 80
-  protocol      = "tcp"
-  cidr_blocks   = ["0.0.0.0/0"]
+  provider          = aws.secondary
+  type              = "ingress"
+  from_port         = 80
+  to_port           = 80
+  protocol          = "tcp"
+  cidr_blocks       = ["0.0.0.0/0"]
   security_group_id = aws_security_group.ecs_secondary.id
-  description   = "HTTP from internet"
+  description       = "HTTP from internet"
 }
 
 resource "aws_security_group_rule" "ecs_secondary_alb_https" {
-  provider      = aws.secondary
-  type          = "ingress"
-  from_port     = 443
-  to_port       = 443
-  protocol      = "tcp"
-  cidr_blocks   = ["0.0.0.0/0"]
+  provider          = aws.secondary
+  type              = "ingress"
+  from_port         = 443
+  to_port           = 443
+  protocol          = "tcp"
+  cidr_blocks       = ["0.0.0.0/0"]
   security_group_id = aws_security_group.ecs_secondary.id
-  description   = "HTTPS from internet"
+  description       = "HTTPS from internet"
 }
 
 resource "aws_security_group_rule" "ecs_secondary_internal" {
-  provider      = aws.secondary
-  type          = "ingress"
-  from_port     = 8000
-  to_port       = 8999
-  protocol      = "tcp"
-  cidr_blocks   = [module.vpc_secondary.vpc_cidr]
+  provider          = aws.secondary
+  type              = "ingress"
+  from_port         = 8000
+  to_port           = 8999
+  protocol          = "tcp"
+  cidr_blocks       = [module.vpc_secondary.vpc_cidr]
   security_group_id = aws_security_group.ecs_secondary.id
-  description   = "Internal services"
+  description       = "Internal services"
 }
 
 resource "aws_security_group_rule" "ecs_secondary_egress" {
-  provider      = aws.secondary
-  type          = "egress"
-  from_port     = 0
-  to_port       = 0
-  protocol      = "-1"
-  cidr_blocks   = ["0.0.0.0/0"]
+  provider          = aws.secondary
+  type              = "egress"
+  from_port         = 0
+  to_port           = 0
+  protocol          = "-1"
+  cidr_blocks       = ["0.0.0.0/0"]
   security_group_id = aws_security_group.ecs_secondary.id
 }
 

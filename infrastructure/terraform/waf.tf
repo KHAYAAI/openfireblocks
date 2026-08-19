@@ -6,7 +6,7 @@ resource "aws_wafv2_ip_set" "blocked_ips" {
   description        = "IP set for blocked addresses"
   scope              = "REGIONAL"
   ip_address_version = "IPV4"
-  address_set        = []
+  addresses          = []
 
   tags = merge(
     {

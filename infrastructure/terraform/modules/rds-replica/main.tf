@@ -1,31 +1,40 @@
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
+  }
+}
+
 resource "aws_db_instance" "replica" {
-  identifier              = "openfireblocks-${var.environment}-db-replica"
-  replicate_source_db    = var.source_db_instance_id
-  instance_class         = var.replica_instance_class
-  publicly_accessible    = var.publicly_accessible
+  identifier                 = "openfireblocks-${var.environment}-db-replica"
+  replicate_source_db        = var.source_db_instance_id
+  instance_class             = var.replica_instance_class
+  publicly_accessible        = var.publicly_accessible
   auto_minor_version_upgrade = false
-  multi_az               = false
-  skip_final_snapshot    = var.skip_final_snapshot
+  multi_az                   = false
+  skip_final_snapshot        = var.skip_final_snapshot
 
   vpc_security_group_ids = var.security_group_ids
   db_subnet_group_name   = var.db_subnet_group_name
 
-  performance_insights_enabled    = var.enable_performance_insights
+  performance_insights_enabled          = var.enable_performance_insights
   performance_insights_retention_period = 7
-  performance_insights_kms_key_id = var.kms_key_id
+  performance_insights_kms_key_id       = var.kms_key_id
 
-  monitoring_interval           = var.enable_enhanced_monitoring ? 60 : 0
-  monitoring_role_arn          = var.enable_enhanced_monitoring ? aws_iam_role.rds_monitoring[0].arn : null
-  enable_iam_database_authentication = true
+  monitoring_interval                 = var.enable_enhanced_monitoring ? 60 : 0
+  monitoring_role_arn                 = var.enable_enhanced_monitoring ? aws_iam_role.rds_monitoring[0].arn : null
+  iam_database_authentication_enabled = true
 
   enabled_cloudwatch_logs_exports = ["postgresql"]
 
-  storage_type   = "gp3"
-  iops           = 3000
+  storage_type       = "gp3"
+  iops               = 3000
   storage_throughput = 125
 
   backup_retention_period = 7
-  backup_window          = "00:00-01:00"
+  backup_window           = "00:00-01:00"
 
   tags = merge(
     var.tags,

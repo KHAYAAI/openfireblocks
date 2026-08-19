@@ -18,9 +18,9 @@ output "vault_target_group_arn" {
   value       = aws_lb_target_group.vault.arn
 }
 
-output "vault_certificate_arn" {
-  description = "Vault TLS certificate ARN"
-  value       = aws_acm_certificate.vault.arn
+output "vault_certificate_pem" {
+  description = "PEM certificate for the self-signed cert every Vault node presents on its listener (import into a client trust store to verify TLS without -tls-skip-verify)"
+  value       = tls_self_signed_cert.vault.cert_pem
 }
 
 output "cloudwatch_log_group_name" {
