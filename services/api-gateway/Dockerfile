@@ -1,25 +1,40 @@
-# Multi-stage build for the NestJS API gateway.
-FROM node:22-alpine AS build
+# Build stage
+FROM golang:1.21-alpine AS builder
+
 WORKDIR /app
 
-# Install all deps (including dev) to compile TypeScript.
-COPY package*.json ./
-RUN npm ci
+# Install build dependencies
+RUN apk add --no-cache gcc musl-dev
 
-COPY tsconfig*.json nest-cli.json ./
-COPY src ./src
-RUN npm run build
+# Copy go mod files
+COPY go.mod go.sum ./
 
-# Prune to production dependencies for the runtime image.
-RUN npm ci --omit=dev
+# Download dependencies
+RUN go mod download
 
-FROM node:22-alpine AS runtime
-WORKDIR /app
-ENV NODE_ENV=production
-COPY --from=build /app/node_modules ./node_modules
-COPY --from=build /app/dist ./dist
-COPY --from=build /app/package.json ./package.json
+# Copy source code
+COPY . .
 
-EXPOSE 3000
-USER node
-CMD ["node", "dist/main.js"]
+# Build application
+RUN CGO_ENABLED=1 GOOS=linux go build -a -installsuffix cgo -o api-gateway .
+
+# Runtime stage
+FROM alpine:3.18
+
+# Install ca-certificates for HTTPS
+RUN apk --no-cache add ca-certificates tzdata
+
+WORKDIR /root/
+
+# Copy binary from builder
+COPY --from=builder /app/api-gateway .
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+  CMD wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1
+
+# Expose port
+EXPOSE 8080
+
+# Run application
+CMD ["./api-gateway"]
