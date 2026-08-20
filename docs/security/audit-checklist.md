@@ -54,10 +54,26 @@ Status legend: ✅ done · 🟡 partial · ⬜ not started
 - ⬜ Regulatory reporting (SAR/CTR; POPIA/SARS for ZA)
 
 ## Fund-movement path
-- ⬜ **Threshold signing correctness**: `services/mpc-party`'s tss-lib
-  integration does not currently compile (struct field mismatches against
-  the actual keygen API) — this is the cryptographic core and must be
-  fixed and independently verified before any real funds touch this system
+- ⬜ **Threshold signing correctness**: `services/mpc-party` now compiles,
+  builds, vets clean, and its (pre-existing but never-before-runnable) test
+  suite passes — but it is **not the cryptographic core** and must not be
+  read as one. Its `TSSWrapper` is explicitly documented in-code as a
+  simplified placeholder that exercises the HTTP round-relay protocol
+  (fixed-count polling rounds) without performing valid threshold-ECDSA
+  math: `ExecuteRound3to7` "combines" public keys with XOR, and
+  `CombinePartialSignatures` sums partial signatures with plain big.Int
+  addition. It previously imported bnb-chain/tss-lib's package types
+  without ever constructing or driving a real `keygen.LocalParty` /
+  `signing.LocalParty` — that dependency has now been removed from
+  `go.mod` entirely (`go mod tidy` confirmed nothing in the package used
+  it) so the import no longer misrepresents what the code does. The
+  **actual** verified tss-lib integration — real `keygen.LocalParty`/
+  `signing.LocalParty`, producing an Ethereum-verified signature — is
+  `services/mpc-signer/tss/tss.go`, in-process only. Porting that
+  message-driven protocol onto mpc-party's live multi-party HTTP transport
+  is real, scoped work still ahead, tracked below and in
+  `services/mpc-signer`'s own Phase 2 note above — not something "fixing
+  compile errors" substitutes for.
 - 🟡 `services/settlement` broadcasts against real go-ethereum/Bitcoin Core
   APIs now (previously fabricated transaction hashes and unconditionally
   reported "confirmed"); not yet tested against a live testnet from this

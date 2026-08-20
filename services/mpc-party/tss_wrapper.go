@@ -11,41 +11,53 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/crypto"
-	tss "github.com/bnb-chain/tss-lib/v2/tss"
-	"github.com/bnb-chain/tss-lib/v2/common"
-	"github.com/bnb-chain/tss-lib/v2/ecdsa/keygen"
-	"github.com/bnb-chain/tss-lib/v2/ecdsa/signing"
 )
 
-// TSSWrapper wraps Binance TSS-lib functionality for DKG and threshold signing.
-// Uses the official bnb-chain/tss-lib library for production-grade cryptography.
+// TSSWrapper is a simplified, non-cryptographically-secure stand-in for a
+// real threshold-ECDSA DKG/signing round, used to exercise mpc-party's HTTP
+// round-relay protocol (fixed-count polling rounds: GET /round/N/data,
+// POST /round/N/broadcast) end-to-end.
+//
+// It is NOT the real MPC implementation and must never be used to protect
+// real funds: ExecuteRound3to7 "combines" public keys with XOR (not a valid
+// elliptic-curve operation) and CombinePartialSignatures sums partial
+// signatures with big.Int addition (not valid ECDSA signature combination).
+// Despite the name, it does not call into bnb-chain/tss-lib's actual
+// protocol -- the earlier version of this file imported tss-lib's package
+// types (tss.Message, keygen.LocalPartySaveData) without ever constructing
+// or driving a keygen.LocalParty or signing.LocalParty, which is what made
+// it look like a real integration without being one.
+//
+// The genuine tss-lib integration -- real keygen.LocalParty/signing.LocalParty
+// message-driven DKG and signing, verified end-to-end against a real
+// Ethereum signature -- lives in services/mpc-signer/tss/tss.go. That
+// implementation currently only drives all parties in-process on one host;
+// porting its message-relay model onto this service's live multi-party HTTP
+// transport (arbitrary async tss.Message counts, not a fixed 7-round poll)
+// is tracked separately in docs/security/audit-checklist.md and is real,
+// scoped work in its own right, not a byproduct of fixing this file's
+// compile errors.
 type TSSWrapper struct {
-	partyID           int
-	n                 int
-	k                 int
-	keyShare          *keygen.LocalPartySaveData
-	publicKey         *big.Int
-	threshold         int
-	totalParties      int
-	outgoingMessages  chan tss.Message
-	incomingMessages  map[int][]tss.Message
-	roundRx           chan *tss.Message
-	roundComplete     chan *keygen.LocalPartySaveData
-	signingRoundReady chan bool
+	partyID      int
+	n            int
+	k            int
+	keyShare     *big.Int
+	commitments  map[int]*big.Int
+	dlProof      []byte
+	publicKey    *big.Int
+	threshold    int
+	totalParties int
 }
 
 // NewTSSWrapper creates a new TSS wrapper for a party.
 func NewTSSWrapper(partyID, n, k int) *TSSWrapper {
 	return &TSSWrapper{
-		partyID:          partyID,
-		n:                n,
-		k:                k,
-		threshold:        k,
-		totalParties:     n,
-		outgoingMessages: make(chan tss.Message, 100),
-		incomingMessages: make(map[int][]tss.Message),
-		roundRx:          make(chan *tss.Message, 100),
-		roundComplete:    make(chan *keygen.LocalPartySaveData),
+		partyID:      partyID,
+		n:            n,
+		k:            k,
+		threshold:    k,
+		totalParties: n,
+		commitments:  make(map[int]*big.Int),
 	}
 }
 
@@ -267,7 +279,7 @@ func (t *TSSWrapper) CombinePartialSignatures(
 
 	// Combine signatures (in real threshold scheme, this involves elliptic curve arithmetic)
 	combined := big.NewInt(0)
-	for partyID, sigHex := range partialSignatures {
+	for _, sigHex := range partialSignatures {
 		sig := new(big.Int)
 		sig.SetString(sigHex, 16)
 		combined.Add(combined, sig)

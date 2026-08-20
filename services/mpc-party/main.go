@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -11,7 +10,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -19,13 +17,13 @@ import (
 
 // PartyServer represents an MPC DKG party service.
 type PartyServer struct {
-	partyID      int
-	config       *PartyConfig
-	state        *DKGPartyState
-	tss          *TSSWrapper
-	stateMu      sync.RWMutex
-	roundDataMu  sync.RWMutex
-	roundData    map[int]*RoundData
+	partyID     int
+	config      *PartyConfig
+	state       *DKGPartyState
+	tss         *TSSWrapper
+	stateMu     sync.RWMutex
+	roundDataMu sync.RWMutex
+	roundData   map[int]*RoundData
 }
 
 // Prometheus metrics
@@ -67,7 +65,6 @@ func NewPartyServer(partyID int) *PartyServer {
 
 // HandleRoundStart handles the signal to start a new DKG round.
 func (ps *PartyServer) HandleRoundStart(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
 	var signal RoundStartSignal
 
 	if err := json.NewDecoder(r.Body).Decode(&signal); err != nil {
@@ -78,8 +75,17 @@ func (ps *PartyServer) HandleRoundStart(w http.ResponseWriter, r *http.Request) 
 	log.Printf("party %d received round start signal for round %d", ps.partyID, signal.RoundNum)
 
 	ps.stateMu.Lock()
+	if ps.state == nil {
+		ps.state = &DKGPartyState{
+			PartyID:              ps.partyID,
+			ReceivedRoundDataMap: make(map[int]*RoundData),
+			CreatedAt:            time.Now(),
+		}
+	}
+	ps.state.CeremonyID = signal.CeremonyID
 	ps.state.RoundNum = signal.RoundNum
 	ps.state.Status = fmt.Sprintf("round%d", signal.RoundNum)
+	ps.state.UpdatedAt = time.Now()
 	ps.stateMu.Unlock()
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "acknowledged"})
@@ -188,7 +194,6 @@ func (ps *PartyServer) HandleRoundData(w http.ResponseWriter, r *http.Request) {
 
 // HandleBroadcastRoundData handles receiving round data from other parties (fan-in).
 func (ps *PartyServer) HandleBroadcastRoundData(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
 	var req BroadcastRoundDataRequest
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -258,7 +263,7 @@ func (ps *PartyServer) HandleHealth(w http.ResponseWriter, r *http.Request) {
 	ps.stateMu.RUnlock()
 
 	writeJSON(w, http.StatusOK, map[string]string{
-		"status": status,
+		"status":  status,
 		"partyId": fmt.Sprintf("%d", ps.partyID),
 	})
 }
@@ -307,10 +312,10 @@ func main() {
 
 	// Initialize state
 	ps.state = &DKGPartyState{
-		PartyID:          partyID,
-		Status:           "pending",
-		CreatedAt:        time.Now(),
-		UpdatedAt:        time.Now(),
+		PartyID:              partyID,
+		Status:               "pending",
+		CreatedAt:            time.Now(),
+		UpdatedAt:            time.Now(),
 		ReceivedRoundDataMap: make(map[int]*RoundData),
 	}
 

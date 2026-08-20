@@ -38,12 +38,16 @@ produce, organized by why.
   activities that find different classes of bugs — the code-level fixes in
   this session do not substitute for one.
 - **Independent cryptographic audit of the threshold signing
-  implementation.** Given that `services/mpc-party`'s tss-lib integration
-  currently has real compile errors (see the audit checklist), this is not
-  yet even ready to *submit* for a crypto audit — but even once it compiles
-  and passes internal tests, a system whose entire value proposition is "no
-  single party can steal funds" needs review by cryptographers who didn't
-  write the code, before real money touches it.
+  implementation.** `services/mpc-party` now compiles and its tests pass,
+  but per the audit checklist it is explicitly a non-cryptographic
+  placeholder (XOR "key combination," summed "partial signatures" — not
+  valid threshold-ECDSA math), not the real implementation. The genuine
+  tss-lib integration (`services/mpc-signer/tss`) only runs in-process on
+  one host so far. Neither is ready to *submit* for a crypto audit yet —
+  and even once a real live-multi-party version exists and passes internal
+  tests, a system whose entire value proposition is "no single party can
+  steal funds" needs review by cryptographers who didn't write the code,
+  before real money touches it.
 - **Insurance underwriting.** Crime/custody insurance, which institutional
   customers will typically require before onboarding, requires an insurer's
   own risk assessment — informed by, but not replaceable by, the security

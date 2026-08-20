@@ -4,9 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
+
+	"github.com/gorilla/mux"
 )
 
 func TestHandleRoundStart(t *testing.T) {
@@ -40,9 +44,9 @@ func TestHandleRoundDataRound1(t *testing.T) {
 	ps := NewPartyServer(1)
 	ps.tss = NewTSSWrapper(1, 7, 3)
 	ps.state = &DKGPartyState{
-		PartyID: 1,
+		PartyID:  1,
 		RoundNum: 1,
-		Status: "round1",
+		Status:   "round1",
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/round/1/data", nil)
@@ -240,15 +244,18 @@ func TestTSSWrapperComputePartialSignature(t *testing.T) {
 }
 
 func TestTSSWrapperCombineSignatures(t *testing.T) {
+	// NewTSSWrapper(1, 7, 3): k=3, so combining requires k+1=4 signatures
+	// (the documented 4-of-7 default quorum) -- three is below threshold.
 	wrapper := NewTSSWrapper(1, 7, 3)
 
 	partialSigs := map[int]string{
 		1: "1234567890abcdef",
 		2: "fedcba0987654321",
 		3: "aaaaaabbbbbbcccc",
+		4: "0011223344556677",
 	}
 
-	combined, err := wrapper.CombinePartialSignatures(partialSigs, []int{1, 2, 3})
+	combined, err := wrapper.CombinePartialSignatures(partialSigs, []int{1, 2, 3, 4})
 	if err != nil {
 		t.Fatalf("CombinePartialSignatures failed: %v", err)
 	}
@@ -257,12 +264,3 @@ func TestTSSWrapperCombineSignatures(t *testing.T) {
 		t.Error("expected non-empty combined signature")
 	}
 }
-
-// Add missing imports
-import (
-	"fmt"
-	"math/big"
-	"time"
-
-	"github.com/gorilla/mux"
-)
