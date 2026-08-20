@@ -40,11 +40,26 @@ Status legend: ✅ done · 🟡 partial · ⬜ not started
 ## Compliance & billing
 - 🟡 Usage metering (per-tenant signed/broadcast counts) — billing engine
   (Kill Bill) integration still to wire
-- ⬜ SOC 2 Type II
+- 🟡 SOC 2 Type II — access control policy, incident response plan, and
+  vendor risk assessment drafted (`docs/security/`); requires an actual
+  observation period and independent audit, which no amount of code
+  produces
 - ⬜ ISO 27001
-- 🟡 OFAC sanctions screening (address denylist enforced in policy-service;
-  needs an automated feed sync + AML/KYC onboarding)
+- 🟡 OFAC sanctions screening — no provider wired up (see vendor risk
+  assessment), but `services/compliance` and `services/policy` now fail
+  closed (explicit error) on an unscreened transaction rather than the
+  previous behavior of silently reporting every address as clear
 - ⬜ Regulatory reporting (SAR/CTR; POPIA/SARS for ZA)
+
+## Fund-movement path
+- ⬜ **Threshold signing correctness**: `services/mpc-party`'s tss-lib
+  integration does not currently compile (struct field mismatches against
+  the actual keygen API) — this is the cryptographic core and must be
+  fixed and independently verified before any real funds touch this system
+- 🟡 `services/settlement` broadcasts against real go-ethereum/Bitcoin Core
+  APIs now (previously fabricated transaction hashes and unconditionally
+  reported "confirmed"); not yet tested against a live testnet from this
+  environment
 
 ## Go/No-go
 
