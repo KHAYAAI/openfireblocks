@@ -43,22 +43,23 @@ type ComplianceDashboard struct {
 	LastUpdatedAt   time.Time          `json:"last_updated_at"`
 }
 
-// ComplianceMonitor monitors compliance metrics
+// ComplianceMonitor monitors compliance metrics. Backed by PostgreSQL
+// (compliance_metrics / compliance_alerts, migration 010) rather than
+// in-memory maps -- see AuditManager's doc comment in audit.go for why.
 type ComplianceMonitor struct {
-	metrics map[string]ComplianceMetric
-	alerts  map[string]ComplianceAlert
+	db *PostgresDB
 }
 
 // NewComplianceMonitor creates a new compliance monitor
-func NewComplianceMonitor() *ComplianceMonitor {
-	return &ComplianceMonitor{
-		metrics: make(map[string]ComplianceMetric),
-		alerts:  make(map[string]ComplianceAlert),
-	}
+func NewComplianceMonitor(db *PostgresDB) *ComplianceMonitor {
+	return &ComplianceMonitor{db: db}
 }
 
-// RecordMetric records a compliance metric
-func (c *ComplianceMonitor) RecordMetric(ctx context.Context, metric ComplianceMetric) error {
+// RecordMetric records a compliance metric. Takes metric by pointer so the
+// ID/status/timestamp it assigns are visible to the caller (an HTTP handler
+// echoing the recorded metric back needs the assigned values, not the
+// pre-assignment request body).
+func (c *ComplianceMonitor) RecordMetric(ctx context.Context, metric *ComplianceMetric) error {
 	if metric.ID == "" {
 		metric.ID = fmt.Sprintf("metric-%d", time.Now().UnixNano())
 	}
@@ -72,16 +73,23 @@ func (c *ComplianceMonitor) RecordMetric(ctx context.Context, metric ComplianceM
 		metric.Status = "warning"
 	} else {
 		metric.Status = "fail"
-		// Create alert for failed metric
-		c.createAlert(ctx, metric)
 	}
 
-	c.metrics[metric.ID] = metric
+	if err := c.db.CreateComplianceMetric(ctx, metric); err != nil {
+		return fmt.Errorf("failed to record metric: %w", err)
+	}
+
+	if metric.Status == "fail" {
+		if err := c.createAlert(ctx, *metric); err != nil {
+			return fmt.Errorf("failed to create alert for failed metric: %w", err)
+		}
+	}
+
 	return nil
 }
 
 // createAlert creates a compliance alert
-func (c *ComplianceMonitor) createAlert(ctx context.Context, metric ComplianceMetric) {
+func (c *ComplianceMonitor) createAlert(ctx context.Context, metric ComplianceMetric) error {
 	alert := ComplianceAlert{
 		ID:        fmt.Sprintf("alert-%d", time.Now().UnixNano()),
 		MetricID:  metric.ID,
@@ -102,61 +110,39 @@ func (c *ComplianceMonitor) createAlert(ctx context.Context, metric ComplianceMe
 	alert.Message = fmt.Sprintf("Metric %s below threshold: %.2f < %.2f %s",
 		metric.Name, metric.Value, metric.Threshold, metric.Unit)
 
-	c.alerts[alert.ID] = alert
+	return c.db.CreateComplianceAlert(ctx, &alert)
 }
 
 // GetMetric retrieves a specific metric
 func (c *ComplianceMonitor) GetMetric(ctx context.Context, metricID string) (*ComplianceMetric, error) {
-	metric, exists := c.metrics[metricID]
-	if !exists {
-		return nil, fmt.Errorf("metric not found: %s", metricID)
-	}
-	return &metric, nil
+	return c.db.GetComplianceMetric(ctx, metricID)
 }
 
-// GetMetricsByCategory retrieves metrics by category
+// GetMetricsByCategory retrieves the latest reading of each metric in a category
 func (c *ComplianceMonitor) GetMetricsByCategory(ctx context.Context, category string) ([]ComplianceMetric, error) {
-	var result []ComplianceMetric
-	for _, metric := range c.metrics {
-		if metric.Category == category {
-			result = append(result, metric)
-		}
-	}
-	return result, nil
+	return c.db.GetLatestComplianceMetricsByCategory(ctx, category)
 }
 
 // GetAlerts retrieves open alerts
 func (c *ComplianceMonitor) GetAlerts(ctx context.Context) ([]ComplianceAlert, error) {
-	var alerts []ComplianceAlert
-	for _, alert := range c.alerts {
-		if alert.Status == "open" || alert.Status == "acknowledged" {
-			alerts = append(alerts, alert)
-		}
-	}
-	return alerts, nil
+	return c.db.ListOpenComplianceAlerts(ctx)
 }
 
 // AcknowledgeAlert acknowledges an alert
 func (c *ComplianceMonitor) AcknowledgeAlert(ctx context.Context, alertID string) error {
-	alert, exists := c.alerts[alertID]
-	if !exists {
+	alert, err := c.db.GetComplianceAlert(ctx, alertID)
+	if err != nil {
 		return fmt.Errorf("alert not found: %s", alertID)
 	}
-	alert.Status = "acknowledged"
-	c.alerts[alertID] = alert
-	return nil
+	return c.db.UpdateComplianceAlertStatus(ctx, alert.ID, "acknowledged", alert.ResolvedAt)
 }
 
 // ResolveAlert resolves an alert
 func (c *ComplianceMonitor) ResolveAlert(ctx context.Context, alertID string) error {
-	alert, exists := c.alerts[alertID]
-	if !exists {
+	if _, err := c.db.GetComplianceAlert(ctx, alertID); err != nil {
 		return fmt.Errorf("alert not found: %s", alertID)
 	}
-	alert.Status = "resolved"
-	alert.ResolvedAt = time.Now()
-	c.alerts[alertID] = alert
-	return nil
+	return c.db.UpdateComplianceAlertStatus(ctx, alertID, "resolved", time.Now())
 }
 
 // GenerateDashboard generates a compliance dashboard
@@ -169,13 +155,16 @@ func (c *ComplianceMonitor) GenerateDashboard(ctx context.Context) (*ComplianceD
 		LastUpdatedAt: time.Now(),
 	}
 
-	// Collect all metrics
-	for _, metric := range c.metrics {
-		dashboard.Metrics = append(dashboard.Metrics, metric)
+	metrics, err := c.db.GetLatestComplianceMetrics(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load metrics for dashboard: %w", err)
 	}
+	dashboard.Metrics = metrics
 
-	// Collect open alerts
-	openAlerts, _ := c.GetAlerts(ctx)
+	openAlerts, err := c.GetAlerts(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load alerts for dashboard: %w", err)
+	}
 	dashboard.Alerts = openAlerts
 
 	// Calculate overall compliance score
@@ -191,14 +180,13 @@ func (c *ComplianceMonitor) GenerateDashboard(ctx context.Context) (*ComplianceD
 
 	// Determine overall status
 	if len(openAlerts) > 0 {
-		// Check for critical alerts
+		dashboard.OverallStatus = "warning"
 		for _, alert := range openAlerts {
 			if alert.Severity == "critical" {
 				dashboard.OverallStatus = "non_compliant"
-				return dashboard, nil
+				break
 			}
 		}
-		dashboard.OverallStatus = "warning"
 	} else {
 		dashboard.OverallStatus = "compliant"
 	}

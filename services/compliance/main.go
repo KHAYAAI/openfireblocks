@@ -17,6 +17,9 @@ func main() {
 	onfido := NewOnfidoService(onfidoAPIKey, db)
 	kycaml := NewKYCAMLService(db)
 	reports := NewComplianceReportService(db)
+	audits := NewAuditManager(db)
+	incidents := NewIncidentManager(db)
+	monitor := NewComplianceMonitor(db)
 
 	mux := http.NewServeMux()
 
@@ -34,6 +37,30 @@ func main() {
 
 	mux.HandleFunc("/v1/reports/audit", reports.HandleGenerateAuditReport)
 	mux.HandleFunc("/v1/reports/audit-logs", reports.HandleGetAuditLogs)
+
+	mux.HandleFunc("/v1/audits/plan", audits.HandlePlanAudit)
+	mux.HandleFunc("/v1/audits/get", audits.HandleGetAudit)
+	mux.HandleFunc("/v1/audits/list", audits.HandleListAuditsByStatus)
+	mux.HandleFunc("/v1/audits/start", audits.HandleStartAudit)
+	mux.HandleFunc("/v1/audits/complete", audits.HandleCompleteAudit)
+	mux.HandleFunc("/v1/audits/findings/add", audits.HandleAddFinding)
+	mux.HandleFunc("/v1/audits/findings/open", audits.HandleListOpenFindings)
+	mux.HandleFunc("/v1/audits/findings/status", audits.HandleUpdateFindingStatus)
+	mux.HandleFunc("/v1/audits/report", audits.HandleGenerateAuditReport)
+
+	mux.HandleFunc("/v1/incidents/report", incidents.HandleReportIncident)
+	mux.HandleFunc("/v1/incidents/get", incidents.HandleGetIncident)
+	mux.HandleFunc("/v1/incidents/list", incidents.HandleListIncidents)
+	mux.HandleFunc("/v1/incidents/status", incidents.HandleUpdateIncidentStatus)
+	mux.HandleFunc("/v1/incidents/acknowledge", incidents.HandleAcknowledgeIncident)
+	mux.HandleFunc("/v1/incidents/metrics", incidents.HandleGetIncidentMetrics)
+
+	mux.HandleFunc("/v1/compliance/metrics/record", monitor.HandleRecordMetric)
+	mux.HandleFunc("/v1/compliance/metrics/category", monitor.HandleGetMetricsByCategory)
+	mux.HandleFunc("/v1/compliance/alerts", monitor.HandleGetAlerts)
+	mux.HandleFunc("/v1/compliance/alerts/acknowledge", monitor.HandleAcknowledgeAlert)
+	mux.HandleFunc("/v1/compliance/alerts/resolve", monitor.HandleResolveAlert)
+	mux.HandleFunc("/v1/compliance/dashboard", monitor.HandleGenerateDashboard)
 
 	port := os.Getenv("PORT")
 	if port == "" {

@@ -145,14 +145,17 @@ under pressure:
   resource/changes with timestamps. Real, queryable.
 - **Compliance checks**: `compliance_checks` table records KYC/AML/risk
   assessment outcomes.
-- **Incident tracking**: `services/compliance/incident_response.go` defines
-  a full `SecurityIncident`/`IncidentManager` data model — **but it is
-  in-memory only** (a Go map), not persisted to Postgres. It does not
-  survive a process restart and is not shared across service instances.
-  Until this is backed by real storage, treat it as a data model reference,
-  not a working incident tracker — use an external tool (a shared doc,
-  PagerDuty, Jira) as the actual system of record for incidents until this
-  gap closes.
+- **Incident tracking**: `services/compliance/incident_response.go`'s
+  `SecurityIncident`/`IncidentManager` is now backed by PostgreSQL
+  (`security_incidents`, `incident_response_plans` — migration
+  `010_compliance_audits_incidents_metrics.sql`), not an in-memory map. It
+  survives a process restart and is shared across service instances. HTTP
+  endpoints exist for reporting, acknowledging, updating status, and
+  querying incidents (`/v1/incidents/*` on the compliance service) —
+  verified end-to-end against a live PostgreSQL instance, including that a
+  reported incident's timeline persists across separate requests. What this
+  does *not* give you: paging/on-call integration (see below), automated
+  detection, or a UI — it's a durable record, not an alerting system.
 - **Alerting**: CloudWatch alarms and Prometheus alert rules are configured
   (`infrastructure/monitoring/`) for infrastructure metrics. No automated
   security-specific detection (e.g., anomalous signing pattern alerting) is
@@ -163,9 +166,7 @@ under pressure:
 
 ## 9. Action Items to Close the Gap
 
-- [ ] Persist `IncidentManager` state to PostgreSQL (or adopt an external
-      incident tool as system of record and stop maintaining the in-memory
-      one in parallel).
+- [x] Persist `IncidentManager` state to PostgreSQL.
 - [ ] Wire real on-call paging (PagerDuty/Opsgenie) to CloudWatch/Prometheus
       alerts.
 - [ ] Build anomalous-signing-pattern detection beyond synchronous policy

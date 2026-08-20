@@ -116,18 +116,19 @@ type IncidentResponsePlan struct {
 	TestFrequency    time.Duration `json:"test_frequency"`
 }
 
-// IncidentManager manages security incidents
+// IncidentManager manages security incidents. Backed by PostgreSQL
+// (security_incidents / incident_response_plans, migration 010) rather than
+// in-memory maps -- see AuditManager's doc comment in audit.go for why: this
+// is SOC 2/breach-notification evidence, and it has to survive a process
+// restart and be visible to every instance of the service, not just the one
+// that happened to handle the report.
 type IncidentManager struct {
-	incidents map[string]*SecurityIncident
-	plans     map[string]*IncidentResponsePlan
+	db *PostgresDB
 }
 
 // NewIncidentManager creates a new incident manager
-func NewIncidentManager() *IncidentManager {
-	return &IncidentManager{
-		incidents: make(map[string]*SecurityIncident),
-		plans:     make(map[string]*IncidentResponsePlan),
-	}
+func NewIncidentManager(db *PostgresDB) *IncidentManager {
+	return &IncidentManager{db: db}
 }
 
 // ReportIncident creates a new security incident report
@@ -146,14 +147,16 @@ func (i *IncidentManager) ReportIncident(ctx context.Context, incident *Security
 		Details:   "Initial incident report received",
 	})
 
-	i.incidents[incident.ID] = incident
+	if err := i.db.CreateSecurityIncident(ctx, incident); err != nil {
+		return nil, fmt.Errorf("failed to report incident: %w", err)
+	}
 	return incident, nil
 }
 
 // AcknowledgeIncident acknowledges receipt of an incident
 func (i *IncidentManager) AcknowledgeIncident(ctx context.Context, incidentID string, acknowledgedBy string) error {
-	incident, exists := i.incidents[incidentID]
-	if !exists {
+	incident, err := i.db.GetSecurityIncident(ctx, incidentID)
+	if err != nil {
 		return fmt.Errorf("incident not found: %s", incidentID)
 	}
 
@@ -165,13 +168,13 @@ func (i *IncidentManager) AcknowledgeIncident(ctx context.Context, incidentID st
 		UpdatedBy: acknowledgedBy,
 	})
 
-	return nil
+	return i.db.UpdateSecurityIncident(ctx, incident)
 }
 
 // UpdateIncidentStatus updates the status of an incident
 func (i *IncidentManager) UpdateIncidentStatus(ctx context.Context, incidentID string, newStatus IncidentStatus, details string, updatedBy string) error {
-	incident, exists := i.incidents[incidentID]
-	if !exists {
+	incident, err := i.db.GetSecurityIncident(ctx, incidentID)
+	if err != nil {
 		return fmt.Errorf("incident not found: %s", incidentID)
 	}
 
@@ -214,38 +217,31 @@ func (i *IncidentManager) UpdateIncidentStatus(ctx context.Context, incidentID s
 		})
 	}
 
-	return nil
+	return i.db.UpdateSecurityIncident(ctx, incident)
 }
 
 // GetIncident retrieves an incident
 func (i *IncidentManager) GetIncident(ctx context.Context, incidentID string) (*SecurityIncident, error) {
-	incident, exists := i.incidents[incidentID]
-	if !exists {
-		return nil, fmt.Errorf("incident not found: %s", incidentID)
-	}
-	return incident, nil
+	return i.db.GetSecurityIncident(ctx, incidentID)
 }
 
-// ListIncidents lists incidents by status or severity
+// ListIncidents lists incidents by status
 func (i *IncidentManager) ListIncidents(ctx context.Context, status IncidentStatus) ([]SecurityIncident, error) {
-	var result []SecurityIncident
-	for _, incident := range i.incidents {
-		if incident.Status == status {
-			result = append(result, *incident)
-		}
-	}
-	return result, nil
+	return i.db.ListSecurityIncidentsByStatus(ctx, string(status))
 }
 
-// CalculateMTTD calculates Mean Time To Detect
+// CalculateMTTD calculates Mean Time To Detect across all recorded incidents
 func (i *IncidentManager) CalculateMTTD(ctx context.Context) time.Duration {
+	incidents, err := i.db.ListSecurityIncidents(ctx)
+	if err != nil {
+		return 0
+	}
+
 	var totalDetectionTime time.Duration
 	var count int
-
-	for _, incident := range i.incidents {
+	for _, incident := range incidents {
 		if !incident.DiscoveredAt.IsZero() && !incident.ReportedAt.IsZero() {
-			detectionTime := incident.ReportedAt.Sub(incident.DiscoveredAt)
-			totalDetectionTime += detectionTime
+			totalDetectionTime += incident.ReportedAt.Sub(incident.DiscoveredAt)
 			count++
 		}
 	}
@@ -253,16 +249,19 @@ func (i *IncidentManager) CalculateMTTD(ctx context.Context) time.Duration {
 	if count == 0 {
 		return 0
 	}
-
 	return totalDetectionTime / time.Duration(count)
 }
 
-// CalculateMTTR calculates Mean Time To Recovery
+// CalculateMTTR calculates Mean Time To Recovery across all recorded incidents
 func (i *IncidentManager) CalculateMTTR(ctx context.Context) time.Duration {
+	incidents, err := i.db.ListSecurityIncidents(ctx)
+	if err != nil {
+		return 0
+	}
+
 	var totalRecoveryTime time.Duration
 	var count int
-
-	for _, incident := range i.incidents {
+	for _, incident := range incidents {
 		if incident.MTTR > 0 {
 			totalRecoveryTime += incident.MTTR
 			count++
@@ -272,7 +271,6 @@ func (i *IncidentManager) CalculateMTTR(ctx context.Context) time.Duration {
 	if count == 0 {
 		return 0
 	}
-
 	return totalRecoveryTime / time.Duration(count)
 }
 
@@ -283,7 +281,6 @@ func (i *IncidentManager) NotifyStakeholders(ctx context.Context, incidentID str
 		return err
 	}
 
-	// Create pending notifications
 	for _, recipient := range recipients {
 		notification := PendingNotification{
 			ID:          fmt.Sprintf("notif-%d", time.Now().UnixNano()),
@@ -292,7 +289,6 @@ func (i *IncidentManager) NotifyStakeholders(ctx context.Context, incidentID str
 			Status:      "pending",
 		}
 
-		// Determine notification type based on severity
 		if incident.Severity == IncidentSeverityCritical {
 			notification.RecipientType = "regulator"
 			notification.NotificationType = "GDPR_breach_notification"
@@ -306,7 +302,7 @@ func (i *IncidentManager) NotifyStakeholders(ctx context.Context, incidentID str
 
 	incident.NotificationsRequired = len(recipients) > 0
 
-	return nil
+	return i.db.UpdateSecurityIncident(ctx, incident)
 }
 
 // ConductPostIncidentReview conducts a post-incident review
@@ -327,7 +323,7 @@ func (i *IncidentManager) ConductPostIncidentReview(ctx context.Context, inciden
 		UpdatedBy: conductedBy[0],
 	})
 
-	return nil
+	return i.db.UpdateSecurityIncident(ctx, incident)
 }
 
 // CreateIncidentResponsePlan creates a response plan
@@ -336,17 +332,12 @@ func (i *IncidentManager) CreateIncidentResponsePlan(ctx context.Context, plan *
 		plan.ID = fmt.Sprintf("irplan-%d", time.Now().UnixNano())
 	}
 
-	i.plans[plan.ID] = plan
-	return nil
+	return i.db.CreateIncidentResponsePlan(ctx, plan)
 }
 
 // GetIncidentResponsePlan retrieves a response plan
 func (i *IncidentManager) GetIncidentResponsePlan(ctx context.Context, planID string) (*IncidentResponsePlan, error) {
-	plan, exists := i.plans[planID]
-	if !exists {
-		return nil, fmt.Errorf("response plan not found: %s", planID)
-	}
-	return plan, nil
+	return i.db.GetIncidentResponsePlan(ctx, planID)
 }
 
 // IncidentMetrics provides incident metrics
@@ -361,13 +352,18 @@ type IncidentMetrics struct {
 
 // GetIncidentMetrics returns incident metrics
 func (i *IncidentManager) GetIncidentMetrics(ctx context.Context, mttdTarget, mttrTarget time.Duration) *IncidentMetrics {
+	incidents, err := i.db.ListSecurityIncidents(ctx)
+	if err != nil {
+		return &IncidentMetrics{}
+	}
+
 	metrics := &IncidentMetrics{
-		TotalIncidents: len(i.incidents),
+		TotalIncidents: len(incidents),
 		AverageMTTD:    i.CalculateMTTD(ctx),
 		AverageMTTR:    i.CalculateMTTR(ctx),
 	}
 
-	for _, incident := range i.incidents {
+	for _, incident := range incidents {
 		if incident.Severity == IncidentSeverityCritical {
 			metrics.CriticalIncidents++
 		}

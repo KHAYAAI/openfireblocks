@@ -409,13 +409,45 @@ func (p *PostgresDB) complianceStats(ctx context.Context, where string, args ...
 	return &stats, nil
 }
 
-// GetIncidents has no backing table: incident_response.go's IncidentManager
-// is in-memory only (not part of this pass -- see the compliance-fixes
-// summary). Returns an empty slice rather than querying a table that
-// doesn't exist, so callers get "no incidents on record" honestly instead
-// of an error, without this function silently inventing incident data.
+// GetIncidents backs reporting.go's audit/compliance reports. It reads the
+// same security_incidents table incident_response.go's IncidentManager now
+// writes to, and reshapes each row into the lightweight Incident type this
+// report uses (distinct from SecurityIncident -- see the type doc comment
+// in reporting.go).
 func (p *PostgresDB) GetIncidents(ctx context.Context, startDate, endDate time.Time) ([]*Incident, error) {
-	return []*Incident{}, nil
+	rows, err := p.db.QueryContext(ctx, `
+		SELECT `+securityIncidentColumns+`
+		FROM security_incidents
+		WHERE reported_at BETWEEN $1 AND $2
+		ORDER BY reported_at DESC
+	`, startDate, endDate)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query incidents: %w", err)
+	}
+	defer rows.Close()
+
+	var incidents []*Incident
+	for rows.Next() {
+		si, err := scanSecurityIncident(rows)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan incident row: %w", err)
+		}
+		incident := &Incident{
+			IncidentID:  si.ID,
+			Type:        string(si.Type),
+			Severity:    string(si.Severity),
+			Description: si.Description,
+			Status:      string(si.Status),
+		}
+		if !si.DiscoveredAt.IsZero() {
+			incident.DetectedAt = si.DiscoveredAt.Format(time.RFC3339)
+		}
+		if !si.ResolvedAt.IsZero() {
+			incident.ResolvedAt = si.ResolvedAt.Format(time.RFC3339)
+		}
+		incidents = append(incidents, incident)
+	}
+	return incidents, rows.Err()
 }
 
 func nullableTime(t time.Time) interface{} {

@@ -41,7 +41,9 @@ Status legend: ✅ done · 🟡 partial · ⬜ not started
 - 🟡 Usage metering (per-tenant signed/broadcast counts) — billing engine
   (Kill Bill) integration still to wire
 - 🟡 SOC 2 Type II — access control policy, incident response plan, and
-  vendor risk assessment drafted (`docs/security/`); requires an actual
+  vendor risk assessment drafted (`docs/security/`); audit/incident/
+  compliance-metric evidence trail (`services/compliance`) is now
+  PostgreSQL-backed rather than in-memory; still requires an actual
   observation period and independent audit, which no amount of code
   produces
 - ⬜ ISO 27001

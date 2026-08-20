@@ -95,20 +95,18 @@ type AuditChecklist struct {
 	TestedBy     string    `json:"tested_by"`
 }
 
-// AuditManager manages security audits
+// AuditManager manages security audits. Backed by PostgreSQL (security_audits
+// / audit_findings / audit_checklists, migration 010) rather than in-memory
+// maps: this data is SOC 2 evidence, and evidence that doesn't survive a
+// process restart or isn't visible to any other instance of the service
+// isn't durable evidence.
 type AuditManager struct {
-	audits     map[string]*SecurityAudit
-	findings   map[string]*AuditFinding
-	checklists map[string]*AuditChecklist
+	db *PostgresDB
 }
 
 // NewAuditManager creates a new audit manager
-func NewAuditManager() *AuditManager {
-	return &AuditManager{
-		audits:     make(map[string]*SecurityAudit),
-		findings:   make(map[string]*AuditFinding),
-		checklists: make(map[string]*AuditChecklist),
-	}
+func NewAuditManager(db *PostgresDB) *AuditManager {
+	return &AuditManager{db: db}
 }
 
 // PlanAudit schedules a security audit
@@ -121,21 +119,28 @@ func (a *AuditManager) PlanAudit(ctx context.Context, auditType AuditType, scope
 		ScheduledStart: startDate,
 		ScheduledEnd:   endDate,
 		Findings:       []AuditFinding{},
+		Score:          100,
 	}
 
-	a.audits[audit.ID] = audit
+	if err := a.db.CreateSecurityAudit(ctx, audit); err != nil {
+		return nil, fmt.Errorf("failed to plan audit: %w", err)
+	}
 	return audit, nil
 }
 
 // StartAudit marks an audit as in progress
 func (a *AuditManager) StartAudit(ctx context.Context, auditID string) (*SecurityAudit, error) {
-	audit, exists := a.audits[auditID]
-	if !exists {
+	audit, err := a.db.GetSecurityAudit(ctx, auditID)
+	if err != nil {
 		return nil, fmt.Errorf("audit not found: %s", auditID)
 	}
 
 	audit.Status = AuditStatusInProgress
 	audit.ActualStart = time.Now()
+
+	if err := a.db.UpdateSecurityAudit(ctx, audit); err != nil {
+		return nil, fmt.Errorf("failed to start audit: %w", err)
+	}
 	return audit, nil
 }
 
@@ -149,46 +154,48 @@ func (a *AuditManager) AddFinding(ctx context.Context, finding *AuditFinding) er
 	finding.UpdatedAt = time.Now()
 	finding.Status = "open"
 
-	a.findings[finding.ID] = finding
-
-	// Update audit finding counts
-	if audit, exists := a.audits[finding.AuditID]; exists {
-		audit.Findings = append(audit.Findings, *finding)
-
-		switch finding.Severity {
-		case "critical":
-			audit.CriticalCount++
-		case "high":
-			audit.HighCount++
-		case "medium":
-			audit.MediumCount++
-		case "low":
-			audit.LowCount++
-		}
-
-		// Calculate audit score (100 - (critical*40 + high*20 + medium*10 + low*5))
-		audit.Score = 100 - float64(audit.CriticalCount*40+audit.HighCount*20+audit.MediumCount*10+audit.LowCount*5)
-		if audit.Score < 0 {
-			audit.Score = 0
-		}
+	if err := a.db.CreateAuditFinding(ctx, finding); err != nil {
+		return fmt.Errorf("failed to add finding: %w", err)
 	}
 
-	return nil
+	// Update audit finding counts and score
+	audit, err := a.db.GetSecurityAudit(ctx, finding.AuditID)
+	if err != nil {
+		// Finding is stored even if the parent audit lookup fails; the
+		// count/score update is best-effort denormalization, not the
+		// source of truth (that's the audit_findings rows themselves).
+		return nil
+	}
+
+	switch finding.Severity {
+	case "critical":
+		audit.CriticalCount++
+	case "high":
+		audit.HighCount++
+	case "medium":
+		audit.MediumCount++
+	case "low":
+		audit.LowCount++
+	}
+
+	// Calculate audit score (100 - (critical*40 + high*20 + medium*10 + low*5))
+	audit.Score = 100 - float64(audit.CriticalCount*40+audit.HighCount*20+audit.MediumCount*10+audit.LowCount*5)
+	if audit.Score < 0 {
+		audit.Score = 0
+	}
+
+	return a.db.UpdateSecurityAudit(ctx, audit)
 }
 
 // GetFinding retrieves a specific finding
 func (a *AuditManager) GetFinding(ctx context.Context, findingID string) (*AuditFinding, error) {
-	finding, exists := a.findings[findingID]
-	if !exists {
-		return nil, fmt.Errorf("finding not found: %s", findingID)
-	}
-	return finding, nil
+	return a.db.GetAuditFinding(ctx, findingID)
 }
 
 // UpdateFindingStatus updates the status of a finding
 func (a *AuditManager) UpdateFindingStatus(ctx context.Context, findingID, status string, notes string) error {
-	finding, exists := a.findings[findingID]
-	if !exists {
+	finding, err := a.db.GetAuditFinding(ctx, findingID)
+	if err != nil {
 		return fmt.Errorf("finding not found: %s", findingID)
 	}
 
@@ -199,7 +206,7 @@ func (a *AuditManager) UpdateFindingStatus(ctx context.Context, findingID, statu
 		finding.ResolvedAt = time.Now()
 	}
 
-	return nil
+	return a.db.UpdateAuditFinding(ctx, finding)
 }
 
 // CreateAuditChecklist creates a checklist for a control
@@ -212,14 +219,16 @@ func (a *AuditManager) CreateAuditChecklist(ctx context.Context, auditID, contro
 		Status:      "not_started",
 	}
 
-	a.checklists[checklist.ID] = checklist
+	if err := a.db.CreateAuditChecklist(ctx, checklist); err != nil {
+		return nil, fmt.Errorf("failed to create checklist: %w", err)
+	}
 	return checklist, nil
 }
 
 // CompleteChecklistItem marks a checklist item as complete
 func (a *AuditManager) CompleteChecklistItem(ctx context.Context, checklistID, result, notes string) error {
-	checklist, exists := a.checklists[checklistID]
-	if !exists {
+	checklist, err := a.db.GetAuditChecklist(ctx, checklistID)
+	if err != nil {
 		return fmt.Errorf("checklist not found: %s", checklistID)
 	}
 
@@ -228,13 +237,13 @@ func (a *AuditManager) CompleteChecklistItem(ctx context.Context, checklistID, r
 	checklist.Notes = notes
 	checklist.TestedAt = time.Now()
 
-	return nil
+	return a.db.UpdateAuditChecklist(ctx, checklist)
 }
 
 // CompleteAudit marks an audit as complete and generates report
 func (a *AuditManager) CompleteAudit(ctx context.Context, auditID string) (*SecurityAudit, error) {
-	audit, exists := a.audits[auditID]
-	if !exists {
+	audit, err := a.db.GetSecurityAudit(ctx, auditID)
+	if err != nil {
 		return nil, fmt.Errorf("audit not found: %s", auditID)
 	}
 
@@ -248,38 +257,34 @@ func (a *AuditManager) CompleteAudit(ctx context.Context, auditID string) (*Secu
 		audit.Status = AuditStatusCertified
 	}
 
+	if err := a.db.UpdateSecurityAudit(ctx, audit); err != nil {
+		return nil, fmt.Errorf("failed to complete audit: %w", err)
+	}
 	return audit, nil
 }
 
-// GetAudit retrieves an audit
+// GetAudit retrieves an audit, including its findings.
 func (a *AuditManager) GetAudit(ctx context.Context, auditID string) (*SecurityAudit, error) {
-	audit, exists := a.audits[auditID]
-	if !exists {
+	audit, err := a.db.GetSecurityAudit(ctx, auditID)
+	if err != nil {
 		return nil, fmt.Errorf("audit not found: %s", auditID)
 	}
+	findings, err := a.db.ListAuditFindingsByAudit(ctx, auditID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list findings: %w", err)
+	}
+	audit.Findings = findings
 	return audit, nil
 }
 
 // ListOpenFindings lists all open findings across audits
 func (a *AuditManager) ListOpenFindings(ctx context.Context) ([]AuditFinding, error) {
-	var openFindings []AuditFinding
-	for _, finding := range a.findings {
-		if finding.Status != "remediated" && finding.Status != "waived" {
-			openFindings = append(openFindings, *finding)
-		}
-	}
-	return openFindings, nil
+	return a.db.ListOpenAuditFindings(ctx)
 }
 
 // GetAuditsByStatus retrieves audits by status
 func (a *AuditManager) GetAuditsByStatus(ctx context.Context, status AuditStatus) ([]SecurityAudit, error) {
-	var result []SecurityAudit
-	for _, audit := range a.audits {
-		if audit.Status == status {
-			result = append(result, *audit)
-		}
-	}
-	return result, nil
+	return a.db.ListSecurityAuditsByStatus(ctx, string(status))
 }
 
 // GenerateAuditReport generates a report for an audit
