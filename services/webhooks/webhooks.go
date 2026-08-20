@@ -32,39 +32,39 @@ type WebhookEvent struct {
 
 // WebhookDelivery tracks webhook delivery attempts
 type WebhookDelivery struct {
-	DeliveryID    string    `json:"delivery_id"`
-	WebhookID     string    `json:"webhook_id"`
-	EventID       string    `json:"event_id"`
-	EventType     string    `json:"event_type"`
-	Attempt       int       `json:"attempt"`
-	StatusCode    int       `json:"status_code"`
-	ResponseTime  int64     `json:"response_time_ms"`
-	Success       bool      `json:"success"`
-	ErrorMessage  string    `json:"error_message,omitempty"`
-	NextRetryAt   *time.Time `json:"next_retry_at,omitempty"`
-	CreatedAt     time.Time `json:"created_at"`
+	DeliveryID   string     `json:"delivery_id"`
+	WebhookID    string     `json:"webhook_id"`
+	EventID      string     `json:"event_id"`
+	EventType    string     `json:"event_type"`
+	Attempt      int        `json:"attempt"`
+	StatusCode   int        `json:"status_code"`
+	ResponseTime int64      `json:"response_time_ms"`
+	Success      bool       `json:"success"`
+	ErrorMessage string     `json:"error_message,omitempty"`
+	NextRetryAt  *time.Time `json:"next_retry_at,omitempty"`
+	CreatedAt    time.Time  `json:"created_at"`
 }
 
 // SigningCompletedEvent is sent when signing completes
 type SigningCompletedEvent struct {
-	SigningID       string `json:"signing_id"`
-	KeyID           string `json:"key_id"`
-	TransactionHash string `json:"transaction_hash"`
-	Status          string `json:"status"`
+	SigningID        string `json:"signing_id"`
+	KeyID            string `json:"key_id"`
+	TransactionHash  string `json:"transaction_hash"`
+	Status           string `json:"status"`
 	ConfirmationTime int64  `json:"confirmation_time,omitempty"`
-	CreatedAt       string `json:"created_at"`
+	CreatedAt        string `json:"created_at"`
 }
 
 // SettlementCompletedEvent is sent when settlement completes
 type SettlementCompletedEvent struct {
-	SettlementID    string `json:"settlement_id"`
-	SigningID       string `json:"signing_id"`
-	TransactionHash string `json:"transaction_hash"`
-	Blockchain      string `json:"blockchain"`
-	Status          string `json:"status"`
-	GasUsed         uint64 `json:"gas_used,omitempty"`
+	SettlementID     string `json:"settlement_id"`
+	SigningID        string `json:"signing_id"`
+	TransactionHash  string `json:"transaction_hash"`
+	Blockchain       string `json:"blockchain"`
+	Status           string `json:"status"`
+	GasUsed          uint64 `json:"gas_used,omitempty"`
 	ConfirmationTime int64  `json:"confirmation_time,omitempty"`
-	CreatedAt       string `json:"created_at"`
+	CreatedAt        string `json:"created_at"`
 }
 
 // KeyCreatedEvent is sent when a key is created
@@ -80,12 +80,12 @@ type KeyCreatedEvent struct {
 
 // ComplianceCheckEvent is sent when compliance check completes
 type ComplianceCheckEvent struct {
-	CheckID   string `json:"check_id"`
+	CheckID    string `json:"check_id"`
 	CustomerID string `json:"customer_id"`
-	CheckType string `json:"check_type"`
-	Status    string `json:"status"`
-	RiskLevel string `json:"risk_level"`
-	CreatedAt string `json:"created_at"`
+	CheckType  string `json:"check_type"`
+	Status     string `json:"status"`
+	RiskLevel  string `json:"risk_level"`
+	CreatedAt  string `json:"created_at"`
 }
 
 // NewWebhookService creates a new webhook service
@@ -140,12 +140,12 @@ func (s *WebhookService) PublishEvent(ctx context.Context, event *WebhookEvent) 
 // deliverWebhook attempts to deliver a webhook
 func (s *WebhookService) deliverWebhook(ctx context.Context, webhook *Webhook, event *WebhookEvent) {
 	delivery := &WebhookDelivery{
-		DeliveryID:   uuid.New().String(),
-		WebhookID:    webhook.WebhookID,
-		EventID:      event.EventID,
-		EventType:    event.EventType,
-		Attempt:      1,
-		CreatedAt:    time.Now(),
+		DeliveryID: uuid.New().String(),
+		WebhookID:  webhook.WebhookID,
+		EventID:    event.EventID,
+		EventType:  event.EventType,
+		Attempt:    1,
+		CreatedAt:  time.Now(),
 	}
 
 	// Marshal event
@@ -302,21 +302,16 @@ func (s *WebhookService) RetryWebhookDelivery(ctx context.Context, deliveryID st
 		return fmt.Errorf("max retries exceeded")
 	}
 
-	// Create new delivery attempt
-	newDelivery := &WebhookDelivery{
-		DeliveryID:   uuid.New().String(),
-		WebhookID:    delivery.WebhookID,
-		EventID:      delivery.EventID,
-		EventType:    delivery.EventType,
-		Attempt:      delivery.Attempt + 1,
-		CreatedAt:    time.Now(),
-	}
-
-	// In production, reconstruct the original event from storage
-	// For now, log it
-	log.Printf("Retrying webhook delivery: %s (attempt %d)", newDelivery.DeliveryID, newDelivery.Attempt)
-
-	return nil
+	// Not implemented: this used to build a WebhookDelivery record, log it,
+	// and return nil (success) without ever sending an HTTP request or
+	// storing anything -- a caller checking the returned error would
+	// conclude the retry succeeded when nothing was retried. The blocker is
+	// real: a WebhookDelivery only records the *outcome* of an attempt
+	// (status code, timing), not the original event payload, so there is
+	// nothing here to actually resend. Reconstructing it needs either
+	// storing the original WebhookEvent alongside each delivery, or looking
+	// it up from whatever emitted it in the first place.
+	return fmt.Errorf("RetryWebhookDelivery is not implemented: the original event payload is not stored, so there is nothing to resend")
 }
 
 // HTTP Handlers
@@ -368,16 +363,16 @@ func (s *WebhookService) HandleGetDeliveries(w http.ResponseWriter, r *http.Requ
 
 // Webhook represents a webhook configuration
 type Webhook struct {
-	WebhookID         string            `json:"webhook_id"`
-	CustomerID        string            `json:"customer_id"`
-	URL               string            `json:"url"`
-	Secret            string            `json:"secret,omitempty"`
-	Events            []string          `json:"events"`
-	IsActive          bool              `json:"is_active"`
-	MaxRetries        int               `json:"max_retries"`
-	BackoffSeconds    int               `json:"backoff_seconds"`
-	ExponentialBackoff bool             `json:"exponential_backoff"`
-	CustomHeaders     map[string]string `json:"custom_headers,omitempty"`
-	CreatedAt         time.Time         `json:"created_at"`
-	UpdatedAt         time.Time         `json:"updated_at"`
+	WebhookID          string            `json:"webhook_id"`
+	CustomerID         string            `json:"customer_id"`
+	URL                string            `json:"url"`
+	Secret             string            `json:"secret,omitempty"`
+	Events             []string          `json:"events"`
+	IsActive           bool              `json:"is_active"`
+	MaxRetries         int               `json:"max_retries"`
+	BackoffSeconds     int               `json:"backoff_seconds"`
+	ExponentialBackoff bool              `json:"exponential_backoff"`
+	CustomHeaders      map[string]string `json:"custom_headers,omitempty"`
+	CreatedAt          time.Time         `json:"created_at"`
+	UpdatedAt          time.Time         `json:"updated_at"`
 }

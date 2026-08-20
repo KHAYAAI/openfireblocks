@@ -163,9 +163,9 @@ func (crs *CeremonyRoundStore) GetRoundsByCeremony(ctx context.Context, ceremony
 		}
 
 		round := map[string]interface{}{
-			"id":        id,
-			"roundNum":  roundNum,
-			"status":    status,
+			"id":       id,
+			"roundNum": roundNum,
+			"status":   status,
 		}
 
 		if startedAt.Valid {
@@ -238,13 +238,13 @@ func (crs *CeremonyRoundStore) GetLatestRound(ctx context.Context, ceremonyId st
 
 // SaveRoundData saves round data (commitments, proofs, etc.) to the database.
 type RoundDataRecord struct {
-	RoundID       string
-	PartyID       int
-	Commitments   []byte // JSONB
-	DLProof       []byte // JSONB
-	PublicKey     string
-	Signature     string
-	SavedAt       time.Time
+	RoundID     string
+	PartyID     int
+	Commitments []byte // JSONB
+	DLProof     []byte // JSONB
+	PublicKey   string
+	Signature   string
+	SavedAt     time.Time
 }
 
 // SaveRoundData persists party data for a round.

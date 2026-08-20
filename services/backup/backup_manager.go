@@ -12,8 +12,8 @@ import (
 type BackupType string
 
 const (
-	BackupTypeFull       BackupType = "full"
-	BackupTypeIncremental BackupType = "incremental"
+	BackupTypeFull         BackupType = "full"
+	BackupTypeIncremental  BackupType = "incremental"
 	BackupTypeDifferential BackupType = "differential"
 )
 
@@ -30,55 +30,55 @@ const (
 
 // BackupMetadata contains metadata about a backup
 type BackupMetadata struct {
-	ID              string                 `json:"id"`
-	Type            BackupType             `json:"type"`
-	Status          BackupStatus           `json:"status"`
-	Source          string                 `json:"source"`           // e.g., "postgres-primary", "vault"
-	Destination     string                 `json:"destination"`      // S3 path or backup location
-	Size            int64                  `json:"size"`             // Bytes
-	Checksum        string                 `json:"checksum"`         // MD5 hash
-	StartTime       time.Time              `json:"start_time"`
-	EndTime         time.Time              `json:"end_time"`
-	Duration        time.Duration          `json:"duration"`
-	ErrorMessage    string                 `json:"error_message,omitempty"`
-	RetentionDays   int                    `json:"retention_days"`
-	ExpiresAt       time.Time              `json:"expires_at"`
-	VerifiedAt      time.Time              `json:"verified_at,omitempty"`
-	Tags            map[string]string      `json:"tags"`
-	BackupChain     []string               `json:"backup_chain,omitempty"` // For incremental/differential
+	ID            string            `json:"id"`
+	Type          BackupType        `json:"type"`
+	Status        BackupStatus      `json:"status"`
+	Source        string            `json:"source"`      // e.g., "postgres-primary", "vault"
+	Destination   string            `json:"destination"` // S3 path or backup location
+	Size          int64             `json:"size"`        // Bytes
+	Checksum      string            `json:"checksum"`    // MD5 hash
+	StartTime     time.Time         `json:"start_time"`
+	EndTime       time.Time         `json:"end_time"`
+	Duration      time.Duration     `json:"duration"`
+	ErrorMessage  string            `json:"error_message,omitempty"`
+	RetentionDays int               `json:"retention_days"`
+	ExpiresAt     time.Time         `json:"expires_at"`
+	VerifiedAt    time.Time         `json:"verified_at,omitempty"`
+	Tags          map[string]string `json:"tags"`
+	BackupChain   []string          `json:"backup_chain,omitempty"` // For incremental/differential
 }
 
 // BackupSchedule defines a backup schedule
 type BackupSchedule struct {
-	ID              string        `json:"id"`
-	Name            string        `json:"name"`
-	Source          string        `json:"source"`
-	BackupType      BackupType    `json:"backup_type"`
-	Schedule        string        `json:"schedule"`       // Cron expression
-	RetentionDays   int           `json:"retention_days"`
-	Enabled         bool          `json:"enabled"`
-	LastRun         time.Time     `json:"last_run"`
-	NextRun         time.Time     `json:"next_run"`
-	SuccessCount    int           `json:"success_count"`
-	FailureCount    int           `json:"failure_count"`
+	ID            string     `json:"id"`
+	Name          string     `json:"name"`
+	Source        string     `json:"source"`
+	BackupType    BackupType `json:"backup_type"`
+	Schedule      string     `json:"schedule"` // Cron expression
+	RetentionDays int        `json:"retention_days"`
+	Enabled       bool       `json:"enabled"`
+	LastRun       time.Time  `json:"last_run"`
+	NextRun       time.Time  `json:"next_run"`
+	SuccessCount  int        `json:"success_count"`
+	FailureCount  int        `json:"failure_count"`
 }
 
 // RestorePoint represents a point-in-time restore capability
 type RestorePoint struct {
-	ID              string            `json:"id"`
-	Timestamp       time.Time         `json:"timestamp"`
-	Source          string            `json:"source"`
-	Type            BackupType        `json:"type"`
-	RecoveryPoint   time.Time         `json:"recovery_point"`   // What time this restores to
-	BackupChain     []BackupMetadata  `json:"backup_chain"`    // Full/incremental/differential chain
-	Verified        bool              `json:"verified"`
-	EstimatedRTO    time.Duration     `json:"estimated_rto"`   // Estimated Recovery Time Objective
+	ID            string           `json:"id"`
+	Timestamp     time.Time        `json:"timestamp"`
+	Source        string           `json:"source"`
+	Type          BackupType       `json:"type"`
+	RecoveryPoint time.Time        `json:"recovery_point"` // What time this restores to
+	BackupChain   []BackupMetadata `json:"backup_chain"`   // Full/incremental/differential chain
+	Verified      bool             `json:"verified"`
+	EstimatedRTO  time.Duration    `json:"estimated_rto"` // Estimated Recovery Time Objective
 }
 
 // BackupManager manages backup operations
 type BackupManager struct {
-	storage BackupStorage
-	vault   VaultBackup
+	storage  BackupStorage
+	vault    VaultBackup
 	postgres PostgreSQLBackup
 }
 
@@ -94,11 +94,11 @@ func NewBackupManager(storage BackupStorage, vault VaultBackup, postgres Postgre
 // ExecuteFullBackup executes a full backup of all systems
 func (b *BackupManager) ExecuteFullBackup(ctx context.Context, destination string) (*BackupMetadata, error) {
 	metadata := &BackupMetadata{
-		ID:          generateBackupID(),
-		Type:        BackupTypeFull,
-		Status:      BackupStatusInProgress,
-		StartTime:   time.Now(),
-		Tags:        make(map[string]string),
+		ID:        generateBackupID(),
+		Type:      BackupTypeFull,
+		Status:    BackupStatusInProgress,
+		StartTime: time.Now(),
+		Tags:      make(map[string]string),
 	}
 
 	// Backup PostgreSQL

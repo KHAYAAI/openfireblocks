@@ -1,10 +1,12 @@
 package main
 
 import (
+	"database/sql"
 	"log"
 	"os"
 	"strconv"
 
+	_ "github.com/lib/pq"
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/worker"
 
@@ -46,11 +48,25 @@ func main() {
 		}
 	}
 
+	// NewActivities accepts a nil *sql.DB (round persistence just stays
+	// disabled), so a database outage delays startup rather than blocking
+	// it -- log and continue with db == nil instead of log.Fatalf.
+	dsn := getenv("DATABASE_URL", "postgres://app:dev-only@localhost:5432/openfireblocks?sslmode=disable")
+	db, err := sql.Open("postgres", dsn)
+	if err != nil {
+		log.Printf("failed to open database connection, ceremony round persistence disabled: %v", err)
+		db = nil
+	} else if err := db.Ping(); err != nil {
+		log.Printf("database ping failed, ceremony round persistence disabled: %v", err)
+		db = nil
+	}
+
 	acts := activities.NewActivities(
 		getenv("POLICY_SERVICE_URL", "http://localhost:8081"),
 		getenv("MPC_SIGNER_URL", "http://localhost:8080"),
 		getenv("ETHEREUM_RPC_SEPOLIA", "http://localhost:8545"),
 		confirmations,
+		db,
 	)
 
 	w := worker.New(c, taskQueue, worker.Options{})

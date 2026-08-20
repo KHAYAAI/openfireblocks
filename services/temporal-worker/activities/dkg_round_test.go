@@ -42,6 +42,7 @@ func TestExecuteDKGRound_AllPartiesRespond(t *testing.T) {
 	}()
 
 	coordinator := NewDKGRoundCoordinator()
+	coordinator.endpointBase = func(partyId int) string { return parties[partyId].URL }
 	ctx := context.Background()
 
 	// Collect data from parties
@@ -164,6 +165,7 @@ func TestBroadcastRoundData_FanOut(t *testing.T) {
 	}()
 
 	coordinator := NewDKGRoundCoordinator()
+	coordinator.endpointBase = func(partyId int) string { return parties[partyId].URL }
 	ctx := context.Background()
 
 	partyData := map[int]*RoundData{
@@ -175,9 +177,11 @@ func TestBroadcastRoundData_FanOut(t *testing.T) {
 	err := coordinator.BroadcastRoundData(ctx, "test-ceremony", 1, partyData)
 	assert.NoError(t, err)
 
-	// Each party should receive broadcast
-	// (Note: actual broadcast tracking would require proper mock setup)
-	assert.NotNil(t, broadcastCount)
+	// Every target party receives one broadcast containing the other two
+	// parties' data (fan-out excludes the target's own data).
+	for _, pid := range partyIds {
+		assert.Equal(t, 1, broadcastCount[pid], "party %d should receive exactly one broadcast", pid)
+	}
 }
 
 // TestFetchPartyRoundData_Success tests fetching data from a single party.
@@ -196,10 +200,9 @@ func TestFetchPartyRoundData_Success(t *testing.T) {
 	defer server.Close()
 
 	coordinator := NewDKGRoundCoordinator()
+	coordinator.endpointBase = func(partyId int) string { return server.URL }
 	ctx := context.Background()
 
-	// Override HTTP client to use test server
-	// (In real test, would need to mock endpoint URL resolution)
 	data, err := coordinator.FetchPartyRoundData(ctx, "test-ceremony", 1, 0)
 	require.NoError(t, err)
 	assert.NotNil(t, data)
@@ -208,14 +211,21 @@ func TestFetchPartyRoundData_Success(t *testing.T) {
 
 // TestFetchPartyRoundData_Timeout tests timeout handling.
 func TestFetchPartyRoundData_Timeout(t *testing.T) {
-	// Create server that times out
+	// Create server that times out. Blocks on the request's own context
+	// instead of `select {}`: with select{}, the handler goroutine never
+	// returns even after the client gives up, and httptest.Server.Close()
+	// (called via defer below) waits for every in-flight handler to
+	// return -- so the whole test binary hung for the full 10-minute test
+	// timeout instead of the 100ms this test is supposed to take.
+	// Blocking on r.Context().Done() lets the handler return as soon as
+	// the client's canceled context tears down the connection.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Simulate timeout by never responding
-		select {}
+		<-r.Context().Done()
 	}))
 	defer server.Close()
 
 	coordinator := NewDKGRoundCoordinator()
+	coordinator.endpointBase = func(partyId int) string { return server.URL }
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 

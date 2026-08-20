@@ -1,32 +1,36 @@
-package workflows
+package workflows_test
 
 import (
 	"testing"
 
 	"github.com/stretchr/testify/mock"
 	"go.temporal.io/sdk/testsuite"
+
+	"forge-crypto/temporal-worker/activities"
+	"forge-crypto/temporal-worker/workflows"
 )
 
 // TestDKGCeremonyWorkflow tests the DKG ceremony workflow with mocked activities.
 func TestDKGCeremonyWorkflow(t *testing.T) {
 	s := testsuite.WorkflowTestSuite{}
 	env := s.NewTestWorkflowEnvironment()
+	env.RegisterActivity(activities.NewActivities("", "", "", 3, nil))
 
 	// Mock RegisterParties activity
 	env.OnActivity("RegisterParties", mock.Anything, mock.Anything).Return(
-		&RegisterPartiesResult{RegisteredCount: 3},
+		&workflows.RegisterPartiesResult{RegisteredCount: 3},
 		nil,
 	)
 
 	// Mock ExecuteDKGRound for all 7 rounds
 	for round := 1; round <= 7; round++ {
-		env.OnActivity("ExecuteDKGRound", mock.Anything, mock.MatchedBy(func(req DKGRoundRequest) bool {
+		env.OnActivity("ExecuteDKGRound", mock.Anything, mock.MatchedBy(func(req workflows.DKGRoundRequest) bool {
 			return req.RoundNum == round
 		})).Return(
-			&DKGRoundResult{
-				RoundNum:           round,
-				Status:             "completed",
-				PartyCommitments:   make(map[int]string),
+			&workflows.DKGRoundResult{
+				RoundNum:         round,
+				Status:           "completed",
+				PartyCommitments: make(map[int]string),
 			},
 			nil,
 		)
@@ -34,22 +38,22 @@ func TestDKGCeremonyWorkflow(t *testing.T) {
 
 	// Mock SealKeyShares activity
 	env.OnActivity("SealKeyShares", mock.Anything, mock.Anything).Return(
-		&SealKeySharesResult{SealedCount: 3},
+		&workflows.SealKeySharesResult{SealedCount: 3},
 		nil,
 	)
 
 	// Execute workflow
-	req := DKGCeremonyRequest{
-		CustomerID:    "customer-123",
-		CeremonyID:    "ceremony-456",
-		ChainID:       "ethereum",
-		N:             3,
-		K:             2,
-		PartyIDs:      []int{0, 1, 2},
+	req := workflows.DKGCeremonyRequest{
+		CustomerID:     "customer-123",
+		CeremonyID:     "ceremony-456",
+		ChainID:        "ethereum",
+		N:              3,
+		K:              2,
+		PartyIDs:       []int{0, 1, 2},
 		PartyEndpoints: []string{"http://party0:7000", "http://party1:7000", "http://party2:7000"},
 	}
 
-	env.ExecuteWorkflow(DKGCeremonyWorkflow, req)
+	env.ExecuteWorkflow(workflows.DKGCeremonyWorkflow, req)
 
 	// Verify workflow completed successfully
 	if !env.IsWorkflowCompleted() {
@@ -60,7 +64,7 @@ func TestDKGCeremonyWorkflow(t *testing.T) {
 		t.Fatalf("workflow failed: %v", err)
 	}
 
-	var result DKGCeremonyResult
+	var result workflows.DKGCeremonyResult
 	if err := env.GetWorkflowResult(&result); err != nil {
 		t.Fatalf("failed to get workflow result: %v", err)
 	}
@@ -78,32 +82,33 @@ func TestDKGCeremonyWorkflow(t *testing.T) {
 func TestDKGCeremonyWorkflow_FailureOnRegisterParties(t *testing.T) {
 	s := testsuite.WorkflowTestSuite{}
 	env := s.NewTestWorkflowEnvironment()
+	env.RegisterActivity(activities.NewActivities("", "", "", 3, nil))
 
 	// Mock RegisterParties returning fewer parties than expected
 	env.OnActivity("RegisterParties", mock.Anything, mock.Anything).Return(
-		&RegisterPartiesResult{RegisteredCount: 1}, // Only 1 of 3 parties registered
+		&workflows.RegisterPartiesResult{RegisteredCount: 1}, // Only 1 of 3 parties registered
 		nil,
 	)
 
 	// Execute workflow
-	req := DKGCeremonyRequest{
-		CustomerID:    "customer-123",
-		CeremonyID:    "ceremony-456",
-		ChainID:       "ethereum",
-		N:             3,
-		K:             2,
-		PartyIDs:      []int{0, 1, 2},
+	req := workflows.DKGCeremonyRequest{
+		CustomerID:     "customer-123",
+		CeremonyID:     "ceremony-456",
+		ChainID:        "ethereum",
+		N:              3,
+		K:              2,
+		PartyIDs:       []int{0, 1, 2},
 		PartyEndpoints: []string{"http://party0:7000", "http://party1:7000", "http://party2:7000"},
 	}
 
-	env.ExecuteWorkflow(DKGCeremonyWorkflow, req)
+	env.ExecuteWorkflow(workflows.DKGCeremonyWorkflow, req)
 
 	// Verify workflow completed but with error status
 	if !env.IsWorkflowCompleted() {
 		t.Fatal("workflow did not complete")
 	}
 
-	var result DKGCeremonyResult
+	var result workflows.DKGCeremonyResult
 	if err := env.GetWorkflowResult(&result); err != nil {
 		t.Fatalf("failed to get workflow result: %v", err)
 	}
@@ -117,24 +122,25 @@ func TestDKGCeremonyWorkflow_FailureOnRegisterParties(t *testing.T) {
 func TestThresholdSigningWorkflow(t *testing.T) {
 	s := testsuite.WorkflowTestSuite{}
 	env := s.NewTestWorkflowEnvironment()
+	env.RegisterActivity(activities.NewActivities("", "", "", 3, nil))
 
 	// Mock RequestSignatures activity
 	env.OnActivity("RequestSignatures", mock.Anything, mock.Anything).Return(
-		&RequestSignaturesResult{
+		&workflows.RequestSignaturesResult{
 			Signature: "0x1234567890abcdef",
 		},
 		nil,
 	)
 
 	// Execute workflow
-	req := ThresholdSigningRequest{
+	req := workflows.ThresholdSigningRequest{
 		CeremonyID: "ceremony-456",
 		Message:    "0xdeadbeef",
 		PartyIDs:   []int{0, 1, 2},
 		ChainID:    "ethereum",
 	}
 
-	env.ExecuteWorkflow(ThresholdSigningWorkflow, req)
+	env.ExecuteWorkflow(workflows.ThresholdSigningWorkflow, req)
 
 	// Verify workflow completed successfully
 	if !env.IsWorkflowCompleted() {
@@ -145,7 +151,7 @@ func TestThresholdSigningWorkflow(t *testing.T) {
 		t.Fatalf("workflow failed: %v", err)
 	}
 
-	var result ThresholdSigningResult
+	var result workflows.ThresholdSigningResult
 	if err := env.GetWorkflowResult(&result); err != nil {
 		t.Fatalf("failed to get workflow result: %v", err)
 	}

@@ -10,12 +10,14 @@ import (
 // DKGCeremonyWorkflow orchestrates a distributed key generation (DKG) ceremony.
 //
 // The ceremony proceeds through 7 rounds of the TSS-Lib DKG protocol:
-//   Round 1: Commit phase (party sends commitments)
-//   Round 2: Decommit phase
-//   Round 3-7: Additional verification and key share generation
+//
+//	Round 1: Commit phase (party sends commitments)
+//	Round 2: Decommit phase
+//	Round 3-7: Additional verification and key share generation
 //
 // On completion, each party's key share is sealed in Vault under:
-//   secret/customers/{customerId}/ceremonies/{ceremonyId}/party/{partyId}
+//
+//	secret/customers/{customerId}/ceremonies/{ceremonyId}/party/{partyId}
 func DKGCeremonyWorkflow(ctx workflow.Context, req DKGCeremonyRequest) (*DKGCeremonyResult, error) {
 	logger := workflow.GetLogger(ctx)
 
@@ -34,8 +36,8 @@ func DKGCeremonyWorkflow(ctx workflow.Context, req DKGCeremonyRequest) (*DKGCere
 	// Step 0: Register parties and validate setup
 	var registered RegisterPartiesResult
 	if err := workflow.ExecuteActivity(ctx, "RegisterParties", RegisterPartiesRequest{
-		CeremonyID:    req.CeremonyID,
-		PartyIDs:      req.PartyIDs,
+		CeremonyID:     req.CeremonyID,
+		PartyIDs:       req.PartyIDs,
 		PartyEndpoints: req.PartyEndpoints,
 	}).Get(ctx, &registered); err != nil {
 		logger.Error("failed to register parties", "error", err)
@@ -114,11 +116,11 @@ func DKGCeremonyWorkflow(ctx workflow.Context, req DKGCeremonyRequest) (*DKGCere
 // ThresholdSigningWorkflow orchestrates signing with a threshold key from a completed ceremony.
 //
 // Steps:
-//   1. Retrieve k+1 key shares from Vault for selected parties
-//   2. Send signing request to parties
-//   3. Collect signatures from parties
-//   4. Combine signatures into final signature
-//   5. Return signature ready for broadcast
+//  1. Retrieve k+1 key shares from Vault for selected parties
+//  2. Send signing request to parties
+//  3. Collect signatures from parties
+//  4. Combine signatures into final signature
+//  5. Return signature ready for broadcast
 func ThresholdSigningWorkflow(ctx workflow.Context, req ThresholdSigningRequest) (*ThresholdSigningResult, error) {
 	logger := workflow.GetLogger(ctx)
 

@@ -21,44 +21,44 @@ const (
 
 // DisasterRecoveryPlan defines a DR plan
 type DisasterRecoveryPlan struct {
-	ID                  string                    `json:"id"`
-	Name                string                    `json:"name"`
-	Description         string                    `json:"description"`
-	PrimaryRegion       string                    `json:"primary_region"`
-	SecondaryRegion     string                    `json:"secondary_region"`
-	RTO                 time.Duration             `json:"rto"`      // Recovery Time Objective
-	RPO                 time.Duration             `json:"rpo"`      // Recovery Point Objective
-	BackupFrequency     time.Duration             `json:"backup_frequency"`
-	TestFrequency       time.Duration             `json:"test_frequency"`
-	LastTest            time.Time                 `json:"last_test"`
-	NextTest            time.Time                 `json:"next_test"`
-	Status              string                    `json:"status"`   // active, testing, failed
-	Components          []string                  `json:"components"`
+	ID              string        `json:"id"`
+	Name            string        `json:"name"`
+	Description     string        `json:"description"`
+	PrimaryRegion   string        `json:"primary_region"`
+	SecondaryRegion string        `json:"secondary_region"`
+	RTO             time.Duration `json:"rto"` // Recovery Time Objective
+	RPO             time.Duration `json:"rpo"` // Recovery Point Objective
+	BackupFrequency time.Duration `json:"backup_frequency"`
+	TestFrequency   time.Duration `json:"test_frequency"`
+	LastTest        time.Time     `json:"last_test"`
+	NextTest        time.Time     `json:"next_test"`
+	Status          string        `json:"status"` // active, testing, failed
+	Components      []string      `json:"components"`
 }
 
 // FailoverOperation tracks a failover operation
 type FailoverOperation struct {
-	ID              string                 `json:"id"`
-	Status          FailoverStatus         `json:"status"`
-	TriggeredAt     time.Time              `json:"triggered_at"`
-	CompletedAt     time.Time              `json:"completed_at"`
-	Duration        time.Duration          `json:"duration"`
-	SourceRegion    string                 `json:"source_region"`
-	TargetRegion    string                 `json:"target_region"`
-	RTO             time.Duration          `json:"rto"`
-	RPO             time.Duration          `json:"rpo"`
-	DataLoss        int64                  `json:"data_loss"`        // Bytes of data lost
-	Components      map[string]ComponentStatus `json:"components"`
-	RollbackPlan    *FailoverOperation    `json:"rollback_plan,omitempty"`
-	ErrorMessage    string                 `json:"error_message,omitempty"`
+	ID           string                     `json:"id"`
+	Status       FailoverStatus             `json:"status"`
+	TriggeredAt  time.Time                  `json:"triggered_at"`
+	CompletedAt  time.Time                  `json:"completed_at"`
+	Duration     time.Duration              `json:"duration"`
+	SourceRegion string                     `json:"source_region"`
+	TargetRegion string                     `json:"target_region"`
+	RTO          time.Duration              `json:"rto"`
+	RPO          time.Duration              `json:"rpo"`
+	DataLoss     int64                      `json:"data_loss"` // Bytes of data lost
+	Components   map[string]ComponentStatus `json:"components"`
+	RollbackPlan *FailoverOperation         `json:"rollback_plan,omitempty"`
+	ErrorMessage string                     `json:"error_message,omitempty"`
 }
 
 // ComponentStatus tracks the status of a component during failover
 type ComponentStatus struct {
-	Name            string        `json:"name"`
-	Status          string        `json:"status"`       // healthy, degraded, failed
-	FailoverTime    time.Duration `json:"failover_time"`
-	ErrorMessage    string        `json:"error_message,omitempty"`
+	Name         string        `json:"name"`
+	Status       string        `json:"status"` // healthy, degraded, failed
+	FailoverTime time.Duration `json:"failover_time"`
+	ErrorMessage string        `json:"error_message,omitempty"`
 }
 
 // DisasterRecoveryCoordinator manages DR operations
@@ -209,59 +209,66 @@ func (d *DisasterRecoveryCoordinator) failoverComponent(ctx context.Context, com
 	}
 }
 
-// Failover component implementations
+// Failover component implementations.
+//
+// All four of these used to unconditionally `return "healthy"` with no
+// logic at all -- for a disaster-recovery coordinator, that means the one
+// moment this code's correctness actually matters (a live incident) is
+// exactly when it would report full success regardless of whether any of
+// the four steps in each function's own comment ever ran. executeFailover
+// above treats "healthy" as "this component is done, move to the next
+// one" -- so a real failover would sail through reporting every component
+// healthy while doing nothing.
+//
+// Fixed to fail explicitly rather than fabricate success: implementing the
+// real steps (verify replica sync, promote via a Postgres client; unseal
+// via the Vault API; update a load balancer/DNS provider; restart Temporal
+// workers) each depends on a live target environment and credentials this
+// codebase doesn't have wired up anywhere yet, so the honest state is "not
+// implemented," not "healthy."
 func (d *DisasterRecoveryCoordinator) failoverPostgres(ctx context.Context) string {
-	// Promote replica to primary
-	// 1. Verify replica is in sync
-	// 2. Stop writes to primary
-	// 3. Promote replica to primary
-	// 4. Update DNS/routing
-	// Success: return "healthy", Failure: return "failed"
-	return "healthy"
+	// Promote replica to primary: verify replica is in sync, stop writes to
+	// primary, promote replica, update DNS/routing. None of this is wired
+	// up to a real Postgres client yet.
+	return "failed"
 }
 
 func (d *DisasterRecoveryCoordinator) failoverVault(ctx context.Context) string {
-	// Promote secondary Vault cluster
-	// 1. Verify secondary cluster state
-	// 2. Elect new primary
-	// 3. Unseal cluster
-	// 4. Update auth credentials
-	return "healthy"
+	// Promote secondary Vault cluster: verify secondary state, elect new
+	// primary, unseal, update auth credentials. Not wired up.
+	return "failed"
 }
 
 func (d *DisasterRecoveryCoordinator) failoverAPIGateway(ctx context.Context) string {
-	// Route traffic to secondary API Gateway
-	// 1. Health check secondary
-	// 2. Update load balancer
-	// 3. Drain connections from primary
-	return "healthy"
+	// Route traffic to secondary API Gateway: health check secondary,
+	// update load balancer, drain primary connections. Not wired up.
+	return "failed"
 }
 
 func (d *DisasterRecoveryCoordinator) failoverTemporal(ctx context.Context) string {
-	// Failover Temporal workflow engine
-	// 1. Sync Temporal database from backup
-	// 2. Update Temporal frontend endpoints
-	// 3. Restart workers
-	return "healthy"
+	// Failover Temporal: sync database from backup, update frontend
+	// endpoints, restart workers. Not wired up.
+	return "failed"
 }
 
-// rollbackFailover rolls back a failed failover
+// rollbackFailover rolls back a failed failover.
+//
+// Used to have a loop over operation.Components that did nothing (the body
+// was just a comment, "Iterate components in reverse") and then
+// unconditionally set operation.Status = FailoverStatusRolledBack -- so a
+// caller checking that status would see "rolled back" whether or not any
+// component was actually reverted. map iteration order in Go is also
+// randomized, so "in reverse" over a map (Components is
+// map[string]ComponentStatus) wasn't well-defined to begin with even before
+// the loop was made to do nothing.
+//
+// Component failover isn't wired up to real infrastructure yet (see
+// failoverPostgres etc. above), so there's nothing to actually reverse
+// here either. Marked failed rather than claiming a rollback that can't
+// happen.
 func (d *DisasterRecoveryCoordinator) rollbackFailover(ctx context.Context, operation *FailoverOperation) {
-	rollbackOp := &FailoverOperation{
-		ID:           fmt.Sprintf("rollback-%d", time.Now().UnixNano()),
-		Status:       FailoverStatusInitiated,
-		TriggeredAt:  time.Now(),
-		SourceRegion: operation.TargetRegion,
-		TargetRegion: operation.SourceRegion,
-	}
-
-	// Rollback each component in reverse order
-	for i := len(operation.Components) - 1; i >= 0; i-- {
-		// Iterate components in reverse
-	}
-
-	operation.RollbackPlan = rollbackOp
-	operation.Status = FailoverStatusRolledBack
+	operation.ErrorMessage = operation.ErrorMessage + "; rollback not implemented: component failover has no real backend to roll back"
+	operation.Status = FailoverStatusFailed
 }
 
 // TestDisasterRecovery performs a DR test without actual failover

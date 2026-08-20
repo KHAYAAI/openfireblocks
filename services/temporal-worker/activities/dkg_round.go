@@ -1,6 +1,7 @@
 package activities
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -14,33 +15,56 @@ import (
 	"forge-crypto/temporal-worker/workflows"
 )
 
+// roundLogger is the minimal subset of go.temporal.io/sdk/log.Logger this
+// package needs. Injected rather than pulled from ctx via activity.GetLogger
+// inside every helper method, because activity.GetLogger panics outside a
+// real Temporal activity context -- which made every one of these methods
+// impossible to unit test directly (see dkg_round_test.go, which called them
+// with a plain context.Background()).
+type roundLogger interface {
+	Warn(msg string, keyvals ...interface{})
+}
+
+type noopRoundLogger struct{}
+
+func (noopRoundLogger) Warn(string, ...interface{}) {}
+
 // DKGRoundCoordinator manages a single DKG round across multiple parties.
 type DKGRoundCoordinator struct {
 	httpClient *http.Client
 	timeout    time.Duration
+	logger     roundLogger
+	// endpointBase resolves a party ID to its base URL. Defaults to the
+	// production "http://party-N:7000" convention; tests override it to
+	// point at httptest servers instead of hardcoding that hostname, which
+	// never resolves outside production DNS.
+	endpointBase func(partyId int) string
 }
 
 // NewDKGRoundCoordinator creates a new round coordinator.
 func NewDKGRoundCoordinator() *DKGRoundCoordinator {
 	return &DKGRoundCoordinator{
-		httpClient: &http.Client{Timeout: 2 * time.Minute},
-		timeout:    2 * time.Minute,
+		httpClient:   &http.Client{Timeout: 2 * time.Minute},
+		timeout:      2 * time.Minute,
+		logger:       noopRoundLogger{},
+		endpointBase: func(partyId int) string { return fmt.Sprintf("http://party-%d:7000", partyId) },
 	}
 }
 
 // ExecuteDKGRound coordinates a single DKG round (1-7) across all parties.
 //
 // DKG Protocol (Binance TSS-Lib):
-//   Round 1: Each party generates random coefficients and commitments
-//   Round 2: Each party sends decommitments to others
-//   Round 3-7: Additional validation and key share generation
+//
+//	Round 1: Each party generates random coefficients and commitments
+//	Round 2: Each party sends decommitments to others
+//	Round 3-7: Additional validation and key share generation
 //
 // For each round:
-//   1. Send "start round" signal to all parties
-//   2. Collect "round data" from all parties in parallel
-//   3. Broadcast each party's data to all other parties
-//   4. Validate commitments and proofs
-//   5. Persist round state
+//  1. Send "start round" signal to all parties
+//  2. Collect "round data" from all parties in parallel
+//  3. Broadcast each party's data to all other parties
+//  4. Validate commitments and proofs
+//  5. Persist round state
 func (a *Activities) ExecuteDKGRound(ctx context.Context, req workflows.DKGRoundRequest) (*workflows.DKGRoundResult, error) {
 	logger := activity.GetLogger(ctx)
 
@@ -51,6 +75,7 @@ func (a *Activities) ExecuteDKGRound(ctx context.Context, req workflows.DKGRound
 	)
 
 	coordinator := NewDKGRoundCoordinator()
+	coordinator.logger = logger
 
 	// Phase 1: Signal all parties to start this round
 	logger.Info("signaling parties to start round", "round", req.RoundNum)
@@ -127,9 +152,9 @@ func (a *Activities) ExecuteDKGRound(ctx context.Context, req workflows.DKGRound
 	)
 
 	return &workflows.DKGRoundResult{
-		RoundNum:           req.RoundNum,
-		Status:             "completed",
-		PartyCommitments:   commitments,
+		RoundNum:         req.RoundNum,
+		Status:           "completed",
+		PartyCommitments: commitments,
 	}, nil
 }
 
@@ -154,16 +179,16 @@ func (drc *DKGRoundCoordinator) SignalRoundStart(ctx context.Context, ceremonyId
 	for _, partyId := range partyIds {
 		// TODO: Get party endpoint from database
 		// For now, use placeholder endpoint
-		endpoint := fmt.Sprintf("http://party-%d:7000/round", partyId)
+		endpoint := drc.endpointBase(partyId) + "/round"
 
 		payload, _ := json.Marshal(signal)
-		req, _ := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, nil)
+		req, _ := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
 		req.Header.Set("Content-Type", "application/json")
 
 		// Best-effort: log failures but continue
 		resp, err := drc.httpClient.Do(req)
 		if err != nil {
-			activity.GetLogger(ctx).Warn("failed to signal party", "partyId", partyId, "error", err)
+			drc.logger.Warn("failed to signal party", "partyId", partyId, "error", err)
 			continue
 		}
 		resp.Body.Close()
@@ -188,7 +213,7 @@ func (drc *DKGRoundCoordinator) CollectRoundData(ctx context.Context, ceremonyId
 			// Fetch round data from party
 			roundData, err := drc.FetchPartyRoundData(ctx, ceremonyId, roundNum, pid)
 			if err != nil {
-				activity.GetLogger(ctx).Warn("failed to fetch party data", "partyId", pid, "error", err)
+				drc.logger.Warn("failed to fetch party data", "partyId", pid, "error", err)
 				errChan <- fmt.Errorf("party %d: %w", pid, err)
 				return
 			}
@@ -204,7 +229,7 @@ func (drc *DKGRoundCoordinator) CollectRoundData(ctx context.Context, ceremonyId
 
 	// Log collection errors but don't fail if we got most parties
 	for err := range errChan {
-		activity.GetLogger(ctx).Warn("data collection error", "error", err)
+		drc.logger.Warn("data collection error", "error", err)
 	}
 
 	return data, nil
@@ -213,7 +238,7 @@ func (drc *DKGRoundCoordinator) CollectRoundData(ctx context.Context, ceremonyId
 // FetchPartyRoundData retrieves round data from a specific party.
 func (drc *DKGRoundCoordinator) FetchPartyRoundData(ctx context.Context, ceremonyId string, roundNum, partyId int) (*RoundData, error) {
 	// TODO: Get party endpoint from database based on ceremonyId + partyId
-	endpoint := fmt.Sprintf("http://party-%d:7000/round/%d/data", partyId, roundNum)
+	endpoint := fmt.Sprintf("%s/round/%d/data", drc.endpointBase(partyId), roundNum)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
@@ -241,8 +266,6 @@ func (drc *DKGRoundCoordinator) FetchPartyRoundData(ctx context.Context, ceremon
 
 // BroadcastRoundData sends each party's data to all other parties (fan-out).
 func (drc *DKGRoundCoordinator) BroadcastRoundData(ctx context.Context, ceremonyId string, roundNum int, partyData map[int]*RoundData) error {
-	logger := activity.GetLogger(ctx)
-
 	// For each party, send data from all other parties
 	for targetPartyId := range partyData {
 		// Filter out the target party's own data
@@ -254,19 +277,19 @@ func (drc *DKGRoundCoordinator) BroadcastRoundData(ctx context.Context, ceremony
 		}
 
 		// Send broadcast to target party
-		endpoint := fmt.Sprintf("http://party-%d:7000/round/%d/broadcast", targetPartyId, roundNum)
+		endpoint := fmt.Sprintf("%s/round/%d/broadcast", drc.endpointBase(targetPartyId), roundNum)
 		payload, _ := json.Marshal(map[string]interface{}{
 			"ceremonyId": ceremonyId,
 			"roundNum":   roundNum,
 			"data":       otherData,
 		})
 
-		req, _ := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, nil)
+		req, _ := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
 		req.Header.Set("Content-Type", "application/json")
 
 		resp, err := drc.httpClient.Do(req)
 		if err != nil {
-			logger.Warn("failed to broadcast to party", "partyId", targetPartyId, "error", err)
+			drc.logger.Warn("failed to broadcast to party", "partyId", targetPartyId, "error", err)
 			continue
 		}
 		resp.Body.Close()
@@ -315,7 +338,8 @@ func (drc *DKGRoundCoordinator) ValidateRoundData(roundNum int, partyData map[in
 // UpdateRoundInDatabase persists round state to PostgreSQL.
 // TODO: Implement in ceremony_activities.go
 // This would update ceremony_rounds table:
-//   UPDATE ceremony_rounds SET status='completed' WHERE ceremony_id=$1 AND round_number=$2
+//
+//	UPDATE ceremony_rounds SET status='completed' WHERE ceremony_id=$1 AND round_number=$2
 func UpdateRoundInDatabase(ctx context.Context, ceremonyId string, roundNum int, status string) error {
 	// TODO: Execute SQL update
 	return nil

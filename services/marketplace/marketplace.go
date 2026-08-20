@@ -1,7 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -22,7 +26,7 @@ type Integration struct {
 	CustomerID    string            `json:"customer_id"`
 	Name          string            `json:"name"`
 	Description   string            `json:"description,omitempty"`
-	Type          string            `json:"type"` // webhook, api_key, oauth, custom
+	Type          string            `json:"type"`   // webhook, api_key, oauth, custom
 	Status        string            `json:"status"` // active, inactive, suspended
 	Config        IntegrationConfig `json:"config"`
 	WebhookURL    string            `json:"webhook_url,omitempty"`
@@ -38,18 +42,18 @@ type Integration struct {
 
 // IntegrationConfig contains integration-specific configuration
 type IntegrationConfig struct {
-	Timeout         int               `json:"timeout_seconds,omitempty"`
-	MaxRetries      int               `json:"max_retries,omitempty"`
-	CustomHeaders   map[string]string `json:"custom_headers,omitempty"`
-	AuthType        string            `json:"auth_type,omitempty"` // bearer, basic, api_key
-	AuthValue       string            `json:"auth_value,omitempty"`
-	VerifySSL       bool              `json:"verify_ssl"`
+	Timeout       int               `json:"timeout_seconds,omitempty"`
+	MaxRetries    int               `json:"max_retries,omitempty"`
+	CustomHeaders map[string]string `json:"custom_headers,omitempty"`
+	AuthType      string            `json:"auth_type,omitempty"` // bearer, basic, api_key
+	AuthValue     string            `json:"auth_value,omitempty"`
+	VerifySSL     bool              `json:"verify_ssl"`
 }
 
 // RetryPolicy defines webhook retry behavior
 type RetryPolicy struct {
-	MaxAttempts    int `json:"max_attempts"`
-	BackoffSeconds int `json:"backoff_seconds"`
+	MaxAttempts    int  `json:"max_attempts"`
+	BackoffSeconds int  `json:"backoff_seconds"`
 	Exponential    bool `json:"exponential"`
 }
 
@@ -61,24 +65,24 @@ type RateLimitConfig struct {
 
 // WebhookEvent represents an event sent to webhooks
 type WebhookEvent struct {
-	EventID       string    `json:"event_id"`
-	EventType     string    `json:"event_type"`
-	Timestamp     time.Time `json:"timestamp"`
+	EventID       string      `json:"event_id"`
+	EventType     string      `json:"event_type"`
+	Timestamp     time.Time   `json:"timestamp"`
 	Data          interface{} `json:"data"`
-	IntegrationID string    `json:"integration_id"`
-	Signature     string    `json:"signature"`
+	IntegrationID string      `json:"integration_id"`
+	Signature     string      `json:"signature"`
 }
 
 // CreateIntegrationRequest is the request to create an integration
 type CreateIntegrationRequest struct {
-	Name          string            `json:"name"`
-	Description   string            `json:"description,omitempty"`
-	Type          string            `json:"type"`
-	WebhookURL    string            `json:"webhook_url,omitempty"`
-	Events        []string          `json:"events"`
-	Config        IntegrationConfig `json:"config,omitempty"`
-	RetryPolicy   *RetryPolicy      `json:"retry_policy,omitempty"`
-	RateLimit     *RateLimitConfig  `json:"rate_limit,omitempty"`
+	Name        string            `json:"name"`
+	Description string            `json:"description,omitempty"`
+	Type        string            `json:"type"`
+	WebhookURL  string            `json:"webhook_url,omitempty"`
+	Events      []string          `json:"events"`
+	Config      IntegrationConfig `json:"config,omitempty"`
+	RetryPolicy *RetryPolicy      `json:"retry_policy,omitempty"`
+	RateLimit   *RateLimitConfig  `json:"rate_limit,omitempty"`
 }
 
 // IntegrationTestRequest is used to test an integration
@@ -89,17 +93,17 @@ type IntegrationTestRequest struct {
 
 // WebhookLog represents a webhook delivery log
 type WebhookLog struct {
-	LogID          string    `json:"log_id"`
-	IntegrationID  string    `json:"integration_id"`
-	EventID        string    `json:"event_id"`
-	EventType      string    `json:"event_type"`
-	StatusCode     int       `json:"status_code"`
-	ResponseTime   int64     `json:"response_time_ms"`
-	Success        bool      `json:"success"`
-	ErrorMessage   string    `json:"error_message,omitempty"`
-	Attempt        int       `json:"attempt"`
-	NextRetryAt    *time.Time `json:"next_retry_at,omitempty"`
-	CreatedAt      time.Time `json:"created_at"`
+	LogID         string     `json:"log_id"`
+	IntegrationID string     `json:"integration_id"`
+	EventID       string     `json:"event_id"`
+	EventType     string     `json:"event_type"`
+	StatusCode    int        `json:"status_code"`
+	ResponseTime  int64      `json:"response_time_ms"`
+	Success       bool       `json:"success"`
+	ErrorMessage  string     `json:"error_message,omitempty"`
+	Attempt       int        `json:"attempt"`
+	NextRetryAt   *time.Time `json:"next_retry_at,omitempty"`
+	CreatedAt     time.Time  `json:"created_at"`
 }
 
 // NewMarketplaceService creates a new marketplace service
@@ -292,25 +296,32 @@ func (s *MarketplaceService) SendEvent(ctx context.Context, customerID string, e
 	return nil
 }
 
-// sendWebhook sends a webhook to a specific integration
+// sendWebhook sends a webhook to a specific integration.
+//
+// The signature must cover the exact bytes sent, computed after marshaling
+// -- signing the event struct and then embedding the result back into that
+// same struct before marshaling (the previous order) would be circular, and
+// also doesn't match how any receiver would verify it (recompute HMAC over
+// the raw request body they actually received, then compare to the header).
 func (s *MarketplaceService) sendWebhook(ctx context.Context, integration *Integration, event *WebhookEvent) error {
-	// Sign the event with webhook secret
-	event.Signature = generateSignature(event, integration.WebhookSecret)
-
-	// Marshal event
+	// Marshal event (without a signature field's value baked in -- the
+	// signature is delivered via header only, not embedded in the body).
 	payload, err := json.Marshal(event)
 	if err != nil {
 		return fmt.Errorf("failed to marshal event: %w", err)
 	}
+	signature := generateSignature(payload, integration.WebhookSecret)
 
-	// Create HTTP request
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, integration.WebhookURL, nil)
+	// Create HTTP request. Used to pass nil as the body here despite
+	// marshaling `payload` above -- every "webhook" this service ever sent
+	// had an empty body; nothing was ever delivered to a receiving endpoint.
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, integration.WebhookURL, bytes.NewReader(payload))
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Webhook-Signature", event.Signature)
+	req.Header.Set("X-Webhook-Signature", signature)
 	req.Header.Set("X-Event-Type", event.EventType)
 	req.Header.Set("X-Event-ID", event.EventID)
 
@@ -378,10 +389,17 @@ func generateWebhookSecret() string {
 	return uuid.New().String()
 }
 
-func generateSignature(event *WebhookEvent, secret string) string {
-	// In production, use HMAC-SHA256 signing
-	// For now, return a placeholder
-	return "sig_" + uuid.New().String()
+// generateSignature HMAC-SHA256-signs the event payload with the
+// integration's webhook secret, matching the convention used in
+// services/webhooks (X-Webhook-Signature: sha256=<hex>). Used to return
+// "sig_" + a freshly-generated random UUID: not derived from the payload or
+// the secret at all, so no receiving endpoint could ever legitimately
+// verify it -- the signature header existed but verified nothing, for
+// every webhook this service has ever sent.
+func generateSignature(payload []byte, secret string) string {
+	h := hmac.New(sha256.New, []byte(secret))
+	h.Write(payload)
+	return "sha256=" + hex.EncodeToString(h.Sum(nil))
 }
 
 // HTTP Handlers

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math/big"
 	"net/http"
 	"time"
 
@@ -18,86 +19,86 @@ type PolicyService struct {
 
 // Policy defines signing restrictions and controls
 type Policy struct {
-	PolicyID    string              `json:"policy_id"`
-	KeyID       string              `json:"key_id"`
-	CustomerID  string              `json:"customer_id"`
-	Name        string              `json:"name"`
-	Description string              `json:"description,omitempty"`
-	Status      string              `json:"status"` // active, inactive, archived
-	Rules       []*PolicyRule       `json:"rules"`
-	Approvals   *ApprovalConfig     `json:"approvals"`
-	RateLimit   *RateLimitConfig    `json:"rate_limit,omitempty"`
-	CreatedAt   time.Time           `json:"created_at"`
-	UpdatedAt   time.Time           `json:"updated_at"`
+	PolicyID    string           `json:"policy_id"`
+	KeyID       string           `json:"key_id"`
+	CustomerID  string           `json:"customer_id"`
+	Name        string           `json:"name"`
+	Description string           `json:"description,omitempty"`
+	Status      string           `json:"status"` // active, inactive, archived
+	Rules       []*PolicyRule    `json:"rules"`
+	Approvals   *ApprovalConfig  `json:"approvals"`
+	RateLimit   *RateLimitConfig `json:"rate_limit,omitempty"`
+	CreatedAt   time.Time        `json:"created_at"`
+	UpdatedAt   time.Time        `json:"updated_at"`
 }
 
 // PolicyRule defines individual signing rules
 type PolicyRule struct {
-	RuleID      string        `json:"rule_id"`
-	Type        string        `json:"type"` // amount_limit, whitelist, time_based, frequency
-	Description string        `json:"description"`
-	Enabled     bool          `json:"enabled"`
-	Config      RuleConfig    `json:"config"`
+	RuleID      string     `json:"rule_id"`
+	Type        string     `json:"type"` // amount_limit, whitelist, time_based, frequency
+	Description string     `json:"description"`
+	Enabled     bool       `json:"enabled"`
+	Config      RuleConfig `json:"config"`
 }
 
 // RuleConfig is the configuration for a specific rule type
 type RuleConfig struct {
-	MaxAmount       *string   `json:"max_amount,omitempty"`           // For amount_limit
-	WhitelistAddresses []string `json:"whitelist_addresses,omitempty"` // For whitelist
-	AllowedHours    []int     `json:"allowed_hours,omitempty"`       // For time_based (0-23)
-	MaxRequestsPerDay int     `json:"max_requests_per_day,omitempty"` // For frequency
-	Blockchains     []string  `json:"blockchains,omitempty"`          // For chain restrictions
+	MaxAmount          *string  `json:"max_amount,omitempty"`           // For amount_limit
+	WhitelistAddresses []string `json:"whitelist_addresses,omitempty"`  // For whitelist
+	AllowedHours       []int    `json:"allowed_hours,omitempty"`        // For time_based (0-23)
+	MaxRequestsPerDay  int      `json:"max_requests_per_day,omitempty"` // For frequency
+	Blockchains        []string `json:"blockchains,omitempty"`          // For chain restrictions
 }
 
 // ApprovalConfig defines multi-approval requirements
 type ApprovalConfig struct {
-	Required      int                `json:"required"`
-	Approvers     []*PolicyApprover  `json:"approvers"`
+	Required       int               `json:"required"`
+	Approvers      []*PolicyApprover `json:"approvers"`
 	TimeoutMinutes int               `json:"timeout_minutes"`
 }
 
 // PolicyApprover is an authorized approver
 type PolicyApprover struct {
-	ApproverID string `json:"approver_id"`
-	Email      string `json:"email"`
-	Role       string `json:"role"`
-	Approved   bool   `json:"approved,omitempty"`
+	ApproverID string     `json:"approver_id"`
+	Email      string     `json:"email"`
+	Role       string     `json:"role"`
+	Approved   bool       `json:"approved,omitempty"`
 	ApprovedAt *time.Time `json:"approved_at,omitempty"`
 }
 
 // RateLimitConfig defines rate limiting
 type RateLimitConfig struct {
-	MaxPerHour int `json:"max_per_hour"`
-	MaxPerDay  int `json:"max_per_day"`
+	MaxPerHour  int `json:"max_per_hour"`
+	MaxPerDay   int `json:"max_per_day"`
 	MaxPerMonth int `json:"max_per_month"`
 }
 
 // CreatePolicyRequest is the request to create a policy
 type CreatePolicyRequest struct {
-	KeyID       string          `json:"key_id"`
-	Name        string          `json:"name"`
-	Description string          `json:"description,omitempty"`
-	Rules       []*PolicyRule   `json:"rules"`
-	Approvals   *ApprovalConfig `json:"approvals,omitempty"`
+	KeyID       string           `json:"key_id"`
+	Name        string           `json:"name"`
+	Description string           `json:"description,omitempty"`
+	Rules       []*PolicyRule    `json:"rules"`
+	Approvals   *ApprovalConfig  `json:"approvals,omitempty"`
 	RateLimit   *RateLimitConfig `json:"rate_limit,omitempty"`
 }
 
 // PolicyEvaluationRequest is used to evaluate a signing request against policies
 type PolicyEvaluationRequest struct {
-	KeyID           string `json:"key_id"`
-	DestinationAddress string `json:"destination_address"`
-	Amount          string `json:"amount"`
-	Blockchain      string `json:"blockchain"`
-	Timestamp       *time.Time `json:"timestamp,omitempty"`
+	KeyID              string     `json:"key_id"`
+	DestinationAddress string     `json:"destination_address"`
+	Amount             string     `json:"amount"`
+	Blockchain         string     `json:"blockchain"`
+	Timestamp          *time.Time `json:"timestamp,omitempty"`
 }
 
 // PolicyEvaluationResult contains the result of policy evaluation
 type PolicyEvaluationResult struct {
-	Allowed         bool              `json:"allowed"`
-	RequiresApproval bool             `json:"requires_approval"`
-	ApprovalConfig  *ApprovalConfig   `json:"approval_config,omitempty"`
-	ViolatedRules   []string          `json:"violated_rules,omitempty"`
-	Reason          string            `json:"reason,omitempty"`
+	Allowed          bool            `json:"allowed"`
+	RequiresApproval bool            `json:"requires_approval"`
+	ApprovalConfig   *ApprovalConfig `json:"approval_config,omitempty"`
+	ViolatedRules    []string        `json:"violated_rules,omitempty"`
+	Reason           string          `json:"reason,omitempty"`
 }
 
 // NewPolicyService creates a new policy service
@@ -186,10 +187,16 @@ func (s *PolicyService) UpdatePolicy(ctx context.Context, policyID string, updat
 
 // EvaluatePolicy evaluates a signing request against all policies for a key
 func (s *PolicyService) EvaluatePolicy(ctx context.Context, eval *PolicyEvaluationRequest) (*PolicyEvaluationResult, error) {
+	// A database error here is not the same thing as "no policies
+	// configured" -- the previous version treated them identically and
+	// defaulted to Allowed: true on either, which means a transient DB
+	// outage would silently disable every signing policy platform-wide
+	// (fail-open on a security control) instead of blocking signing until
+	// the policy check can actually run (fail-closed).
 	policies, err := s.ListPoliciesByKey(ctx, eval.KeyID)
 	if err != nil {
 		log.Printf("Failed to get policies: %v", err)
-		return &PolicyEvaluationResult{Allowed: true}, nil // Default to allow if no policies
+		return nil, fmt.Errorf("policy evaluation unavailable: %w", err)
 	}
 
 	if len(policies) == 0 {
@@ -197,7 +204,7 @@ func (s *PolicyService) EvaluatePolicy(ctx context.Context, eval *PolicyEvaluati
 	}
 
 	result := &PolicyEvaluationResult{
-		Allowed:        true,
+		Allowed:       true,
 		ViolatedRules: []string{},
 	}
 
@@ -248,15 +255,31 @@ func (s *PolicyService) evaluateRule(rule *PolicyRule, eval *PolicyEvaluationReq
 	}
 }
 
-// checkAmountLimit verifies amount against limit
+// checkAmountLimit verifies amount against limit.
+//
+// Amounts are decimal strings (e.g. base-unit token amounts, which can
+// exceed int64/float64 precision), so this compares them as big.Float
+// rather than as strings. A lexicographic string comparison would have
+// made "1000" <= "500" true (since '1' < '5'), letting a transaction twice
+// the limit through as "under" it -- a real bypass on the one rule type
+// whose entire purpose is enforcing a numeric ceiling.
 func (s *PolicyService) checkAmountLimit(cfg RuleConfig, eval *PolicyEvaluationRequest) bool {
 	if cfg.MaxAmount == nil {
 		return true
 	}
 
-	// Simple string comparison (in production, use numeric comparison with proper decimal handling)
-	// This is a simplified check
-	return eval.Amount <= *cfg.MaxAmount
+	amount, ok := new(big.Float).SetString(eval.Amount)
+	if !ok {
+		// Can't parse the amount at all: fail closed rather than silently
+		// treat an unparseable value as passing the limit check.
+		return false
+	}
+	max, ok := new(big.Float).SetString(*cfg.MaxAmount)
+	if !ok {
+		return false
+	}
+
+	return amount.Cmp(max) <= 0
 }
 
 // checkWhitelist verifies destination is in whitelist
