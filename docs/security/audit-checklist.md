@@ -111,7 +111,32 @@ Status legend: ✅ done · 🟡 partial · ⬜ not started
   assessment), but `services/compliance` and `services/policy` now fail
   closed (explicit error) on an unscreened transaction rather than the
   previous behavior of silently reporting every address as clear
-- ⬜ Regulatory reporting (SAR/CTR; POPIA/SARS for ZA)
+- 🟡 Regulatory reporting (SAR/CTR) —
+  `services/compliance/regulatory_reporting.go` generates real CTR
+  (FinCEN Form 104) and SAR (Form 111) drafts from real transaction data
+  (`signing.transactions`, aggregated with `big.Int`, not floats), with
+  correct 15-day (CTR) / 30-day (SAR) filing-deadline math, a structuring
+  heuristic (repeated transactions in a window), SAR-narrative
+  enforcement (refuses to draft one without a human-written description),
+  and filed/overdue tracking (`regulatory_filings`, migration 013, RLS
+  deny-all for the tenant-facing `app` role since SAR confidentiality is
+  a legal requirement — a customer must never learn a SAR exists about
+  them). Live-verified end-to-end: seeded three real transactions
+  totaling 10.5 ETH, evaluated correctly against a $10,000 threshold both
+  with and without a price rate (honestly reports "no price oracle
+  configured" rather than fabricating a USD figure when none is given),
+  generated a CTR draft, detected the same three transactions as a
+  structuring candidate, generated a SAR requiring a narrative, and
+  transitioned a filing through to `filed`. What this is *not*: nothing
+  here files anything with FinCEN (there's no BSA E-Filing integration,
+  by design — `MarkFiled` only records that a human already filed it
+  out-of-band), there's no live price oracle anywhere in this codebase
+  (USD amounts require the caller to supply a rate), and — per
+  `docs/security/what-claude-cannot-build.md` §1 — the $10,000/15-day/
+  30-day defaults are the standard US FinCEN rules, not a determination
+  of this platform's actual obligations in whatever jurisdictions it
+  operates, which still needs legal/compliance sign-off. POPIA/SARS (ZA)
+  and any other non-US regime are not modeled at all.
 
 ## Fund-movement path
 - ⬜ **Threshold signing correctness**: `services/mpc-party` now compiles,

@@ -20,6 +20,7 @@ func main() {
 	audits := NewAuditManager(db)
 	incidents := NewIncidentManager(db)
 	monitor := NewComplianceMonitor(db)
+	regulatory := NewRegulatoryReportingService(db)
 
 	mux := http.NewServeMux()
 
@@ -61,6 +62,14 @@ func main() {
 	mux.HandleFunc("/v1/compliance/alerts/acknowledge", monitor.HandleAcknowledgeAlert)
 	mux.HandleFunc("/v1/compliance/alerts/resolve", monitor.HandleResolveAlert)
 	mux.HandleFunc("/v1/compliance/dashboard", monitor.HandleGenerateDashboard)
+
+	mux.HandleFunc("/v1/regulatory/ctr/evaluate", regulatory.HandleEvaluateCTR)
+	mux.HandleFunc("/v1/regulatory/ctr/generate", regulatory.HandleGenerateCTR)
+	mux.HandleFunc("/v1/regulatory/structuring/detect", regulatory.HandleDetectStructuring)
+	mux.HandleFunc("/v1/regulatory/sar/generate", regulatory.HandleGenerateSAR)
+	mux.HandleFunc("/v1/regulatory/filings/mark-filed", regulatory.HandleMarkFiled)
+	mux.HandleFunc("/v1/regulatory/filings", regulatory.HandleListByStatus)
+	mux.HandleFunc("/v1/regulatory/filings/overdue", regulatory.HandleListOverdue)
 
 	port := os.Getenv("PORT")
 	if port == "" {
