@@ -62,7 +62,34 @@ Status legend: ✅ done · 🟡 partial · ⬜ not started
 - ✅ Resource limits, health probes, HPA, pod anti-affinity
 - ✅ Prometheus metrics + SLO alert rules + Grafana dashboard
 - ✅ CI builds + tests on every push
-- ⬜ mTLS between services (service mesh)
+- 🟡 mTLS between services — implemented and live-verified for the DKG
+  round-relay transport (`services/mpc-party` <-> `services/temporal-worker`'s
+  `DKGRoundCoordinator`), chosen as the highest-value link since it's the
+  actual key-generation-ceremony transport. Both sides are opt-in via
+  three env vars (`MTLS_CERT_FILE`/`MTLS_KEY_FILE`/`MTLS_CA_FILE`) so
+  existing plain-HTTP deployments and tests are unaffected when unset.
+  `infrastructure/terraform/modules/vault-pki` configures Vault's PKI
+  secrets engine to issue the real short-lived certs in production (off
+  by default behind `vault_pki_enabled`, since it requires Vault to
+  already be initialized/unsealed — a manual step Terraform can't
+  perform itself); `terraform validate` passes and `terraform plan`
+  resolves the graph, failing only at the AWS-credentials boundary like
+  everything else in this tree. Live-verified with a real self-signed CA
+  (functionally identical to what Vault PKI hands out — verification only
+  checks the CA chain, not the issuer): a real mpc-party HTTPS server
+  requiring client certs correctly accepted a request from the real
+  `DKGRoundCoordinator` client code presenting a valid cert, and
+  correctly rejected (confirmed in the server's own TLS handshake logs)
+  a request with no client cert, a request with a cert signed by a
+  different/untrusted CA, and a plain-HTTP request to the same port.
+  Still 🟡, not ✅: this is one proven link, not mesh-wide — the other
+  ~10 internal HTTP links in this platform (api-gateway -> policy,
+  api-gateway -> mpc-signer, settlement -> chain RPCs excluded, etc.)
+  don't have the pattern applied yet, and no service mesh/sidecar
+  (Istio, Linkerd, AWS App Mesh) is used — this is direct in-process TLS
+  configuration instead, which is simpler to reason about here given
+  there's no live Kubernetes/App-Mesh deployment target settled on yet
+  (see the ECS-vs-Helm finding elsewhere in this checklist).
 - ⬜ Multi-region / DR with RTO/RPO < 1h
 - 🟡 Secrets via external-secrets / sealed-secrets (no plaintext in cluster)
   — `infrastructure/terraform/modules/secrets` now generates real random

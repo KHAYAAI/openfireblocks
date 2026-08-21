@@ -41,7 +41,8 @@ func TestExecuteDKGRound_AllPartiesRespond(t *testing.T) {
 		}
 	}()
 
-	coordinator := NewDKGRoundCoordinator()
+	coordinator, err := NewDKGRoundCoordinator()
+	require.NoError(t, err)
 	coordinator.endpointBase = func(partyId int) string { return parties[partyId].URL }
 	ctx := context.Background()
 
@@ -66,7 +67,8 @@ func TestExecuteDKGRound_AllPartiesRespond(t *testing.T) {
 
 // TestValidateRoundData_MissingCommitments tests validation with missing commitments.
 func TestValidateRoundData_MissingCommitments(t *testing.T) {
-	coordinator := NewDKGRoundCoordinator()
+	coordinator, err := NewDKGRoundCoordinator()
+	require.NoError(t, err)
 
 	partyData := map[int]*RoundData{
 		0: {
@@ -91,7 +93,8 @@ func TestValidateRoundData_MissingCommitments(t *testing.T) {
 
 // TestValidateRoundData_Round2Decommitment tests round 2 validation (decommitments required).
 func TestValidateRoundData_Round2Decommitment(t *testing.T) {
-	coordinator := NewDKGRoundCoordinator()
+	coordinator, err := NewDKGRoundCoordinator()
+	require.NoError(t, err)
 
 	partyData := map[int]*RoundData{
 		0: {
@@ -117,7 +120,8 @@ func TestValidateRoundData_Round2Decommitment(t *testing.T) {
 
 // TestValidateRoundData_AllRounds tests validation rules for all 7 rounds.
 func TestValidateRoundData_AllRounds(t *testing.T) {
-	coordinator := NewDKGRoundCoordinator()
+	coordinator, err := NewDKGRoundCoordinator()
+	require.NoError(t, err)
 
 	for round := 1; round <= 7; round++ {
 		partyData := map[int]*RoundData{
@@ -164,7 +168,8 @@ func TestBroadcastRoundData_FanOut(t *testing.T) {
 		}
 	}()
 
-	coordinator := NewDKGRoundCoordinator()
+	coordinator, err := NewDKGRoundCoordinator()
+	require.NoError(t, err)
 	coordinator.endpointBase = func(partyId int) string { return parties[partyId].URL }
 	ctx := context.Background()
 
@@ -174,7 +179,7 @@ func TestBroadcastRoundData_FanOut(t *testing.T) {
 		2: {PartyID: 2, Commitments: "data2"},
 	}
 
-	err := coordinator.BroadcastRoundData(ctx, "test-ceremony", 1, partyData)
+	err = coordinator.BroadcastRoundData(ctx, "test-ceremony", 1, partyData)
 	assert.NoError(t, err)
 
 	// Every target party receives one broadcast containing the other two
@@ -199,7 +204,8 @@ func TestFetchPartyRoundData_Success(t *testing.T) {
 	}))
 	defer server.Close()
 
-	coordinator := NewDKGRoundCoordinator()
+	coordinator, err := NewDKGRoundCoordinator()
+	require.NoError(t, err)
 	coordinator.endpointBase = func(partyId int) string { return server.URL }
 	ctx := context.Background()
 
@@ -224,13 +230,14 @@ func TestFetchPartyRoundData_Timeout(t *testing.T) {
 	}))
 	defer server.Close()
 
-	coordinator := NewDKGRoundCoordinator()
+	coordinator, err := NewDKGRoundCoordinator()
+	require.NoError(t, err)
 	coordinator.endpointBase = func(partyId int) string { return server.URL }
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
 	// Should timeout
-	_, err := coordinator.FetchPartyRoundData(ctx, "test-ceremony", 1, 0)
+	_, err = coordinator.FetchPartyRoundData(ctx, "test-ceremony", 1, 0)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "context")
 }

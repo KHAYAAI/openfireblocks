@@ -41,14 +41,33 @@ type DKGRoundCoordinator struct {
 	endpointBase func(partyId int) string
 }
 
-// NewDKGRoundCoordinator creates a new round coordinator.
-func NewDKGRoundCoordinator() *DKGRoundCoordinator {
+// NewDKGRoundCoordinator creates a new round coordinator. If
+// MTLS_CERT_FILE/MTLS_KEY_FILE/MTLS_CA_FILE are all set (see mtls.go), the
+// httpClient presents a client certificate and verifies party servers
+// against the given CA, and endpointBase switches to https:// -- this is
+// the transport DKG round data and, eventually, key shares cross, so it's
+// the highest-value link in the platform for this. Any one of those three
+// env vars unset (the default) falls back to plain HTTP, matching every
+// existing deployment and test.
+func NewDKGRoundCoordinator() (*DKGRoundCoordinator, error) {
+	tlsConfig, mtlsEnabled, err := clientTLSConfigFromEnv()
+	if err != nil {
+		return nil, fmt.Errorf("mTLS configuration error: %w", err)
+	}
+
+	httpClient := &http.Client{Timeout: 2 * time.Minute}
+	scheme := "http"
+	if mtlsEnabled {
+		httpClient.Transport = &http.Transport{TLSClientConfig: tlsConfig}
+		scheme = "https"
+	}
+
 	return &DKGRoundCoordinator{
-		httpClient:   &http.Client{Timeout: 2 * time.Minute},
+		httpClient:   httpClient,
 		timeout:      2 * time.Minute,
 		logger:       noopRoundLogger{},
-		endpointBase: func(partyId int) string { return fmt.Sprintf("http://party-%d:7000", partyId) },
-	}
+		endpointBase: func(partyId int) string { return fmt.Sprintf("%s://party-%d:7000", scheme, partyId) },
+	}, nil
 }
 
 // ExecuteDKGRound coordinates a single DKG round (1-7) across all parties.
@@ -74,7 +93,10 @@ func (a *Activities) ExecuteDKGRound(ctx context.Context, req workflows.DKGRound
 		"parties", len(req.PartyIDs),
 	)
 
-	coordinator := NewDKGRoundCoordinator()
+	coordinator, err := NewDKGRoundCoordinator()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create round coordinator: %w", err)
+	}
 	coordinator.logger = logger
 
 	// Phase 1: Signal all parties to start this round

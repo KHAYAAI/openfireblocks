@@ -134,3 +134,19 @@ variable "tags" {
     ManagedBy = "Terraform"
   }
 }
+
+variable "vault_pki_enabled" {
+  description = "Whether to configure Vault's PKI secrets engine for service-to-service mTLS (modules/vault-pki). Defaults to false: Vault must already be initialized and unsealed before this can apply -- a manual, one-time operational step Terraform cannot perform itself -- so this stays off until that's actually done, rather than breaking `terraform plan` for everyone who hasn't reached that step yet."
+  type        = bool
+  default     = false
+}
+
+variable "mtls_allowed_domains" {
+  description = "Internal hostnames the Vault PKI role is allowed to issue mTLS certificates for. Only used when vault_pki_enabled is true."
+  type        = list(string)
+  default = [
+    "party-1.internal", "party-2.internal", "party-3.internal", "party-4.internal",
+    "party-5.internal", "party-6.internal", "party-7.internal",
+    "temporal-worker.internal",
+  ]
+}

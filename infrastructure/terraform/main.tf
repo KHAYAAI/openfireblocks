@@ -9,6 +9,10 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 5.0"
     }
+    vault = {
+      source  = "hashicorp/vault"
+      version = "~> 4.0"
+    }
   }
 
   # Configure S3 backend for state management
@@ -34,6 +38,16 @@ provider "aws" {
       CreatedAt   = timestamp()
     }
   }
+}
+
+# Vault provider, for modules/vault-pki (only instantiated when
+# var.vault_pki_enabled is true -- see that variable's description).
+# Address always points at the primary Vault cluster's real LB endpoint,
+# not a placeholder: module.vault_primary is unconditional, so this is
+# always a real value, it just goes unused while vault_pki_enabled is
+# false since nothing references the vault provider in that case.
+provider "vault" {
+  address = module.vault_primary.vault_api_endpoint
 }
 
 # Secondary Region Provider
@@ -246,6 +260,23 @@ module "vault_primary" {
     aws_s3_bucket.vault_backend_primary,
     aws_iam_role_policy.vault_primary_policy
   ]
+}
+
+# Service-to-service mTLS CA (services/mpc-party <-> services/temporal-worker's
+# DKG round-relay transport). Off by default -- see vault_pki_enabled's
+# description: Vault has to be manually initialized and unsealed first,
+# which is true of every module.vault_primary deployment until someone does
+# that by hand, so this can't safely default to on.
+module "vault_pki" {
+  source = "./modules/vault-pki"
+  count  = var.vault_pki_enabled ? 1 : 0
+
+  providers = {
+    vault = vault
+  }
+
+  environment     = var.environment
+  allowed_domains = var.mtls_allowed_domains
 }
 
 # Vault Cluster Module (Secondary)

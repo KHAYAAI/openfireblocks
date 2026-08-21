@@ -347,6 +347,17 @@ func main() {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
-	log.Printf("MPC party %d listening on %s", partyID, addr)
+	tlsConfig, mtlsEnabled, err := serverTLSConfigFromEnv()
+	if err != nil {
+		log.Fatalf("mTLS configuration error: %v", err)
+	}
+	if mtlsEnabled {
+		srv.TLSConfig = tlsConfig
+		log.Printf("MPC party %d listening on %s (mTLS: client certs required)", partyID, addr)
+		log.Fatal(srv.ListenAndServeTLS("", "")) // certs already loaded into TLSConfig
+	}
+
+	log.Printf("MPC party %d listening on %s (mTLS disabled: %s/%s/%s not all set)",
+		partyID, addr, envMTLSCertFile, envMTLSKeyFile, envMTLSCAFile)
 	log.Fatal(srv.ListenAndServe())
 }
