@@ -18,7 +18,19 @@ type PostgresDB struct {
 func NewPostgresDB() (*PostgresDB, error) {
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
-		dsn = "postgres://app:dev-only@localhost:5432/openfireblocks?sslmode=disable"
+		// app_admin, not app: migration 011 enforces row-level security on
+		// policies/key_pairs/etc. for the `app` role, scoped by a
+		// per-transaction `app.current_customer_id` session variable that
+		// this service does not set (it evaluates policy for whichever
+		// customer/key a signing request names, not a single authenticated
+		// tenant session the way api-gateway has one). Connecting as `app`
+		// here would silently return zero rows for every query instead of
+		// failing loudly -- worse than either enforcing or not enforcing.
+		// app_admin (BYPASSRLS) keeps this service's real behavior
+		// unchanged until it threads the customer_id it already receives
+		// per-request into the same set_config() pattern api-gateway uses
+		// (see services/api-gateway/src/database/postgres.service.ts).
+		dsn = "postgres://app_admin:dev-only@localhost:5432/openfireblocks?sslmode=disable"
 	}
 	db, err := sql.Open("postgres", dsn)
 	if err != nil {

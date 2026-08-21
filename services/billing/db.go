@@ -18,7 +18,15 @@ type PostgresDB struct {
 func NewPostgresDB() (*PostgresDB, error) {
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
-		dsn = "postgres://app:dev-only@localhost:5432/openfireblocks?sslmode=disable"
+		// app_admin, not app: migration 011 forces row-level security on
+		// subscriptions/invoices/usage_metrics for `app`, scoped by a
+		// per-transaction session variable this service doesn't set --
+		// its metering/billing writes span whichever customer triggered
+		// the event, not one authenticated tenant session. app_admin
+		// (BYPASSRLS) preserves today's real behavior until it's threaded
+		// through set_config() the way
+		// services/api-gateway/src/database/postgres.service.ts now is.
+		dsn = "postgres://app_admin:dev-only@localhost:5432/openfireblocks?sslmode=disable"
 	}
 	db, err := sql.Open("postgres", dsn)
 	if err != nil {

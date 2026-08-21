@@ -24,8 +24,37 @@ Status legend: ✅ done · 🟡 partial · ⬜ not started
 
 ## Tenant isolation & data
 - ✅ All reads/writes scoped by `customer_id`
-- 🟡 PostgreSQL RLS (scaffolded, not enforced)
-- ✅ Dual audit trail (PostgreSQL + immudb)
+- 🟡 PostgreSQL RLS — now actually enforced (migration 011/012), not just
+  written: the `app` role was a Postgres superuser, which always bypasses
+  row security regardless of what policies exist — that's corrected
+  (`ALTER ROLE app NOSUPERUSER`), every customer-scoped table has
+  `ENABLE`+`FORCE ROW LEVEL SECURITY` and a `tenant_isolation` policy, and
+  cross-tenant isolation was live-verified against real Postgres (a
+  session with no `app.current_customer_id` set sees zero rows; a session
+  scoped to tenant A cannot see tenant B's row; an insert spoofing another
+  tenant's `customer_id` is rejected). Still 🟡, not ✅: only
+  `services/api-gateway` threads the real per-request tenant context
+  (`set_config('app.current_customer_id', ...)` in
+  `postgres.service.ts`/`audit.service.ts`). The other six Go services
+  that touch these tables (policy, settlement, billing, webhooks,
+  marketplace, temporal-worker) connect as `app_admin` (BYPASSRLS) as an
+  explicit interim measure so this change doesn't silently zero out their
+  queries — each needs the same set_config() treatment before RLS
+  actually protects those paths too (see the comment on `NewPostgresDB`/
+  `dsn` in each service's `db.go`). Production RDS also has no `app`/
+  `app_admin` role split yet — `infrastructure/terraform` provisions one
+  master username only; provisioning the same two roles this migration
+  assumes is still open.
+- 🟡 Dual audit trail (PostgreSQL + immudb) — downgraded from a prior ✅
+  that was wrong: `AuditService.logEvent` wrote to `audit.events`, a table
+  no migration had ever created, and silently swallowed the resulting
+  error "so auditing never blocks signing" — meaning the PostgreSQL half
+  of this had been a complete no-op for every signing request. Migration
+  012 creates the table (RLS-protected, same as everything else here) and
+  this is now live-verified working. The immudb half
+  (`services/mpc-signer/audit.go`) is a real SDK integration, not a mock,
+  but has not been verified against a live immudb instance in this
+  sandbox.
 - ⬜ Audit trail export + retention policy
 
 ## Infrastructure & operations

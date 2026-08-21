@@ -25,7 +25,15 @@ type PostgresDB struct {
 func NewPostgresDB() (*PostgresDB, error) {
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
-		dsn = "postgres://app:dev-only@localhost:5432/openfireblocks?sslmode=disable"
+		// app_admin, not app: this is a genuinely cross-tenant service by
+		// design (GetGlobalComplianceStats, the audit/incident/monitoring
+		// tooling in db_audit.go/db_incidents.go/db_monitoring.go), not a
+		// customer-facing request path -- migration 011's row-level
+		// security (which `app` is bound by) would otherwise silently
+		// zero out every platform-wide query. app_admin has BYPASSRLS for
+		// exactly this kind of back-office job; see migration 011's
+		// header comment.
+		dsn = "postgres://app_admin:dev-only@localhost:5432/openfireblocks?sslmode=disable"
 	}
 
 	db, err := sql.Open("postgres", dsn)

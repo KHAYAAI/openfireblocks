@@ -65,9 +65,9 @@ export class KeysService {
     // Enrich with additional details
     return {
       ...key,
-      created_ceremonies: await this.postgres.getCeremoniesForKey(keyId),
-      signing_requests: await this.postgres.getSigningRequestsForKey(keyId),
-      total_signatures: await this.postgres.countSignaturesForKey(keyId),
+      created_ceremonies: await this.postgres.getCeremoniesForKey(keyId, customerId),
+      signing_requests: await this.postgres.getSigningRequestsForKey(keyId, customerId),
+      total_signatures: await this.postgres.countSignaturesForKey(keyId, customerId),
     };
   }
 
@@ -78,7 +78,7 @@ export class KeysService {
     }
 
     // Get share distribution status from Vault
-    const shares = await this.postgres.getKeyShares(keyId);
+    const shares = await this.postgres.getKeyShares(keyId, customerId);
 
     return {
       key_id: keyId,

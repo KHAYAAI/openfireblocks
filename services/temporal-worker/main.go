@@ -51,7 +51,15 @@ func main() {
 	// NewActivities accepts a nil *sql.DB (round persistence just stays
 	// disabled), so a database outage delays startup rather than blocking
 	// it -- log and continue with db == nil instead of log.Fatalf.
-	dsn := getenv("DATABASE_URL", "postgres://app:dev-only@localhost:5432/openfireblocks?sslmode=disable")
+	// app_admin, not app: migration 011 forces row-level security on
+	// dkg_ceremonies/dkg_rounds/signing_requests for `app`, scoped by a
+	// per-transaction session variable this worker doesn't set. It
+	// orchestrates ceremonies/settlements for whichever customer's
+	// workflow Temporal dispatched, not one fixed tenant session, so
+	// app_admin (BYPASSRLS) preserves today's real behavior until this is
+	// threaded through set_config() the way
+	// services/api-gateway/src/database/postgres.service.ts now is.
+	dsn := getenv("DATABASE_URL", "postgres://app_admin:dev-only@localhost:5432/openfireblocks?sslmode=disable")
 	db, err := sql.Open("postgres", dsn)
 	if err != nil {
 		log.Printf("failed to open database connection, ceremony round persistence disabled: %v", err)
