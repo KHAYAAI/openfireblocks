@@ -21,6 +21,7 @@ type PartyServer struct {
 	config      *PartyConfig
 	state       *DKGPartyState
 	tss         *TSSWrapper
+	tssManager  *TSSPartyManager // real network-driven tss-lib DKG, see tss_party.go
 	stateMu     sync.RWMutex
 	roundDataMu sync.RWMutex
 	roundData   map[int]*RoundData
@@ -310,6 +311,16 @@ func main() {
 	ps := NewPartyServer(partyID)
 	ps.tss = NewTSSWrapper(partyID, 7, 3) // Default: 7 parties, threshold 3
 
+	relayTLSConfig, relayMTLSEnabled, err := clientTLSConfigFromEnv()
+	if err != nil {
+		log.Fatalf("mTLS configuration error: %v", err)
+	}
+	relayClient := &http.Client{Timeout: 30 * time.Second}
+	if relayMTLSEnabled {
+		relayClient.Transport = &http.Transport{TLSClientConfig: relayTLSConfig}
+	}
+	ps.tssManager = NewTSSPartyManager(partyID, relayClient)
+
 	// Initialize state
 	ps.state = &DKGPartyState{
 		PartyID:              partyID,
@@ -331,6 +342,14 @@ func main() {
 
 	// Signing endpoints
 	router.HandleFunc("/sign", ps.HandleComputeSignature).Methods(http.MethodPost)
+
+	// Real, network-driven tss-lib DKG (see tss_party.go) -- distinct from
+	// the /round/* endpoints above, which remain the non-cryptographic
+	// placeholder documented in tss_wrapper.go until temporal-worker's
+	// DKGRoundCoordinator is rewired to drive this protocol instead.
+	router.HandleFunc("/tss/keygen/start", ps.HandleTSSKeygenStart).Methods(http.MethodPost)
+	router.HandleFunc("/tss/keygen/message", ps.HandleTSSKeygenMessage).Methods(http.MethodPost)
+	router.HandleFunc("/tss/keygen/status", ps.HandleTSSKeygenStatus).Methods(http.MethodGet)
 
 	// Health and info
 	router.HandleFunc("/health", ps.HandleHealth).Methods(http.MethodGet)

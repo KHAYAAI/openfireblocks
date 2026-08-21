@@ -4,9 +4,39 @@ Status legend: ✅ done · 🟡 partial · ⬜ not started
 
 ## Cryptography & key management
 - 🟡 Vault-backed signing key (KV v2) — single shared key in place
-- 🟡 Real MPC threshold signing (Binance TSS-Lib): k-of-n DKG + signing proven
-  and Ethereum-verified in-process (`services/mpc-signer/tss`); live multi-party
-  transport + per-customer ceremony is the remaining Phase 2 work
+- 🟡 Real MPC threshold signing (Binance TSS-Lib) — real DKG now proven
+  over real network transport, not just in-process:
+  `services/mpc-party`'s `/tss/keygen/*` endpoints drive an actual
+  `keygen.LocalParty` per process (see `tss_party.go`), relaying real
+  tss-lib protocol messages over HTTP (JSON + base64-encoded
+  `WireBytes()`) between independent processes — genuinely different
+  from, and a real advance over, the round-based `/round/*` endpoints
+  documented as a non-cryptographic placeholder in `tss_wrapper.go`,
+  which remain in place unchanged until `temporal-worker`'s
+  `DKGRoundCoordinator` is rewired to drive the new protocol instead
+  (not done in this pass). Live-verified with an actual integration
+  test, `TestRealMultiPartyKeygenOverHTTP`: three independent
+  `httptest.Server`s (real OS sockets, real HTTP round trips) ran a
+  genuine DKG and converged on the identical derived Ethereum address —
+  passes clean under `-race`. Investigating this also found that
+  `services/mpc-signer` (the in-process implementation this session
+  previously described as "proven") **did not compile as a whole module
+  at all** — `main.go` imported `openfireblocks.com/services/mpc-signer/chains`
+  while `go.mod` declares `module forge-crypto/mpc-signer`, a plain
+  path mismatch nobody had run `go build ./...` against before. Fixed
+  the import path; `go build -tags tss ./tss/...` and its test
+  (`TestThresholdKeygenAndSign`) now genuinely pass, confirming the
+  in-process claim was correct once the module actually builds — but
+  the wider module (`main.go`, `chains/bitcoin.go`, `chains/cosmos.go`,
+  `chains/solana.go`) still doesn't build: those files reference
+  `btcutil`/`cosmos-sdk`/`base58` packages never added to `go.mod`, and
+  `cosmos-sdk`'s current version needs a newer Go toolchain than
+  installed in this sandbox. Out of scope for this pass (unrelated to
+  threshold-signing correctness) and left as a disclosed, separate gap
+  rather than silently worked around. Threshold **signing** over the new
+  real network transport (as opposed to keygen) is real, valuable,
+  separate work not attempted here — the single largest remaining item
+  before this line can move to ✅.
 - ⬜ HSM-backed Vault auto-unseal
 - ⬜ Documented key ceremony + rotation procedure
 - ⬜ External cryptographic audit of the signing layer
@@ -166,26 +196,29 @@ Status legend: ✅ done · 🟡 partial · ⬜ not started
   and any other non-US regime are not modeled at all.
 
 ## Fund-movement path
-- ⬜ **Threshold signing correctness**: `services/mpc-party` now compiles,
-  builds, vets clean, and its (pre-existing but never-before-runnable) test
-  suite passes — but it is **not the cryptographic core** and must not be
-  read as one. Its `TSSWrapper` is explicitly documented in-code as a
-  simplified placeholder that exercises the HTTP round-relay protocol
-  (fixed-count polling rounds) without performing valid threshold-ECDSA
-  math: `ExecuteRound3to7` "combines" public keys with XOR, and
-  `CombinePartialSignatures` sums partial signatures with plain big.Int
-  addition. It previously imported bnb-chain/tss-lib's package types
-  without ever constructing or driving a real `keygen.LocalParty` /
-  `signing.LocalParty` — that dependency has now been removed from
-  `go.mod` entirely (`go mod tidy` confirmed nothing in the package used
-  it) so the import no longer misrepresents what the code does. The
-  **actual** verified tss-lib integration — real `keygen.LocalParty`/
-  `signing.LocalParty`, producing an Ethereum-verified signature — is
-  `services/mpc-signer/tss/tss.go`, in-process only. Porting that
-  message-driven protocol onto mpc-party's live multi-party HTTP transport
-  is real, scoped work still ahead, tracked below and in
-  `services/mpc-signer`'s own Phase 2 note above — not something "fixing
-  compile errors" substitutes for.
+- 🟡 **Threshold signing correctness**: `services/mpc-party` now has TWO
+  DKG code paths, and it matters which one anything relies on.
+  `TSSWrapper` (`tss_wrapper.go`, endpoints `/round/*`) remains the
+  non-cryptographic placeholder described previously — XOR "key
+  combination," summed "partial signatures," not valid threshold-ECDSA
+  math — unchanged in this pass. Alongside it, `TSSPartyManager`
+  (`tss_party.go`, endpoints `/tss/keygen/*`) is a **real** tss-lib
+  integration: it constructs and drives an actual `keygen.LocalParty`
+  per process, exactly the way the already-verified
+  `services/mpc-signer/tss/tss.go` does, but relayed over real HTTP
+  between independent processes instead of in-process Go channels —
+  the actual production transport shape. Live-verified with a real
+  integration test (three independent `httptest.Server`s, real
+  sockets) converging on an identical derived address, passing under
+  `-race`. What's still ahead before this line is real end-to-end: (1)
+  threshold **signing** over this same real transport (not attempted
+  in this pass — DKG only), (2) rewiring `temporal-worker`'s
+  `DKGRoundCoordinator` to actually drive `/tss/keygen/*` instead of
+  the old `/round/*` placeholder (the old endpoints are what's wired
+  into production orchestration today), (3) sealing the resulting key
+  share in Vault rather than only deriving the public address, and (4)
+  fixing `services/mpc-signer`'s own module-wide build (only its `tss`
+  subpackage builds; `main.go`/`chains/*` don't — see the note above).
 - 🟡 `services/settlement` broadcasts against real go-ethereum/Bitcoin Core
   APIs now (previously fabricated transaction hashes and unconditionally
   reported "confirmed"); not yet tested against a live testnet from this

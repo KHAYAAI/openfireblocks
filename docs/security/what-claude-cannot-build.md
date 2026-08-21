@@ -38,13 +38,19 @@ produce, organized by why.
   activities that find different classes of bugs — the code-level fixes in
   this session do not substitute for one.
 - **Independent cryptographic audit of the threshold signing
-  implementation.** `services/mpc-party` now compiles and its tests pass,
-  but per the audit checklist it is explicitly a non-cryptographic
-  placeholder (XOR "key combination," summed "partial signatures" — not
-  valid threshold-ECDSA math), not the real implementation. The genuine
-  tss-lib integration (`services/mpc-signer/tss`) only runs in-process on
-  one host so far. Neither is ready to *submit* for a crypto audit yet —
-  and even once a real live-multi-party version exists and passes internal
+  implementation.** `services/mpc-party` now has a real live-multi-party
+  DKG (`tss_party.go`, driving actual tss-lib `keygen.LocalParty`
+  instances over real HTTP between independent processes, verified with
+  a real multi-server integration test) alongside the still-present
+  non-cryptographic `TSSWrapper` placeholder the audit checklist already
+  described — see that document for exactly which endpoints are which.
+  What's still missing before either the real DKG path or
+  `services/mpc-signer/tss`'s in-process implementation is ready to
+  *submit* for a crypto audit: threshold **signing** over the same real
+  network transport (DKG only was built this pass), production
+  orchestration actually wired to the real path instead of the
+  placeholder, and real key-share sealing in Vault. And even once a real
+  live-multi-party version exists end-to-end and passes internal
   tests, a system whose entire value proposition is "no single party can
   steal funds" needs review by cryptographers who didn't write the code,
   before real money touches it.
