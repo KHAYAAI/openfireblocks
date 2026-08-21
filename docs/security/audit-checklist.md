@@ -64,7 +64,38 @@ Status legend: ✅ done · 🟡 partial · ⬜ not started
 - ✅ CI builds + tests on every push
 - ⬜ mTLS between services (service mesh)
 - ⬜ Multi-region / DR with RTO/RPO < 1h
-- ⬜ Secrets via external-secrets / sealed-secrets (no plaintext in cluster)
+- 🟡 Secrets via external-secrets / sealed-secrets (no plaintext in cluster)
+  — `infrastructure/terraform/modules/secrets` now generates real random
+  credentials (DB passwords for both the RLS-scoped `app` role and the
+  `app_admin` bypass role, JWT signing key, admin API key) into AWS
+  Secrets Manager via Terraform, with a task-execution-role IAM policy
+  scoped to just that one secret ARN (replacing a prior `Resource: ["*"]`
+  grant on the task role, which has been removed as unnecessary — this
+  architecture resolves secrets via the execution role, not the app
+  calling Secrets Manager itself). `terraform validate` passes and
+  `terraform plan` resolves the whole dependency graph (rds → ecs →
+  secrets); it fails only at the AWS-credentials boundary, same as
+  everything else in this tree without a real account. The Helm chart's
+  secret-consuming templates had real bugs found and fixed while wiring
+  this up: `api-gateway`'s deployment never set `JWT_SECRET` at all (the
+  pod would crash-loop in production — `jwt.strategy.ts` throws if it's
+  unset, by design), and `policy-service`/`temporal-worker` had no
+  `DATABASE_URL` wired whatsoever (policy would `log.Fatalf` on startup;
+  temporal-worker would silently run with ceremony-round persistence
+  disabled). All three now wire the correct secret keys. Still 🟡, not
+  ✅: no `ExternalSecret`/`ClusterSecretStore` resource is rendered (it's
+  documented as a template in `secret.yaml`'s comment, not applied, since
+  it depends on cluster-specific IRSA/OIDC wiring this chart doesn't own)
+  and — a materially bigger finding from this pass — **no ECS task
+  definition or service exists anywhere in this Terraform tree for any
+  application service**, only the cluster/IAM/autoscaling shell
+  (`modules/ecs`). The Helm chart and the ECS Terraform are two
+  parallel, never-reconciled deployment targets; only one should exist
+  for real launch, and whichever it is, ECS additionally needs real task
+  definitions written before it can run anything at all. Terraform's
+  `helm` binary was not verifiable in this sandbox (get.helm.sh and the
+  apt package are both network-blocked here) — the Helm template edits
+  were checked for balanced `{{ }}` and valid base YAML, not rendered.
 
 ## Compliance & billing
 - 🟡 Usage metering (per-tenant signed/broadcast counts) — billing engine

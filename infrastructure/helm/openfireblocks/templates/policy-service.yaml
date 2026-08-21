@@ -29,6 +29,18 @@ spec:
           ports:
             - name: http
               containerPort: {{ .Values.policyService.port }}
+          env:
+            - name: PORT
+              value: {{ .Values.policyService.port | quote }}
+            # app_admin (BYPASSRLS), not the RLS-scoped app role: this
+            # service evaluates policy for whichever customer/key a signing
+            # request names rather than one authenticated tenant session —
+            # see the dsn comment in services/policy/db.go.
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.external.databaseAdminUrlSecret }}
+                  key: database-admin-url
           livenessProbe:
             httpGet: { path: /health, port: http }
             initialDelaySeconds: 3

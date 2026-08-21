@@ -50,11 +50,21 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.external.databaseUrlSecret }}
                   key: database-url
+            - name: DATABASE_ADMIN_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.external.databaseAdminUrlSecret }}
+                  key: database-admin-url
             - name: ADMIN_API_KEY
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.adminApiKeySecret }}
                   key: admin-api-key
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.jwtSecretSecret }}
+                  key: jwt-secret
             - name: MPC_SIGNER_URL
               value: http://{{ include "ofb.fullname" . }}-mpc-signer:{{ .Values.mpcSigner.port }}
             - name: POLICY_SERVICE_URL

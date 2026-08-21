@@ -39,6 +39,17 @@ spec:
               value: {{ .Values.external.ethereumRpcSepolia | quote }}
             - name: REQUIRED_CONFIRMATIONS
               value: {{ .Values.external.requiredConfirmations | quote }}
+            # app_admin (BYPASSRLS): this worker orchestrates ceremonies for
+            # whichever customer's workflow Temporal dispatched, not one
+            # tenant session — see the dsn comment in
+            # services/temporal-worker/main.go. Without this, round
+            # persistence silently disables itself (a nil *sql.DB is a
+            # tolerated startup condition, not a crash — see main.go).
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.external.databaseAdminUrlSecret }}
+                  key: database-admin-url
           resources:
             {{- toYaml .Values.temporalWorker.resources | nindent 12 }}
 {{- end }}

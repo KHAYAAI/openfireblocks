@@ -113,7 +113,14 @@ resource "aws_iam_role" "ecs_task_role" {
   tags = var.tags
 }
 
-# Policy for task to access S3, Secrets Manager, etc.
+# Policy for the running application itself (distinct from the task
+# EXECUTION role above, which is what ECS uses to resolve a container
+# definition's `secrets` block before the container even starts). No
+# blanket secretsmanager:* grant here: application config in this
+# architecture arrives as already-resolved environment variables via the
+# execution role, not by services calling Secrets Manager themselves at
+# runtime -- see modules/secrets, which grants exactly that narrower,
+# named secret to the execution role instead of a wildcard here.
 resource "aws_iam_role_policy" "ecs_task_role_policy" {
   name = "${var.cluster_name}-task-role-policy"
   role = aws_iam_role.ecs_task_role.id
@@ -132,22 +139,6 @@ resource "aws_iam_role_policy" "ecs_task_role_policy" {
           "arn:aws:s3:::openfireblocks-*",
           "arn:aws:s3:::openfireblocks-*/*"
         ]
-      },
-      {
-        Effect = "Allow"
-        Action = [
-          "secretsmanager:GetSecretValue",
-          "secretsmanager:DescribeSecret"
-        ]
-        Resource = ["*"]
-      },
-      {
-        Effect = "Allow"
-        Action = [
-          "kms:Decrypt",
-          "kms:DescribeKey"
-        ]
-        Resource = ["*"]
       }
     ]
   })

@@ -18,6 +18,11 @@ output "task_execution_role_arn" {
   value       = aws_iam_role.ecs_task_execution_role.arn
 }
 
+output "task_execution_role_name" {
+  description = "ECS task execution role name (for attaching additional scoped policies, e.g. modules/secrets)"
+  value       = aws_iam_role.ecs_task_execution_role.name
+}
+
 output "task_role_arn" {
   description = "ECS task role ARN"
   value       = aws_iam_role.ecs_task_role.arn
