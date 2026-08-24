@@ -146,13 +146,59 @@ Status legend: ✅ done · 🟡 partial · ⬜ not started
   and — a materially bigger finding from this pass — **no ECS task
   definition or service exists anywhere in this Terraform tree for any
   application service**, only the cluster/IAM/autoscaling shell
-  (`modules/ecs`). The Helm chart and the ECS Terraform are two
-  parallel, never-reconciled deployment targets; only one should exist
-  for real launch, and whichever it is, ECS additionally needs real task
-  definitions written before it can run anything at all. Terraform's
-  `helm` binary was not verifiable in this sandbox (get.helm.sh and the
-  apt package are both network-blocked here) — the Helm template edits
-  were checked for balanced `{{ }}` and valid base YAML, not rendered.
+  (`modules/ecs`).
+
+  **Resolved in a later pass**: the Helm chart and the ECS Terraform were
+  two parallel, never-reconciled deployment targets, and nobody had ever
+  picked one. Kubernetes/Helm is now the chosen target — the further-along
+  one, and the one this pass actually finished: all 13 deployable services
+  in `services/` now have real Deployment+Service templates (`billing`,
+  `ceremony-orchestrator`, `compliance`, `marketplace`, `mpc-party`,
+  `policy` as `policy-api`, `settlement`, `webhooks` added this pass,
+  joining the 4 already-templated `api-gateway`/`mpc-signer`/
+  `policy-service`/`temporal-worker`); `mpc-party` deploys as one
+  Deployment+Service **per party** (`party-1`...`party-N`, 1-indexed via a
+  `{{ range until }}` loop), not N replicas of one Deployment, since
+  `temporal-worker`'s `ExecuteRealDKG` and `mpc-party`'s own peer relay
+  both hardcode `party-N` hostnames as the addressing convention — N
+  interchangeable replicas would not be individually addressable the way
+  the real protocol requires. `services/backup` has no `func main()`
+  anywhere in it — it's library code with no entrypoint — so it isn't
+  deployable as-is and has no template; noted rather than silently
+  skipped or given a fabricated entrypoint.
+
+  Also wired: `mpcParty.mtls`/`temporalWorker.mtls` (opt-in, mounts a
+  `kubernetes.io/tls`-shaped secret and sets `MTLS_CERT_FILE`/
+  `MTLS_KEY_FILE`/`MTLS_CA_FILE`, matching `services/mpc-party/mtls.go`)
+  and `mpcParty.vault.addr` (opt-in `VAULT_ADDR`/`VAULT_TOKEN`, matching
+  `vault_seal.go`).
+
+  Unlike the prior pass, this one **was** verified against a real `helm`
+  binary — Terraform's own bundled binary is still unreachable
+  (get.helm.sh and the apt package are both network-blocked in this
+  sandbox), but `go install helm.sh/helm/v3/cmd/helm@v3.16.2` isn't
+  blocked, so a real binary was built and used: `helm lint` passes clean;
+  `helm template` renders the full chart with default values into 29
+  valid Kubernetes objects (14 Deployments, 13 Services, 1 HPA, 1
+  ServiceAccount — Python's YAML parser confirmed every one is
+  well-formed, not just that Helm didn't crash); the mTLS/Vault
+  conditional branches were separately rendered with those values
+  toggled on and also parse clean; and disabling every newly-added
+  service via `--set` correctly collapses the output back down to just
+  the original 4 services, confirming the `enabled` gates work in both
+  directions. `helm template --debug` shows no `<no value>` (Helm's
+  usual sign of a missing values reference) and no errors.
+
+  Still 🟡, not ✅, and deliberately so: none of this has been applied to
+  a real cluster (no live Kubernetes cluster in this environment, the
+  same boundary Terraform hits at the AWS-credentials level), no
+  `ExternalSecret`/`ClusterSecretStore` is rendered (still documented
+  only, per `secret.yaml`'s comment — cluster-specific IRSA/OIDC wiring
+  this chart doesn't own), and `infrastructure/terraform/modules/ecs`
+  still exists with no task definitions — a decision to formally remove
+  or keep it as a future alternate target is a separate call this pass
+  didn't make, but it should not be stood up alongside Helm as a second
+  "live" path.
 
 ## Compliance & billing
 - 🟡 Usage metering (per-tenant signed/broadcast counts) — billing engine

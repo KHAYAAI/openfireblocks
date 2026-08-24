@@ -1,0 +1,121 @@
+{{/*
+One Deployment+Service PER PARTY (party-1, party-2, ... party-N), not N
+replicas of one Deployment -- see the doc comment on .Values.mpcParty in
+values.yaml for why: each party has a distinct identity (PARTY_ID) and
+services/temporal-worker + services/mpc-party's own peer-relay code both
+hardcode "party-N" as the addressing convention (1-indexed), so replicas
+of an interchangeable Deployment would not be individually addressable
+the way the real protocol requires.
+*/}}
+{{- if .Values.mpcParty.enabled }}
+{{- range $i := until (int .Values.mpcParty.partyCount) }}
+{{- $partyID := add $i 1 }}
+{{- if $i }}
+---
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: party-{{ $partyID }}
+  labels:
+    {{- include "ofb.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: mpc-party
+    openfireblocks.com/party-id: {{ $partyID | quote }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: mpc-party
+      openfireblocks.com/party-id: {{ $partyID | quote }}
+  template:
+    metadata:
+      labels:
+        {{- include "ofb.labels" $ | nindent 8 }}
+        app.kubernetes.io/component: mpc-party
+        openfireblocks.com/party-id: {{ $partyID | quote }}
+    spec:
+      serviceAccountName: {{ include "ofb.fullname" $ }}
+      securityContext:
+        {{- toYaml $.Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: mpc-party
+          image: {{ include "ofb.image" (dict "root" $ "image" $.Values.mpcParty.image "tag" $.Values.mpcParty.tag) }}
+          imagePullPolicy: {{ $.Values.imagePullPolicy }}
+          securityContext:
+            {{- toYaml $.Values.containerSecurityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: {{ $.Values.mpcParty.port }}
+          env:
+            - name: PARTY_ID
+              value: {{ $partyID | quote }}
+            - name: PORT
+              value: {{ $.Values.mpcParty.port | quote }}
+            {{- if $.Values.mpcParty.vault.addr }}
+            # Seals this party's DKG key share in Vault on ceremony
+            # completion instead of holding it only in process memory --
+            # see services/mpc-party/vault_seal.go. Empty VAULT_ADDR is a
+            # valid, non-error fallback (in-memory only); this block is
+            # entirely omitted in that case rather than emitting an env
+            # var pointing nowhere.
+            - name: VAULT_ADDR
+              value: {{ $.Values.mpcParty.vault.addr | quote }}
+            - name: VAULT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $.Values.mpcParty.vault.tokenSecret }}
+                  key: vault-token
+            {{- end }}
+            {{- if $.Values.mpcParty.mtls.enabled }}
+            # Mutual TLS for the DKG/signing transport -- both this
+            # party's server side (incoming /tss/keygen|sign/message from
+            # peers) and its own outbound relay client use the same cert.
+            # See services/mpc-party/mtls.go.
+            - name: MTLS_CERT_FILE
+              value: /etc/openfireblocks/mtls/tls.crt
+            - name: MTLS_KEY_FILE
+              value: /etc/openfireblocks/mtls/tls.key
+            - name: MTLS_CA_FILE
+              value: /etc/openfireblocks/mtls/ca.crt
+            {{- end }}
+          {{- if $.Values.mpcParty.mtls.enabled }}
+          volumeMounts:
+            - name: mtls-certs
+              mountPath: /etc/openfireblocks/mtls
+              readOnly: true
+          {{- end }}
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          resources:
+            {{- toYaml $.Values.mpcParty.resources | nindent 12 }}
+      {{- if $.Values.mpcParty.mtls.enabled }}
+      volumes:
+        - name: mtls-certs
+          secret:
+            secretName: {{ $.Values.mpcParty.mtls.certSecret }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: party-{{ $partyID }}
+  labels:
+    {{- include "ofb.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: mpc-party
+    openfireblocks.com/party-id: {{ $partyID | quote }}
+spec:
+  selector:
+    app.kubernetes.io/component: mpc-party
+    openfireblocks.com/party-id: {{ $partyID | quote }}
+  ports:
+    - name: http
+      port: {{ $.Values.mpcParty.port }}
+      targetPort: http
+{{- end }}
+{{- end }}

@@ -1,0 +1,75 @@
+{{- if .Values.settlement.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ofb.fullname" . }}-settlement
+  labels:
+    {{- include "ofb.labels" . | nindent 4 }}
+    app.kubernetes.io/component: settlement
+spec:
+  replicas: {{ .Values.settlement.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: settlement
+  template:
+    metadata:
+      labels:
+        {{- include "ofb.labels" . | nindent 8 }}
+        app.kubernetes.io/component: settlement
+    spec:
+      serviceAccountName: {{ include "ofb.fullname" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: settlement
+          image: {{ include "ofb.image" (dict "root" . "image" .Values.settlement.image "tag" .Values.settlement.tag) }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.settlement.port }}
+          env:
+            - name: PORT
+              value: {{ .Values.settlement.port | quote }}
+            # app_admin (BYPASSRLS): settlement broadcasts and monitors
+            # transactions across whichever customer's signed tx it's
+            # handling, not one tenant session -- see the dsn comment in
+            # services/settlement/db.go.
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.external.databaseAdminUrlSecret }}
+                  key: database-admin-url
+            # Empty disables real broadcasting for that chain
+            # (services/settlement fails closed rather than fabricating a
+            # transaction hash -- see this session's audit-checklist note
+            # on 🟡 services/settlement).
+            - name: ETHEREUM_RPC_URL
+              value: {{ .Values.external.ethereumRpcSepolia | quote }}
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          resources:
+            {{- toYaml .Values.settlement.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ofb.fullname" . }}-settlement
+  labels:
+    {{- include "ofb.labels" . | nindent 4 }}
+    app.kubernetes.io/component: settlement
+spec:
+  selector:
+    app.kubernetes.io/component: settlement
+  ports:
+    - name: http
+      port: {{ .Values.settlement.port }}
+      targetPort: http
+{{- end }}

@@ -1,0 +1,68 @@
+{{- if .Values.marketplace.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ofb.fullname" . }}-marketplace
+  labels:
+    {{- include "ofb.labels" . | nindent 4 }}
+    app.kubernetes.io/component: marketplace
+spec:
+  replicas: {{ .Values.marketplace.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: marketplace
+  template:
+    metadata:
+      labels:
+        {{- include "ofb.labels" . | nindent 8 }}
+        app.kubernetes.io/component: marketplace
+    spec:
+      serviceAccountName: {{ include "ofb.fullname" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: marketplace
+          image: {{ include "ofb.image" (dict "root" . "image" .Values.marketplace.image "tag" .Values.marketplace.tag) }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.marketplace.port }}
+          env:
+            - name: PORT
+              value: {{ .Values.marketplace.port | quote }}
+            # app_admin (BYPASSRLS): the marketplace/integrations catalog
+            # spans customers rather than belonging to one tenant session --
+            # see the dsn comment in services/marketplace/db.go.
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.external.databaseAdminUrlSecret }}
+                  key: database-admin-url
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          resources:
+            {{- toYaml .Values.marketplace.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ofb.fullname" . }}-marketplace
+  labels:
+    {{- include "ofb.labels" . | nindent 4 }}
+    app.kubernetes.io/component: marketplace
+spec:
+  selector:
+    app.kubernetes.io/component: marketplace
+  ports:
+    - name: http
+      port: {{ .Values.marketplace.port }}
+      targetPort: http
+{{- end }}

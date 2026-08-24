@@ -79,6 +79,111 @@ temporalWorker:
   resources:
     requests: { cpu: 100m, memory: 128Mi }
     limits: { cpu: 500m, memory: 256Mi }
+  mtls:
+    enabled: false # opt-in, see services/temporal-worker/activities/mtls.go
+    certSecret: openfireblocks-mtls # secret holding keys tls.crt/tls.key/ca.crt
+
+# mpcParty runs one Deployment+Service PER PARTY, not N replicas of one
+# Deployment -- each party has a distinct identity (PARTY_ID) and a
+# stable hostname (party-1, party-2, ...) that services/temporal-worker's
+# DKGRoundCoordinator and services/mpc-party's own peer-relay code both
+# hardcode as the addressing convention (see mpc-party/main.go's
+# endpointBase and tss_party.go's deterministicPartyIDs). partyCount
+# below drives a {{ range }} loop in templates/mpc-party.yaml -- do not
+# deploy this as a single autoscaled Deployment, the parties are not
+# interchangeable replicas of each other.
+mpcParty:
+  enabled: true
+  image: mpc-party
+  tag: latest
+  partyCount: 3 # n; threshold (k+1 to sign) is set per-ceremony at DKG time, not here
+  port: 7000
+  resources:
+    requests: { cpu: 250m, memory: 256Mi }
+    limits: { cpu: "1", memory: 512Mi }
+  mtls:
+    enabled: false # opt-in, see services/mpc-party/mtls.go
+    certSecret: openfireblocks-mtls
+  vault:
+    addr: "" # e.g. http://vault.vault:8200 -- empty disables key-share sealing, see vault_seal.go
+    tokenSecret: openfireblocks-secrets # secret holding key "vault-token"
+
+# policyApi is services/policy (customer-facing policy CRUD + evaluate
+# API) -- distinct from policyService (services/policy-service, the
+# OPA/Rego sanctions-screening engine, already templated above). Same
+# word "policy" in both names is a pre-existing naming collision in the
+# services/ directory, not something this chart invented; kept distinct
+# component names here specifically to avoid compounding that confusion.
+policyApi:
+  enabled: true
+  image: policy
+  tag: latest
+  replicas: 2
+  port: 8083
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 256Mi }
+
+settlement:
+  enabled: true
+  image: settlement
+  tag: latest
+  replicas: 2
+  port: 8084
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: 500m, memory: 512Mi }
+
+billing:
+  enabled: true
+  image: billing
+  tag: latest
+  replicas: 2
+  port: 8085
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 256Mi }
+  stripeApiKeySecret: openfireblocks-secrets # secret holding key "stripe-api-key"
+
+webhooks:
+  enabled: true
+  image: webhooks
+  tag: latest
+  replicas: 2
+  port: 8086
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 256Mi }
+
+marketplace:
+  enabled: true
+  image: marketplace
+  tag: latest
+  replicas: 2
+  port: 8087
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 256Mi }
+
+compliance:
+  enabled: true
+  image: compliance
+  tag: latest
+  replicas: 2
+  port: 8081
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: 500m, memory: 512Mi }
+
+ceremonyOrchestrator:
+  enabled: true
+  image: ceremony-orchestrator
+  tag: latest
+  replicas: 2
+  port: 7001
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 256Mi }
 
 ingress:
   enabled: false

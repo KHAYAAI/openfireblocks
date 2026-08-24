@@ -50,6 +50,29 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.external.databaseAdminUrlSecret }}
                   key: database-admin-url
+            {{- if .Values.temporalWorker.mtls.enabled }}
+            # Client-side mTLS to services/mpc-party's DKG/signing
+            # endpoints -- see services/temporal-worker/activities/mtls.go
+            # and DKGRoundCoordinator/ExecuteRealDKG's httpClient wiring.
+            - name: MTLS_CERT_FILE
+              value: /etc/openfireblocks/mtls/tls.crt
+            - name: MTLS_KEY_FILE
+              value: /etc/openfireblocks/mtls/tls.key
+            - name: MTLS_CA_FILE
+              value: /etc/openfireblocks/mtls/ca.crt
+            {{- end }}
+          {{- if .Values.temporalWorker.mtls.enabled }}
+          volumeMounts:
+            - name: mtls-certs
+              mountPath: /etc/openfireblocks/mtls
+              readOnly: true
+          {{- end }}
           resources:
             {{- toYaml .Values.temporalWorker.resources | nindent 12 }}
+      {{- if .Values.temporalWorker.mtls.enabled }}
+      volumes:
+        - name: mtls-certs
+          secret:
+            secretName: {{ .Values.temporalWorker.mtls.certSecret }}
+      {{- end }}
 {{- end }}
