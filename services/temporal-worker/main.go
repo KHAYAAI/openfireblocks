@@ -86,12 +86,13 @@ func main() {
 	w.RegisterWorkflow(workflows.DKGCeremonyWorkflow)
 	w.RegisterWorkflow(workflows.ThresholdSigningWorkflow)
 	w.RegisterWorkflow(workflows.KeyRotationWorkflow)
+	w.RegisterWorkflow(workflows.BalanceMigrationWorkflow)
 
 	// Register all activities
 	w.RegisterActivity(acts)
 
 	log.Printf("temporal-worker polling task queue %q at %s/%s", taskQueue, hostPort, namespace)
-	log.Printf("registered workflows: TransactionSettlement, DKGCeremony, ThresholdSigning, KeyRotation")
+	log.Printf("registered workflows: TransactionSettlement, DKGCeremony, ThresholdSigning, KeyRotation, BalanceMigration")
 	if err := w.Run(worker.InterruptCh()); err != nil {
 		log.Fatalf("worker stopped: %v", err)
 	}

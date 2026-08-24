@@ -53,16 +53,72 @@ Status legend: ✅ done · 🟡 partial · ⬜ not started
   boot has not been observed, only the Terraform/IAM/config wiring that
   should produce it.
 - 🟡 Documented key ceremony + rotation procedure — see
-  `docs/security/key-rotation.md`, written this pass, covering all five
-  categories of key/credential this platform issues (threshold signing
-  keys, mTLS certs, DB credentials, `JWT_SECRET`, `ADMIN_API_KEY`) with
-  what's real vs. not for each. The threshold-key rotation workflow
-  (`KeyRotationWorkflow`) genuinely generates a new key via the real DKG
-  protocol now, but has an explicit `TODO` for retiring/deactivating the
-  old key's shares and no balance-migration step — so it currently
-  provisions a second key rather than completing a rotation. DB
-  credential and cert rotation are documented manual procedures, not
-  automated ones.
+  `docs/security/key-rotation.md`, covering all five categories of
+  key/credential this platform issues (threshold signing keys, mTLS certs,
+  DB credentials, `JWT_SECRET`, `ADMIN_API_KEY`) with what's real vs. not
+  for each. DB credential and cert rotation remain documented manual
+  procedures, not automated ones.
+
+  **Later pass — old-key retirement + balance migration.** The threshold-key
+  rotation workflow's `TODO: Deactivate old ceremony shares` and missing
+  balance-migration step (previously the whole reason "rotation" here meant
+  "provision a second key," not retire the first) are now closed.
+  `KeyRotationWorkflow` (`services/temporal-worker/workflows/dkg_ceremony.go`)
+  runs the real DKG for the new key as before, then two new activities
+  (`ActivateKeyPair`/`SetKeyPairStatus`) flip `key_pairs.status` — new row
+  active with its real address/pubkey, old row inactive — and, after a
+  configurable retention window (default 30 days, via a durable
+  `workflow.Sleep`, not an immediate delete — preserves an audit trail), a
+  third new activity (`DeactivateOldKeyShares`) soft-deletes every party's
+  Vault-sealed share for the retired ceremony (KV v2 "delete": recoverable
+  until an operator or the mount's `delete_version_after` policy destroys
+  it for good). A separate new workflow, `BalanceMigrationWorkflow`
+  (`balance_migration.go`), covers the custody-relevant half: builds a real
+  `go-ethereum` sweep transaction from the retiring address's real on-chain
+  balance, gets it signed by a **real threshold signature from the OLD
+  ceremony's key** (the same `ExecuteRealSigning` path
+  `ThresholdSigningWorkflow` uses), assembles the signed transaction, and
+  refuses to return it if the recovered sender doesn't match the old
+  address.
+
+  Live-verified beyond code review, three separate real-system checks: (1)
+  `TestKeyPairStatusTransitions` against a real Postgres instance — seeds
+  real `customers`/`key_pairs` rows, runs both status-transition
+  activities, and confirms via an independent `SELECT` that the new key
+  landed `active` with its address/pubkey and the old one landed
+  `inactive`, plus that acting on a nonexistent `key_id` genuinely errors;
+  (2) `TestLiveDeactivateOldKeyShares` against a real Vault dev server —
+  seeds fake shares at the real path format, runs the deactivation
+  activity, and confirms with a follow-up read that they're genuinely
+  unreadable afterward; (3) `TestLiveBalanceMigrationSweep` against three
+  real, separately-running `mpc-party` processes (same convention as the
+  pre-existing `TestLiveRealDKGAndSigning`) — a real DKG derived a
+  threshold address, a real 2-of-3 threshold signature was produced over a
+  sweep transaction's hash, and the assembled, RLP-encoded signed
+  transaction was independently confirmed (via `crypto.SigToPub`) to
+  recover to that address. Measured: ~46 seconds end-to-end in this
+  sandbox, dominated by real tss-lib DKG — the transaction-assembly code
+  itself is pure and effectively instant
+  (`TestAssembleSweepTransaction_ValidSignature` covers that composition
+  standalone, no live processes needed, including a rejection test proving
+  a signature that recovers to the wrong address is refused, not returned).
+
+  Still 🟡, not ✅, honestly: broadcasting the assembled sweep transaction
+  against a real funded address on a live chain was not exercised — no
+  funded testnet address or reachable RPC endpoint exists in this sandbox,
+  so `BuildSweepTransaction`'s balance/gas/nonce queries and the final
+  `BroadcastTransaction` call are real, wired code that has not itself been
+  run against a live network (a failed broadcast still returns the real
+  signed tx hex as `status: "signed_not_broadcast"` rather than losing it).
+  And, found while building this, out of this item's scope but disclosed
+  rather than left silent: `services/api-gateway/src/keys/keys.service.ts`'s
+  `createKey` has its own `// TODO: Trigger DKG ceremony workflow` —
+  nothing in the customer-facing "create a key" API path actually starts a
+  Temporal workflow yet, DKG or rotation. Every workflow this checklist
+  describes as real has been exercised directly (test environment or real
+  `-tags live` processes), not through that API surface, which doesn't
+  reach any of it today. See `docs/security/key-rotation.md` section 1 for
+  the full detail.
 - ⬜ External cryptographic audit of the signing layer
 
 ## Application security
