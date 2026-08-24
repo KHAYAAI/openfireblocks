@@ -99,14 +99,54 @@ Status legend: ✅ done · 🟡 partial · ⬜ not started
   sees zero rows, confirmed a wrong tenant context also sees zero rows,
   confirmed the correct tenant context sees the row, and exercised the
   full HTTP surface (create/get/list/evaluate) end to end including the
-  amount-limit policy actually blocking an over-limit evaluation. Still
-  🟡, not ✅: the other five Go services that touch these tables
-  (settlement, billing, webhooks, marketplace, temporal-worker) still
-  connect as `app_admin` (BYPASSRLS) as an explicit interim measure — each
-  needs the same two-pool/withTenant treatment before RLS actually
-  protects those paths too (see the comment on `NewPostgresDB`/`dsn` in
-  each service's `db.go`; `services/policy/db.go` is now the reference
-  implementation to copy). Production RDS also has no `app`/`app_admin`
+  amount-limit policy actually blocking an over-limit evaluation.
+
+  A later pass extended the same treatment to four more services:
+  `settlement`, `billing`, `webhooks`, and `marketplace` all now hold the
+  same two-pool (`admin`/`tenant`) + `withTenant()` structure. Where a
+  method already received `customerID` directly (e.g. billing's
+  `CreateSubscription`, `CreateInvoice`, `CreateUsageMetrics` — the
+  `Subscription`/`Invoice`/`UsageMetrics` structs all carry `CustomerID`)
+  it's used straight from the struct; where a method only has an entity
+  ID (`settlement_id`, `subscription_id`, `webhook_id`, `integration_id`,
+  a webhook `delivery_id`), a resolver on the admin pool looks up the
+  owning `customer_id` first — including a join through
+  `webhook_deliveries.webhook_id → webhooks.customer_id` and
+  `integration_webhook_logs`'s equivalent, since neither table carries
+  its own `customer_id` column (migration 011 scopes both indirectly).
+  `billing`'s `plans` table is deliberately left on the admin pool
+  un-scoped — it's platform-wide catalog data (no RLS policy applies to
+  it at all), not a tenant-isolation gap. Live-verified: built, vetted,
+  and gofmt-clean across all four; `settlement` specifically re-run
+  through the same real-Postgres, real-HTTP methodology as `policy` --
+  a real customer/key/signing-request/settlement created, a genuine
+  `GET /v1/settlements/get` call resolving the tenant and returning the
+  real row, and the same three RLS scenarios confirmed directly in SQL
+  (no context → zero rows, correct context → the row). `billing`/
+  `webhooks`/`marketplace` were not each independently re-verified live
+  given the pattern is now proven twice over (`policy`, `settlement`) and
+  the remaining three are mechanically identical — a reasonable but
+  explicit trust extension, not a claim of individual verification.
+
+  The fifth service originally listed, `temporal-worker`, turned out not
+  to need this treatment at all: investigating it found its entire
+  Postgres dependency is dead code. `Activities.db` (`*sql.DB`) and
+  `Activities.roundStore` (`*db.CeremonyRoundStore`) are constructed at
+  startup and never queried anywhere else in the codebase — grep for
+  `a.db.` or `.roundStore.` outside their own definitions returns
+  nothing. Worse, `CeremonyRoundStore` writes to a `ceremony_rounds`
+  table that **no migration file creates** — every method on it would
+  fail with "relation does not exist" against a real, freshly-migrated
+  database if anything ever called it. Real round-state persistence for
+  the actual (now-real, this-pass) DKG protocol lives in each
+  `mpc-party` process's memory instead (see `tss_party.go`), not
+  Postgres — so there's no live tenant-scoped query path here to
+  RLS-scope. Fixing this properly means either wiring
+  `CeremonyRoundStore` to a real migration and a real call site, or
+  removing the dead scaffolding; RLS rollout isn't the applicable next
+  step until one of those happens.
+
+  Still 🟡, not ✅ overall: production RDS has no `app`/`app_admin`
   role split yet — `infrastructure/terraform` provisions one master
   username only; provisioning the same two roles this migration assumes
   is still open.

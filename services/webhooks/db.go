@@ -11,60 +11,154 @@ import (
 	"github.com/lib/pq"
 )
 
+// PostgresDB holds two connections at two different privilege levels,
+// mirroring services/policy/db.go's split (the reference implementation
+// for this pattern -- see docs/security/audit-checklist.md):
+//
+//   - admin (app_admin, BYPASSRLS): used ONLY to resolve which customer a
+//     webhook_id/delivery_id belongs to.
+//   - tenant (app, RLS-enforced): used for every actual read/write,
+//     wrapped in withTenant so migration 011's row-level security
+//     policies actually apply -- including on webhook_deliveries, which
+//     has no customer_id column of its own and is scoped indirectly via
+//     a subquery join to webhooks.customer_id (see migration 011).
 type PostgresDB struct {
-	db *sql.DB
+	admin  *sql.DB
+	tenant *sql.DB
 }
 
 func NewPostgresDB() (*PostgresDB, error) {
-	dsn := os.Getenv("DATABASE_URL")
-	if dsn == "" {
-		// app_admin, not app: migration 011 forces row-level security on
-		// webhooks/webhook_deliveries for `app`, scoped by a
-		// per-transaction session variable this service doesn't set,
-		// even though every call here (PublishSigningCompleted etc.)
-		// already receives a customerID. app_admin (BYPASSRLS) preserves
-		// today's real behavior until that customerID is threaded through
-		// set_config() the way
-		// services/api-gateway/src/database/postgres.service.ts now is.
-		dsn = "postgres://app_admin:dev-only@localhost:5432/openfireblocks?sslmode=disable"
+	adminDSN := os.Getenv("DATABASE_URL")
+	if adminDSN == "" {
+		adminDSN = "postgres://app_admin:dev-only@localhost:5432/openfireblocks?sslmode=disable"
 	}
-	db, err := sql.Open("postgres", dsn)
+	tenantDSN := os.Getenv("DATABASE_TENANT_URL")
+	if tenantDSN == "" {
+		tenantDSN = "postgres://app:dev-only@localhost:5432/openfireblocks?sslmode=disable"
+	}
+
+	admin, err := sql.Open("postgres", adminDSN)
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect to database: %w", err)
+		return nil, fmt.Errorf("failed to connect admin pool: %w", err)
 	}
-	if err := db.Ping(); err != nil {
-		return nil, fmt.Errorf("database ping failed: %w", err)
+	if err := admin.Ping(); err != nil {
+		return nil, fmt.Errorf("admin pool ping failed: %w", err)
 	}
-	log.Printf("webhooks service connected to PostgreSQL")
-	return &PostgresDB{db: db}, nil
+
+	tenant, err := sql.Open("postgres", tenantDSN)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect tenant pool: %w", err)
+	}
+	if err := tenant.Ping(); err != nil {
+		return nil, fmt.Errorf("tenant pool ping failed: %w", err)
+	}
+
+	log.Printf("webhooks service connected to PostgreSQL (admin + RLS-scoped tenant pools)")
+	return &PostgresDB{admin: admin, tenant: tenant}, nil
 }
 
-func (p *PostgresDB) Close() error { return p.db.Close() }
+func (p *PostgresDB) Close() error {
+	tenantErr := p.tenant.Close()
+	adminErr := p.admin.Close()
+	if tenantErr != nil {
+		return tenantErr
+	}
+	return adminErr
+}
+
+// withTenant runs fn inside a transaction on the RLS-scoped tenant pool
+// with app.current_customer_id set via set_config() for that
+// transaction's duration -- see services/policy/db.go's withTenant.
+func (p *PostgresDB) withTenant(ctx context.Context, customerID string, fn func(tx *sql.Tx) error) error {
+	tx, err := p.tenant.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin tenant transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `SELECT set_config('app.current_customer_id', $1, true)`, customerID); err != nil {
+		return fmt.Errorf("failed to set tenant context: %w", err)
+	}
+	if err := fn(tx); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// resolveCustomerIDForWebhook looks up which customer a webhook belongs
+// to. Runs on the admin pool -- see the type doc comment.
+func (p *PostgresDB) resolveCustomerIDForWebhook(ctx context.Context, webhookID string) (string, error) {
+	var customerID string
+	err := p.admin.QueryRowContext(ctx, `SELECT customer_id FROM webhooks WHERE webhook_id = $1::uuid`, webhookID).Scan(&customerID)
+	if err == sql.ErrNoRows {
+		return "", fmt.Errorf("webhook %s not found", webhookID)
+	}
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve customer for webhook %s: %w", webhookID, err)
+	}
+	return customerID, nil
+}
+
+// resolveCustomerIDForDelivery joins through webhook_deliveries.webhook_id
+// to webhooks.customer_id, since a delivery record carries no customer_id
+// of its own (see migration 011's indirect-scoping note on this table).
+func (p *PostgresDB) resolveCustomerIDForDelivery(ctx context.Context, deliveryID string) (string, error) {
+	var customerID string
+	err := p.admin.QueryRowContext(ctx, `
+		SELECT w.customer_id FROM webhook_deliveries d
+		JOIN webhooks w ON w.webhook_id = d.webhook_id
+		WHERE d.delivery_id = $1::uuid
+	`, deliveryID).Scan(&customerID)
+	if err == sql.ErrNoRows {
+		return "", fmt.Errorf("delivery %s not found", deliveryID)
+	}
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve customer for delivery %s: %w", deliveryID, err)
+	}
+	return customerID, nil
+}
 
 func (p *PostgresDB) GetWebhooksByCustomer(ctx context.Context, customerID string) ([]*Webhook, error) {
-	rows, err := p.db.QueryContext(ctx, `
-		SELECT webhook_id, customer_id, url, secret, events, is_active, max_retries, backoff_seconds,
-		       exponential_backoff, custom_headers, created_at, updated_at
-		FROM webhooks WHERE customer_id = $1::uuid
-	`, customerID)
+	var webhooks []*Webhook
+	err := p.withTenant(ctx, customerID, func(tx *sql.Tx) error {
+		rows, err := tx.QueryContext(ctx, `
+			SELECT webhook_id, customer_id, url, secret, events, is_active, max_retries, backoff_seconds,
+			       exponential_backoff, custom_headers, created_at, updated_at
+			FROM webhooks WHERE customer_id = $1::uuid
+		`, customerID)
+		if err != nil {
+			return fmt.Errorf("failed to query webhooks: %w", err)
+		}
+		defer rows.Close()
+		webhooks, err = scanWebhooks(rows)
+		return err
+	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to query webhooks: %w", err)
+		return nil, err
 	}
-	defer rows.Close()
-	return scanWebhooks(rows)
+	return webhooks, nil
 }
 
 func (p *PostgresDB) GetWebhook(ctx context.Context, webhookID string) (*Webhook, error) {
-	rows, err := p.db.QueryContext(ctx, `
-		SELECT webhook_id, customer_id, url, secret, events, is_active, max_retries, backoff_seconds,
-		       exponential_backoff, custom_headers, created_at, updated_at
-		FROM webhooks WHERE webhook_id = $1::uuid
-	`, webhookID)
+	customerID, err := p.resolveCustomerIDForWebhook(ctx, webhookID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query webhook: %w", err)
+		return nil, err
 	}
-	defer rows.Close()
-	webhooks, err := scanWebhooks(rows)
+
+	var webhooks []*Webhook
+	err = p.withTenant(ctx, customerID, func(tx *sql.Tx) error {
+		rows, err := tx.QueryContext(ctx, `
+			SELECT webhook_id, customer_id, url, secret, events, is_active, max_retries, backoff_seconds,
+			       exponential_backoff, custom_headers, created_at, updated_at
+			FROM webhooks WHERE webhook_id = $1::uuid
+		`, webhookID)
+		if err != nil {
+			return fmt.Errorf("failed to query webhook: %w", err)
+		}
+		defer rows.Close()
+		webhooks, err = scanWebhooks(rows)
+		return err
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -96,30 +190,45 @@ func scanWebhooks(rows *sql.Rows) ([]*Webhook, error) {
 }
 
 func (p *PostgresDB) CreateWebhookDelivery(ctx context.Context, d *WebhookDelivery) error {
-	_, err := p.db.ExecContext(ctx, `
-		INSERT INTO webhook_deliveries (delivery_id, webhook_id, event_id, event_type, attempt, status_code,
-		                                  response_time_ms, success, error_message, next_retry_at, created_at)
-		VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7, $8, $9, $10, $11)
-	`, d.DeliveryID, d.WebhookID, d.EventID, d.EventType, d.Attempt, d.StatusCode, d.ResponseTime, d.Success, d.ErrorMessage, d.NextRetryAt, d.CreatedAt)
+	customerID, err := p.resolveCustomerIDForWebhook(ctx, d.WebhookID)
 	if err != nil {
-		return fmt.Errorf("failed to insert webhook delivery: %w", err)
+		return err
 	}
-	return nil
+
+	return p.withTenant(ctx, customerID, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO webhook_deliveries (delivery_id, webhook_id, event_id, event_type, attempt, status_code,
+			                                  response_time_ms, success, error_message, next_retry_at, created_at)
+			VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7, $8, $9, $10, $11)
+		`, d.DeliveryID, d.WebhookID, d.EventID, d.EventType, d.Attempt, d.StatusCode, d.ResponseTime, d.Success, d.ErrorMessage, d.NextRetryAt, d.CreatedAt)
+		if err != nil {
+			return fmt.Errorf("failed to insert webhook delivery: %w", err)
+		}
+		return nil
+	})
 }
 
 func (p *PostgresDB) GetWebhookDelivery(ctx context.Context, deliveryID string) (*WebhookDelivery, error) {
+	customerID, err := p.resolveCustomerIDForDelivery(ctx, deliveryID)
+	if err != nil {
+		return nil, err
+	}
+
 	var d WebhookDelivery
 	var errMsg sql.NullString
-	row := p.db.QueryRowContext(ctx, `
-		SELECT delivery_id, webhook_id, event_id, event_type, attempt, status_code, response_time_ms,
-		       success, error_message, next_retry_at, created_at
-		FROM webhook_deliveries WHERE delivery_id = $1::uuid
-	`, deliveryID)
-	if err := row.Scan(&d.DeliveryID, &d.WebhookID, &d.EventID, &d.EventType, &d.Attempt, &d.StatusCode, &d.ResponseTime,
-		&d.Success, &errMsg, &d.NextRetryAt, &d.CreatedAt); err != nil {
-		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("delivery %s not found", deliveryID)
-		}
+	err = p.withTenant(ctx, customerID, func(tx *sql.Tx) error {
+		row := tx.QueryRowContext(ctx, `
+			SELECT delivery_id, webhook_id, event_id, event_type, attempt, status_code, response_time_ms,
+			       success, error_message, next_retry_at, created_at
+			FROM webhook_deliveries WHERE delivery_id = $1::uuid
+		`, deliveryID)
+		return row.Scan(&d.DeliveryID, &d.WebhookID, &d.EventID, &d.EventType, &d.Attempt, &d.StatusCode, &d.ResponseTime,
+			&d.Success, &errMsg, &d.NextRetryAt, &d.CreatedAt)
+	})
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("delivery %s not found", deliveryID)
+	}
+	if err != nil {
 		return nil, fmt.Errorf("failed to query webhook delivery: %w", err)
 	}
 	d.ErrorMessage = errMsg.String
@@ -127,27 +236,38 @@ func (p *PostgresDB) GetWebhookDelivery(ctx context.Context, deliveryID string) 
 }
 
 func (p *PostgresDB) GetWebhookDeliveries(ctx context.Context, webhookID string, limit int) ([]*WebhookDelivery, error) {
-	rows, err := p.db.QueryContext(ctx, `
-		SELECT delivery_id, webhook_id, event_id, event_type, attempt, status_code, response_time_ms,
-		       success, error_message, next_retry_at, created_at
-		FROM webhook_deliveries WHERE webhook_id = $1::uuid
-		ORDER BY created_at DESC LIMIT $2
-	`, webhookID, limit)
+	customerID, err := p.resolveCustomerIDForWebhook(ctx, webhookID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query webhook deliveries: %w", err)
+		return nil, err
 	}
-	defer rows.Close()
 
 	var deliveries []*WebhookDelivery
-	for rows.Next() {
-		var d WebhookDelivery
-		var errMsg sql.NullString
-		if err := rows.Scan(&d.DeliveryID, &d.WebhookID, &d.EventID, &d.EventType, &d.Attempt, &d.StatusCode, &d.ResponseTime,
-			&d.Success, &errMsg, &d.NextRetryAt, &d.CreatedAt); err != nil {
-			return nil, fmt.Errorf("failed to scan webhook delivery row: %w", err)
+	err = p.withTenant(ctx, customerID, func(tx *sql.Tx) error {
+		rows, err := tx.QueryContext(ctx, `
+			SELECT delivery_id, webhook_id, event_id, event_type, attempt, status_code, response_time_ms,
+			       success, error_message, next_retry_at, created_at
+			FROM webhook_deliveries WHERE webhook_id = $1::uuid
+			ORDER BY created_at DESC LIMIT $2
+		`, webhookID, limit)
+		if err != nil {
+			return fmt.Errorf("failed to query webhook deliveries: %w", err)
 		}
-		d.ErrorMessage = errMsg.String
-		deliveries = append(deliveries, &d)
+		defer rows.Close()
+
+		for rows.Next() {
+			var d WebhookDelivery
+			var errMsg sql.NullString
+			if err := rows.Scan(&d.DeliveryID, &d.WebhookID, &d.EventID, &d.EventType, &d.Attempt, &d.StatusCode, &d.ResponseTime,
+				&d.Success, &errMsg, &d.NextRetryAt, &d.CreatedAt); err != nil {
+				return fmt.Errorf("failed to scan webhook delivery row: %w", err)
+			}
+			d.ErrorMessage = errMsg.String
+			deliveries = append(deliveries, &d)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, err
 	}
-	return deliveries, rows.Err()
+	return deliveries, nil
 }
