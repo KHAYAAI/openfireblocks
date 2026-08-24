@@ -46,6 +46,7 @@ type tssKeygenCeremony struct {
 	errorMessage string
 
 	selfPartyID  int
+	threshold    int                      // needed later by StartSigning to size the signing committee
 	sortedIDs    tsscommon.SortedPartyIDs // identical on every process, see deterministicPartyIDs
 	peers        map[int]string           // partyId -> base URL, for relaying outgoing messages
 	localParty   tsscommon.Party
@@ -55,13 +56,16 @@ type tssKeygenCeremony struct {
 }
 
 // TSSPartyManager tracks every ceremony this process (one party) is or has
-// been a member of.
+// been a member of, both keygen (tss_party.go) and signing (tss_signing.go).
 type TSSPartyManager struct {
 	partyID int
 	client  *http.Client
 
 	mu         sync.Mutex
 	ceremonies map[string]*tssKeygenCeremony
+
+	signMu   sync.Mutex
+	signings map[string]*tssSigningCeremony
 }
 
 func NewTSSPartyManager(partyID int, client *http.Client) *TSSPartyManager {
@@ -72,6 +76,7 @@ func NewTSSPartyManager(partyID int, client *http.Client) *TSSPartyManager {
 		partyID:    partyID,
 		client:     client,
 		ceremonies: make(map[string]*tssKeygenCeremony),
+		signings:   make(map[string]*tssSigningCeremony),
 	}
 }
 
@@ -133,6 +138,7 @@ func (m *TSSPartyManager) StartKeygen(ceremonyID string, threshold int, peers ma
 	ceremony := &tssKeygenCeremony{
 		status:      ceremonyInProgress,
 		selfPartyID: m.partyID,
+		threshold:   threshold,
 		sortedIDs:   sorted,
 		peers:       peers,
 	}
@@ -218,16 +224,28 @@ func (m *TSSPartyManager) relayMessage(ceremonyID string, ceremony *tssKeygenCer
 		WireBytes:   base64.StdEncoding.EncodeToString(data),
 	}
 
+	return relayTSSMessage(ceremony.selfPartyID, ceremony.peers, ceremony.sortedIDs, msg, func(baseURL string) error {
+		return postTSSMessage(m.client, baseURL, envelope)
+	})
+}
+
+// relayTSSMessage resolves which peers a tss-lib protocol message needs to
+// reach (everyone else in peers, if broadcast; msg.GetTo() mapped back to
+// party-ID numbers via sortedIDs, if not) and calls postFn once per
+// target. Shared between keygen (relayMessage above) and signing
+// (relaySignMessage, tss_signing.go) -- the routing logic is identical;
+// only the wire envelope shape and HTTP endpoint differ, which postFn owns.
+func relayTSSMessage(selfPartyID int, peers map[int]string, sortedIDs tsscommon.SortedPartyIDs, msg tsscommon.Message, postFn func(baseURL string) error) error {
 	var targets []int
 	if msg.IsBroadcast() {
-		for id := range ceremony.peers {
-			if id != ceremony.selfPartyID {
+		for id := range peers {
+			if id != selfPartyID {
 				targets = append(targets, id)
 			}
 		}
 	} else {
 		for _, to := range msg.GetTo() {
-			for id, sortedID := range peerIndexByKey(ceremony.sortedIDs) {
+			for id, sortedID := range peerIndexByKey(sortedIDs) {
 				if sortedID.KeyInt().Cmp(to.KeyInt()) == 0 {
 					targets = append(targets, id)
 				}
@@ -236,11 +254,11 @@ func (m *TSSPartyManager) relayMessage(ceremonyID string, ceremony *tssKeygenCer
 	}
 
 	for _, targetID := range targets {
-		baseURL, ok := ceremony.peers[targetID]
+		baseURL, ok := peers[targetID]
 		if !ok {
 			return fmt.Errorf("no known endpoint for target party %d", targetID)
 		}
-		if err := postTSSMessage(m.client, baseURL, envelope); err != nil {
+		if err := postFn(baseURL); err != nil {
 			return fmt.Errorf("failed to deliver message to party %d: %w", targetID, err)
 		}
 	}

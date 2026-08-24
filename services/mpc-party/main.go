@@ -351,6 +351,13 @@ func main() {
 	router.HandleFunc("/tss/keygen/message", ps.HandleTSSKeygenMessage).Methods(http.MethodPost)
 	router.HandleFunc("/tss/keygen/status", ps.HandleTSSKeygenStatus).Methods(http.MethodGet)
 
+	// Real, network-driven tss-lib threshold SIGNING (see tss_signing.go) --
+	// the counterpart to /tss/keygen/* above. Always references a
+	// completed keygen ceremony by ID.
+	router.HandleFunc("/tss/sign/start", ps.HandleTSSSignStart).Methods(http.MethodPost)
+	router.HandleFunc("/tss/sign/message", ps.HandleTSSSignMessage).Methods(http.MethodPost)
+	router.HandleFunc("/tss/sign/status", ps.HandleTSSSignStatus).Methods(http.MethodGet)
+
 	// Health and info
 	router.HandleFunc("/health", ps.HandleHealth).Methods(http.MethodGet)
 	router.HandleFunc("/info", ps.HandleInfo).Methods(http.MethodGet)
