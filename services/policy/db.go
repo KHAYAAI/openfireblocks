@@ -11,39 +11,118 @@ import (
 	_ "github.com/lib/pq"
 )
 
+// PostgresDB holds two connections at two different privilege levels,
+// mirroring services/api-gateway/src/database/postgres.service.ts's split
+// between its RLS-scoped pool and its admin pool:
+//
+//   - admin (app_admin, BYPASSRLS): used ONLY to resolve which customer a
+//     key_id/policy_id belongs to -- an unavoidable privileged step, since
+//     RLS can't be applied to a query before the tenant it should be
+//     scoped to is known.
+//   - tenant (app, RLS-enforced): used for every actual read/write of
+//     policy data, wrapped in withTenant so migration 011's row-level
+//     security policies actually apply.
+//
+// This replaces the previous app_admin-only connection (see git history)
+// that this file's own comment used to describe as an interim measure
+// "until it threads the customer_id it already receives per-request into
+// the same set_config() pattern api-gateway uses" -- this is that follow-through.
 type PostgresDB struct {
-	db *sql.DB
+	admin  *sql.DB
+	tenant *sql.DB
 }
 
 func NewPostgresDB() (*PostgresDB, error) {
-	dsn := os.Getenv("DATABASE_URL")
-	if dsn == "" {
-		// app_admin, not app: migration 011 enforces row-level security on
-		// policies/key_pairs/etc. for the `app` role, scoped by a
-		// per-transaction `app.current_customer_id` session variable that
-		// this service does not set (it evaluates policy for whichever
-		// customer/key a signing request names, not a single authenticated
-		// tenant session the way api-gateway has one). Connecting as `app`
-		// here would silently return zero rows for every query instead of
-		// failing loudly -- worse than either enforcing or not enforcing.
-		// app_admin (BYPASSRLS) keeps this service's real behavior
-		// unchanged until it threads the customer_id it already receives
-		// per-request into the same set_config() pattern api-gateway uses
-		// (see services/api-gateway/src/database/postgres.service.ts).
-		dsn = "postgres://app_admin:dev-only@localhost:5432/openfireblocks?sslmode=disable"
+	adminDSN := os.Getenv("DATABASE_URL")
+	if adminDSN == "" {
+		adminDSN = "postgres://app_admin:dev-only@localhost:5432/openfireblocks?sslmode=disable"
 	}
-	db, err := sql.Open("postgres", dsn)
+	tenantDSN := os.Getenv("DATABASE_TENANT_URL")
+	if tenantDSN == "" {
+		tenantDSN = "postgres://app:dev-only@localhost:5432/openfireblocks?sslmode=disable"
+	}
+
+	admin, err := sql.Open("postgres", adminDSN)
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect to database: %w", err)
+		return nil, fmt.Errorf("failed to connect admin pool: %w", err)
 	}
-	if err := db.Ping(); err != nil {
-		return nil, fmt.Errorf("database ping failed: %w", err)
+	if err := admin.Ping(); err != nil {
+		return nil, fmt.Errorf("admin pool ping failed: %w", err)
 	}
-	log.Printf("policy service connected to PostgreSQL")
-	return &PostgresDB{db: db}, nil
+
+	tenant, err := sql.Open("postgres", tenantDSN)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect tenant pool: %w", err)
+	}
+	if err := tenant.Ping(); err != nil {
+		return nil, fmt.Errorf("tenant pool ping failed: %w", err)
+	}
+
+	log.Printf("policy service connected to PostgreSQL (admin + RLS-scoped tenant pools)")
+	return &PostgresDB{admin: admin, tenant: tenant}, nil
 }
 
-func (p *PostgresDB) Close() error { return p.db.Close() }
+func (p *PostgresDB) Close() error {
+	tenantErr := p.tenant.Close()
+	adminErr := p.admin.Close()
+	if tenantErr != nil {
+		return tenantErr
+	}
+	return adminErr
+}
+
+// withTenant runs fn inside a transaction on the RLS-scoped tenant pool
+// with app.current_customer_id set via set_config() for that
+// transaction's duration -- SET LOCAL doesn't accept bind parameters, only
+// set_config() does; the third argument (true) scopes it to the
+// transaction, exactly like SET LOCAL would. Mirrors
+// services/api-gateway/src/database/postgres.service.ts's withTenant().
+func (p *PostgresDB) withTenant(ctx context.Context, customerID string, fn func(tx *sql.Tx) error) error {
+	tx, err := p.tenant.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin tenant transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `SELECT set_config('app.current_customer_id', $1, true)`, customerID); err != nil {
+		return fmt.Errorf("failed to set tenant context: %w", err)
+	}
+	if err := fn(tx); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// resolveCustomerIDForKey looks up which customer owns keyID. Runs on the
+// admin pool -- this is the one place per request that's genuinely
+// unavoidable at app_admin privilege, since RLS can't scope a query to a
+// tenant that isn't known yet. Everything downstream of this call uses
+// withTenant instead.
+func (p *PostgresDB) resolveCustomerIDForKey(ctx context.Context, keyID string) (string, error) {
+	var customerID string
+	err := p.admin.QueryRowContext(ctx, `SELECT customer_id FROM key_pairs WHERE key_id = $1::uuid`, keyID).Scan(&customerID)
+	if err == sql.ErrNoRows {
+		return "", fmt.Errorf("key %s not found", keyID)
+	}
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve customer for key %s: %w", keyID, err)
+	}
+	return customerID, nil
+}
+
+// resolveCustomerIDForPolicy is resolveCustomerIDForKey's counterpart for
+// operations addressed by policy_id instead of key_id.
+func (p *PostgresDB) resolveCustomerIDForPolicy(ctx context.Context, policyID string) (string, error) {
+	var customerID string
+	err := p.admin.QueryRowContext(ctx, `SELECT customer_id FROM policies WHERE policy_id = $1::uuid`, policyID).Scan(&customerID)
+	if err == sql.ErrNoRows {
+		return "", fmt.Errorf("policy %s not found", policyID)
+	}
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve customer for policy %s: %w", policyID, err)
+	}
+	return customerID, nil
+}
 
 // policyRules is what's actually stored in policies.rules (JSONB): the
 // table has no dedicated columns for a policy's rule list, approval config,
@@ -60,34 +139,57 @@ func (p *PostgresDB) CreatePolicy(ctx context.Context, policy *Policy) error {
 		return fmt.Errorf("failed to marshal policy rules: %w", err)
 	}
 
-	// customer_id isn't part of the Policy API surface -- it's derived from
-	// the key the policy is scoped to, since every key belongs to exactly
-	// one customer and duplicating that onto every policy risks it drifting
-	// out of sync with the key's actual owner.
-	_, err = p.db.ExecContext(ctx, `
-		INSERT INTO policies (policy_id, customer_id, key_id, name, description, rules, status, created_at, updated_at)
-		SELECT $1::uuid, key_pairs.customer_id, $2::uuid, $3, $4, $5, $6, $7, $8
-		FROM key_pairs WHERE key_pairs.key_id = $2::uuid
-	`, policy.PolicyID, policy.KeyID, policy.Name, policy.Description, rules, policy.Status, policy.CreatedAt, policy.UpdatedAt)
+	customerID, err := p.resolveCustomerIDForKey(ctx, policy.KeyID)
 	if err != nil {
-		return fmt.Errorf("failed to insert policy: %w", err)
+		return err
 	}
+
+	err = p.withTenant(ctx, customerID, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO policies (policy_id, customer_id, key_id, name, description, rules, status, created_at, updated_at)
+			VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7, $8, $9)
+		`, policy.PolicyID, customerID, policy.KeyID, policy.Name, policy.Description, rules, policy.Status, policy.CreatedAt, policy.UpdatedAt)
+		if err != nil {
+			return fmt.Errorf("failed to insert policy: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	policy.CustomerID = customerID
 	return nil
 }
 
 func (p *PostgresDB) GetPolicy(ctx context.Context, policyID string) (*Policy, error) {
+	customerID, err := p.resolveCustomerIDForPolicy(ctx, policyID)
+	if err != nil {
+		return nil, err
+	}
+
 	var policy Policy
 	var rulesRaw []byte
-	row := p.db.QueryRowContext(ctx, `
-		SELECT policy_id, key_id, name, COALESCE(description, ''), status, rules, created_at, updated_at
-		FROM policies WHERE policy_id = $1::uuid
-	`, policyID)
-	if err := row.Scan(&policy.PolicyID, &policy.KeyID, &policy.Name, &policy.Description, &policy.Status, &rulesRaw, &policy.CreatedAt, &policy.UpdatedAt); err != nil {
-		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("policy %s not found", policyID)
-		}
+	err = p.withTenant(ctx, customerID, func(tx *sql.Tx) error {
+		row := tx.QueryRowContext(ctx, `
+			SELECT policy_id, key_id, name, COALESCE(description, ''), status, rules, created_at, updated_at
+			FROM policies WHERE policy_id = $1::uuid
+		`, policyID)
+		return row.Scan(&policy.PolicyID, &policy.KeyID, &policy.Name, &policy.Description, &policy.Status, &rulesRaw, &policy.CreatedAt, &policy.UpdatedAt)
+	})
+	if err == sql.ErrNoRows {
+		// Either the policy genuinely doesn't exist, or -- if
+		// resolveCustomerIDForPolicy above somehow raced with a delete --
+		// RLS is correctly hiding it from a tenant context it no longer
+		// belongs to. Both cases are indistinguishable to the caller and
+		// both should read as "not found," never as a different error
+		// that might hint at cross-tenant existence.
+		return nil, fmt.Errorf("policy %s not found", policyID)
+	}
+	if err != nil {
 		return nil, fmt.Errorf("failed to query policy: %w", err)
 	}
+	policy.CustomerID = customerID
+
 	var pr policyRules
 	if err := json.Unmarshal(rulesRaw, &pr); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal policy rules: %w", err)
@@ -99,33 +201,45 @@ func (p *PostgresDB) GetPolicy(ctx context.Context, policyID string) (*Policy, e
 }
 
 func (p *PostgresDB) ListPoliciesByKey(ctx context.Context, keyID string) ([]*Policy, error) {
-	rows, err := p.db.QueryContext(ctx, `
-		SELECT policy_id, key_id, name, COALESCE(description, ''), status, rules, created_at, updated_at
-		FROM policies WHERE key_id = $1::uuid
-		ORDER BY created_at DESC
-	`, keyID)
+	customerID, err := p.resolveCustomerIDForKey(ctx, keyID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query policies: %w", err)
+		return nil, err
 	}
-	defer rows.Close()
 
 	var policies []*Policy
-	for rows.Next() {
-		var policy Policy
-		var rulesRaw []byte
-		if err := rows.Scan(&policy.PolicyID, &policy.KeyID, &policy.Name, &policy.Description, &policy.Status, &rulesRaw, &policy.CreatedAt, &policy.UpdatedAt); err != nil {
-			return nil, fmt.Errorf("failed to scan policy row: %w", err)
+	err = p.withTenant(ctx, customerID, func(tx *sql.Tx) error {
+		rows, err := tx.QueryContext(ctx, `
+			SELECT policy_id, key_id, name, COALESCE(description, ''), status, rules, created_at, updated_at
+			FROM policies WHERE key_id = $1::uuid
+			ORDER BY created_at DESC
+		`, keyID)
+		if err != nil {
+			return fmt.Errorf("failed to query policies: %w", err)
 		}
-		var pr policyRules
-		if err := json.Unmarshal(rulesRaw, &pr); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal policy rules: %w", err)
+		defer rows.Close()
+
+		for rows.Next() {
+			var policy Policy
+			var rulesRaw []byte
+			if err := rows.Scan(&policy.PolicyID, &policy.KeyID, &policy.Name, &policy.Description, &policy.Status, &rulesRaw, &policy.CreatedAt, &policy.UpdatedAt); err != nil {
+				return fmt.Errorf("failed to scan policy row: %w", err)
+			}
+			var pr policyRules
+			if err := json.Unmarshal(rulesRaw, &pr); err != nil {
+				return fmt.Errorf("failed to unmarshal policy rules: %w", err)
+			}
+			policy.CustomerID = customerID
+			policy.Rules = pr.Rules
+			policy.Approvals = pr.Approvals
+			policy.RateLimit = pr.RateLimit
+			policies = append(policies, &policy)
 		}
-		policy.Rules = pr.Rules
-		policy.Approvals = pr.Approvals
-		policy.RateLimit = pr.RateLimit
-		policies = append(policies, &policy)
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, err
 	}
-	return policies, rows.Err()
+	return policies, nil
 }
 
 func (p *PostgresDB) UpdatePolicy(ctx context.Context, policy *Policy) error {
@@ -133,15 +247,23 @@ func (p *PostgresDB) UpdatePolicy(ctx context.Context, policy *Policy) error {
 	if err != nil {
 		return fmt.Errorf("failed to marshal policy rules: %w", err)
 	}
-	result, err := p.db.ExecContext(ctx, `
-		UPDATE policies SET name = $2, description = $3, rules = $4, status = $5, updated_at = $6
-		WHERE policy_id = $1::uuid
-	`, policy.PolicyID, policy.Name, policy.Description, rules, policy.Status, policy.UpdatedAt)
+
+	customerID, err := p.resolveCustomerIDForPolicy(ctx, policy.PolicyID)
 	if err != nil {
-		return fmt.Errorf("failed to update policy: %w", err)
+		return err
 	}
-	if n, _ := result.RowsAffected(); n == 0 {
-		return fmt.Errorf("policy %s not found", policy.PolicyID)
-	}
-	return nil
+
+	return p.withTenant(ctx, customerID, func(tx *sql.Tx) error {
+		result, err := tx.ExecContext(ctx, `
+			UPDATE policies SET name = $2, description = $3, rules = $4, status = $5, updated_at = $6
+			WHERE policy_id = $1::uuid
+		`, policy.PolicyID, policy.Name, policy.Description, rules, policy.Status, policy.UpdatedAt)
+		if err != nil {
+			return fmt.Errorf("failed to update policy: %w", err)
+		}
+		if n, _ := result.RowsAffected(); n == 0 {
+			return fmt.Errorf("policy %s not found", policy.PolicyID)
+		}
+		return nil
+	})
 }

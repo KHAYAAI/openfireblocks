@@ -62,19 +62,30 @@ Status legend: ✅ done · 🟡 partial · ⬜ not started
   cross-tenant isolation was live-verified against real Postgres (a
   session with no `app.current_customer_id` set sees zero rows; a session
   scoped to tenant A cannot see tenant B's row; an insert spoofing another
-  tenant's `customer_id` is rejected). Still 🟡, not ✅: only
-  `services/api-gateway` threads the real per-request tenant context
-  (`set_config('app.current_customer_id', ...)` in
-  `postgres.service.ts`/`audit.service.ts`). The other six Go services
-  that touch these tables (policy, settlement, billing, webhooks,
-  marketplace, temporal-worker) connect as `app_admin` (BYPASSRLS) as an
-  explicit interim measure so this change doesn't silently zero out their
-  queries — each needs the same set_config() treatment before RLS
-  actually protects those paths too (see the comment on `NewPostgresDB`/
-  `dsn` in each service's `db.go`). Production RDS also has no `app`/
-  `app_admin` role split yet — `infrastructure/terraform` provisions one
-  master username only; provisioning the same two roles this migration
-  assumes is still open.
+  tenant's `customer_id` is rejected). `services/api-gateway` and, as of
+  this pass, `services/policy` thread the real per-request tenant context
+  (`set_config('app.current_customer_id', ...)`); `services/policy/db.go`
+  now holds two pools at two privilege levels — `app_admin` used ONLY to
+  resolve which customer a `key_id`/`policy_id` belongs to (unavoidably
+  privileged, since RLS can't scope a query to a tenant that isn't known
+  yet), and the RLS-scoped `app` pool via a `withTenant()` wrapper
+  (mirroring `postgres.service.ts`'s) for every actual read/write.
+  Live-verified the same way as the original RLS work: created a real
+  customer/key/policy, confirmed the plain `app` role with no context set
+  sees zero rows, confirmed a wrong tenant context also sees zero rows,
+  confirmed the correct tenant context sees the row, and exercised the
+  full HTTP surface (create/get/list/evaluate) end to end including the
+  amount-limit policy actually blocking an over-limit evaluation. Still
+  🟡, not ✅: the other five Go services that touch these tables
+  (settlement, billing, webhooks, marketplace, temporal-worker) still
+  connect as `app_admin` (BYPASSRLS) as an explicit interim measure — each
+  needs the same two-pool/withTenant treatment before RLS actually
+  protects those paths too (see the comment on `NewPostgresDB`/`dsn` in
+  each service's `db.go`; `services/policy/db.go` is now the reference
+  implementation to copy). Production RDS also has no `app`/`app_admin`
+  role split yet — `infrastructure/terraform` provisions one master
+  username only; provisioning the same two roles this migration assumes
+  is still open.
 - 🟡 Dual audit trail (PostgreSQL + immudb) — downgraded from a prior ✅
   that was wrong: `AuditService.logEvent` wrote to `audit.events`, a table
   no migration had ever created, and silently swallowed the resulting
