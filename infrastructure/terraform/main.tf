@@ -277,6 +277,10 @@ module "vault_pki" {
 
   environment     = var.environment
   allowed_domains = var.mtls_allowed_domains
+
+  kubernetes_auth_enabled = var.vault_kubernetes_auth_enabled
+  kubernetes_host         = var.vault_kubernetes_host
+  kubernetes_ca_cert      = var.vault_kubernetes_ca_cert
 }
 
 # Vault Cluster Module (Secondary)

@@ -82,6 +82,22 @@ temporalWorker:
   mtls:
     enabled: false # opt-in, see services/temporal-worker/activities/mtls.go
     certSecret: openfireblocks-mtls # secret holding keys tls.crt/tls.key/ca.crt
+    # autoIssue runs services/vault-pki-init as an init container instead
+    # of mounting certSecret: each pod requests its own short-lived cert
+    # from Vault's PKI engine at startup (infrastructure/terraform/modules/vault-pki,
+    # with kubernetes_auth_enabled=true) rather than reading one out of a
+    # long-lived Kubernetes Secret. Only meaningful when mtls.enabled is
+    # also true; ignored otherwise.
+    autoIssue:
+      enabled: false
+      image: vault-pki-init
+      tag: latest
+      vaultAddr: "" # e.g. http://vault.vault:8200
+      k8sRole: internal-service # matches vault_kubernetes_auth_backend_role.internal_service.role_name
+      pkiMount: pki/production
+      pkiRole: internal-service
+      certTTL: 24h
+      commonName: temporal-worker.internal
 
 # mpcParty runs one Deployment+Service PER PARTY, not N replicas of one
 # Deployment -- each party has a distinct identity (PARTY_ID) and a
@@ -104,6 +120,18 @@ mpcParty:
   mtls:
     enabled: false # opt-in, see services/mpc-party/mtls.go
     certSecret: openfireblocks-mtls
+    # See temporalWorker.mtls.autoIssue's comment -- same mechanism.
+    # commonName is derived per-party in templates/mpc-party.yaml
+    # (party-<N>.internal), not set here.
+    autoIssue:
+      enabled: false
+      image: vault-pki-init
+      tag: latest
+      vaultAddr: ""
+      k8sRole: internal-service
+      pkiMount: pki/production
+      pkiRole: internal-service
+      certTTL: 24h
   vault:
     addr: "" # e.g. http://vault.vault:8200 -- empty disables key-share sealing, see vault_seal.go
     tokenSecret: openfireblocks-secrets # secret holding key "vault-token"

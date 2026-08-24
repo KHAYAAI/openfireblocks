@@ -211,6 +211,69 @@ Status legend: ✅ done · 🟡 partial · ⬜ not started
   configuration instead, which is simpler to reason about here given
   there's no live Kubernetes/App-Mesh deployment target settled on yet
   (see the ECS-vs-Helm finding elsewhere in this checklist).
+
+  **Later pass — automated per-service cert issuance.** Everything above
+  proved the mTLS *handshake* works; issuing the certs themselves was
+  still a manual `vault write pki/.../issue/...` step. `services/vault-pki-init`
+  is a new small standalone binary that automates it: run once as a
+  Kubernetes init container, it authenticates to Vault (either a direct
+  `VAULT_TOKEN`, or a real Kubernetes-auth login using the pod's own
+  projected ServiceAccount JWT against `POST /v1/auth/kubernetes/login`)
+  and requests a short-lived leaf cert from the PKI role, writing
+  `tls.crt`/`tls.key`/`ca.crt` to a shared `emptyDir` the main container
+  reads `MTLS_CERT_FILE`/`MTLS_KEY_FILE`/`MTLS_CA_FILE` from — replacing a
+  human (or an unwired ESO integration) hand-populating a long-lived
+  Kubernetes Secret. `infrastructure/terraform/modules/vault-pki` gained
+  the other half: a `vault_auth_backend "kubernetes"` +
+  `vault_kubernetes_auth_backend_config` + `vault_kubernetes_auth_backend_role`
+  (bound to this chart's ServiceAccount, policy scoped to just
+  `create`/`update` on `pki/<env>/issue/internal-service` — nothing else),
+  gated behind its own `kubernetes_auth_enabled` toggle (default false, same
+  reasoning as `vault_pki_enabled`: real cluster host/CA values don't exist
+  until someone actually applies this against a live cluster).
+  `infrastructure/helm/openfireblocks`'s `mpc-party.yaml`/`temporal-worker.yaml`
+  gained a `mtls.autoIssue` opt-in per component: when set, the pod's
+  `mtls-certs` volume switches from `secret: {secretName: ...}` to
+  `emptyDir: {}` and an init container runs `vault-pki-init` against it
+  first; the main container's env/volume wiring is otherwise unchanged, so
+  toggling `autoIssue` is the only difference between the manual-Secret
+  path and the automated one.
+
+  Live-verified beyond code review, in the same sandbox used for the
+  mTLS handshake tests above: a real `vault server -dev` instance got a
+  `pki/test` mount + `internal-service` role (matching the Terraform
+  module's shape — `allowed_domains` covering `party-1..3.internal`,
+  `temporal-worker.internal`, `policy-service.internal`; 24h max TTL; RSA
+  2048; client+server flag). `vault-pki-init` (built, `go vet` and
+  `gofmt` clean) was run twice against it with a real `VAULT_TOKEN`,
+  issuing real certs for `party-1.internal` and `party-2.internal`;
+  `openssl x509` confirmed correct CN, SAN, and TTL on both. A real
+  `mpc-party` server was started with the `party-1.internal` cert as its
+  `MTLS_CERT_FILE`/`MTLS_KEY_FILE`/`MTLS_CA_FILE`, and a `curl` presenting
+  the `party-2.internal` client cert got a genuine `200 {"status":"healthy"}`
+  — the full automated-issuance-to-real-mTLS-handshake path, not manually
+  generated openssl certs standing in for Vault's. A no-client-cert `curl`
+  against the same server was correctly rejected
+  (`tlsv13 alert certificate required`). `terraform validate` passes with
+  the new Kubernetes-auth resources included; `helm lint` and
+  `helm template` (with `mtls.enabled`+`mtls.autoIssue.enabled` toggled on
+  for both `mpcParty` and `temporalWorker`) both render clean, and the
+  rendered init containers were confirmed (via Python's YAML parser, not
+  just "helm didn't error") to carry the right `COMMON_NAME` per party
+  (`party-<N>.internal`, computed in the `{{ range }}` loop, not
+  hardcoded) and mount the same `mtls-certs` emptyDir the main container
+  reads from. The default (no mTLS) and manual-Secret-mTLS render paths
+  were also re-checked after this change and are unaffected.
+
+  The Kubernetes-auth *login* itself (as opposed to the PKI issuance that
+  follows it) was not exercised end-to-end — that requires a real
+  cluster's TokenReview API and a projected ServiceAccount JWT, neither
+  of which exists in this sandbox; `vault-pki-init`'s own doc comment and
+  the Terraform module's discloses this rather than claiming it. Still
+  🟡, not ✅ for the same reason the base mTLS item above is: only
+  `mpc-party` and `temporal-worker` got the `autoIssue` option (matching
+  which two components already had `mtls.enabled` at all) — the rest of
+  the mesh has neither manual nor automated mTLS wiring yet.
 - 🟡 Multi-region / DR with RTO/RPO < 1h — real infrastructure exists
   (`infrastructure/terraform`'s primary+secondary VPC/Vault cluster, and
   `modules/rds-replica`'s cross-region `aws_db_instance` with

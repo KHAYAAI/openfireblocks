@@ -37,6 +37,36 @@ spec:
       serviceAccountName: {{ include "ofb.fullname" $ }}
       securityContext:
         {{- toYaml $.Values.podSecurityContext | nindent 8 }}
+      {{- if and $.Values.mpcParty.mtls.enabled $.Values.mpcParty.mtls.autoIssue.enabled }}
+      # Requests this party's own short-lived leaf cert from Vault PKI at
+      # pod startup and writes it to the mtls-certs emptyDir below, instead
+      # of the main container reading a pre-populated Secret -- see
+      # services/vault-pki-init's doc comment.
+      initContainers:
+        - name: vault-pki-init
+          image: {{ include "ofb.image" (dict "root" $ "image" $.Values.mpcParty.mtls.autoIssue.image "tag" $.Values.mpcParty.mtls.autoIssue.tag) }}
+          imagePullPolicy: {{ $.Values.imagePullPolicy }}
+          securityContext:
+            {{- toYaml $.Values.containerSecurityContext | nindent 12 }}
+          env:
+            - name: VAULT_ADDR
+              value: {{ $.Values.mpcParty.mtls.autoIssue.vaultAddr | quote }}
+            - name: VAULT_K8S_ROLE
+              value: {{ $.Values.mpcParty.mtls.autoIssue.k8sRole | quote }}
+            - name: COMMON_NAME
+              value: {{ printf "party-%d.internal" $partyID | quote }}
+            - name: VAULT_PKI_MOUNT
+              value: {{ $.Values.mpcParty.mtls.autoIssue.pkiMount | quote }}
+            - name: VAULT_PKI_ROLE
+              value: {{ $.Values.mpcParty.mtls.autoIssue.pkiRole | quote }}
+            - name: CERT_TTL
+              value: {{ $.Values.mpcParty.mtls.autoIssue.certTTL | quote }}
+            - name: CERT_OUT_DIR
+              value: /etc/openfireblocks/mtls
+          volumeMounts:
+            - name: mtls-certs
+              mountPath: /etc/openfireblocks/mtls
+      {{- end }}
       containers:
         - name: mpc-party
           image: {{ include "ofb.image" (dict "root" $ "image" $.Values.mpcParty.image "tag" $.Values.mpcParty.tag) }}
@@ -97,8 +127,12 @@ spec:
       {{- if $.Values.mpcParty.mtls.enabled }}
       volumes:
         - name: mtls-certs
+          {{- if $.Values.mpcParty.mtls.autoIssue.enabled }}
+          emptyDir: {}
+          {{- else }}
           secret:
             secretName: {{ $.Values.mpcParty.mtls.certSecret }}
+          {{- end }}
       {{- end }}
 ---
 apiVersion: v1

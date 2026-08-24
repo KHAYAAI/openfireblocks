@@ -20,6 +20,32 @@ spec:
       serviceAccountName: {{ include "ofb.fullname" . }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- if and .Values.temporalWorker.mtls.enabled .Values.temporalWorker.mtls.autoIssue.enabled }}
+      initContainers:
+        - name: vault-pki-init
+          image: {{ include "ofb.image" (dict "root" . "image" .Values.temporalWorker.mtls.autoIssue.image "tag" .Values.temporalWorker.mtls.autoIssue.tag) }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          env:
+            - name: VAULT_ADDR
+              value: {{ .Values.temporalWorker.mtls.autoIssue.vaultAddr | quote }}
+            - name: VAULT_K8S_ROLE
+              value: {{ .Values.temporalWorker.mtls.autoIssue.k8sRole | quote }}
+            - name: COMMON_NAME
+              value: {{ .Values.temporalWorker.mtls.autoIssue.commonName | quote }}
+            - name: VAULT_PKI_MOUNT
+              value: {{ .Values.temporalWorker.mtls.autoIssue.pkiMount | quote }}
+            - name: VAULT_PKI_ROLE
+              value: {{ .Values.temporalWorker.mtls.autoIssue.pkiRole | quote }}
+            - name: CERT_TTL
+              value: {{ .Values.temporalWorker.mtls.autoIssue.certTTL | quote }}
+            - name: CERT_OUT_DIR
+              value: /etc/openfireblocks/mtls
+          volumeMounts:
+            - name: mtls-certs
+              mountPath: /etc/openfireblocks/mtls
+      {{- end }}
       containers:
         - name: temporal-worker
           image: {{ include "ofb.image" (dict "root" . "image" .Values.temporalWorker.image "tag" .Values.temporalWorker.tag) }}
@@ -72,7 +98,11 @@ spec:
       {{- if .Values.temporalWorker.mtls.enabled }}
       volumes:
         - name: mtls-certs
+          {{- if .Values.temporalWorker.mtls.autoIssue.enabled }}
+          emptyDir: {}
+          {{- else }}
           secret:
             secretName: {{ .Values.temporalWorker.mtls.certSecret }}
+          {{- end }}
       {{- end }}
 {{- end }}

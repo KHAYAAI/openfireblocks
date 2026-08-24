@@ -150,3 +150,21 @@ variable "mtls_allowed_domains" {
     "temporal-worker.internal",
   ]
 }
+
+variable "vault_kubernetes_auth_enabled" {
+  description = "Whether to configure Vault's Kubernetes auth method (modules/vault-pki's kubernetes_auth_enabled) so pods issue their own mTLS certs via services/vault-pki-init using their ServiceAccount JWT, instead of a static VAULT_TOKEN Secret. Only takes effect when vault_pki_enabled is also true. Defaults to false for the same reason: requires real in-cluster values (see vault_kubernetes_host/vault_kubernetes_ca_cert) that don't exist until this is actually applied against a real cluster."
+  type        = bool
+  default     = false
+}
+
+variable "vault_kubernetes_host" {
+  description = "Kubernetes API server URL, e.g. \"https://kubernetes.default.svc:443\" for an in-cluster Vault. Only used when vault_kubernetes_auth_enabled is true."
+  type        = string
+  default     = "https://kubernetes.default.svc:443"
+}
+
+variable "vault_kubernetes_ca_cert" {
+  description = "PEM-encoded CA certificate of the Kubernetes API server. Only used when vault_kubernetes_auth_enabled is true."
+  type        = string
+  default     = ""
+}
