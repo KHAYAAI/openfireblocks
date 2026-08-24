@@ -5,6 +5,7 @@ go 1.24
 
 require (
 	github.com/ethereum/go-ethereum v1.14.11
+	github.com/lib/pq v1.12.3
 	github.com/stretchr/testify v1.9.0
 	go.temporal.io/sdk v1.29.1
 )
@@ -32,7 +33,6 @@ require (
 	github.com/grpc-ecosystem/go-grpc-middleware v1.4.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.22.0 // indirect
 	github.com/holiman/uint256 v1.3.1 // indirect
-	github.com/lib/pq v1.12.3 // indirect
 	github.com/mmcloughlin/addchain v0.4.0 // indirect
 	github.com/nexus-rpc/sdk-go v0.0.10 // indirect
 	github.com/pborman/uuid v1.2.1 // indirect

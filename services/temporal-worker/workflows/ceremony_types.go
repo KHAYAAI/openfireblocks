@@ -65,10 +65,11 @@ type SealKeySharesResult struct {
 
 // ThresholdSigningRequest is the workflow input for threshold signing.
 type ThresholdSigningRequest struct {
-	CeremonyID string `json:"ceremonyId"`
-	Message    string `json:"message"`  // hex-encoded message
-	PartyIDs   []int  `json:"partyIds"` // which k+1 parties to use
-	ChainID    string `json:"chainId"`
+	CeremonyID     string   `json:"ceremonyId"`     // the keygen ceremony that produced the key to sign with
+	Message        string   `json:"message"`        // hex-encoded 32-byte message hash
+	PartyIDs       []int    `json:"partyIds"`       // which k+1 parties make up the signing committee
+	PartyEndpoints []string `json:"partyEndpoints"` // parallel to PartyIDs -- where to reach each committee member
+	ChainID        string   `json:"chainId"`
 }
 
 // ThresholdSigningResult is the workflow output.
