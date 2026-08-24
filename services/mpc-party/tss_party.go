@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"encoding/base64"
 	"encoding/hex"
@@ -8,6 +9,7 @@ import (
 	"log"
 	"math/big"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 
@@ -53,6 +55,7 @@ type tssKeygenCeremony struct {
 	saveData     *tsslib.LocalPartySaveData
 	publicKeyHex string
 	address      string
+	sealed       bool // true if the key share was durably sealed in Vault, see vault_seal.go
 }
 
 // TSSPartyManager tracks every ceremony this process (one party) is or has
@@ -299,14 +302,31 @@ func (m *TSSPartyManager) completeCeremony(ceremonyID string, ceremony *tssKeyge
 	address := crypto.PubkeyToAddress(*pubKey).Hex()
 	pubKeyHex := hex.EncodeToString(crypto.FromECDSAPub(pubKey))
 
+	// Seal this party's own share before reporting success -- a key share
+	// that exists only in this process's RAM is not durably generated. If
+	// Vault isn't configured (VAULT_ADDR unset) this is a documented no-op
+	// (see vault_seal.go); if it IS configured, a sealing failure fails
+	// the whole ceremony rather than silently reporting "completed" with
+	// nothing durable to show for it.
+	sealed, err := SealKeyShare(context.Background(), os.Getenv, ceremony.selfPartyID, ceremonyID, &save)
+	if err != nil {
+		m.failCeremony(ceremonyID, fmt.Errorf("keygen succeeded but sealing the key share in Vault failed: %w", err))
+		return
+	}
+
 	ceremony.mu.Lock()
 	ceremony.status = ceremonyCompleted
 	ceremony.saveData = &save
 	ceremony.publicKeyHex = pubKeyHex
 	ceremony.address = address
+	ceremony.sealed = sealed
 	ceremony.mu.Unlock()
 
-	log.Printf("keygen ceremony %s completed: party %d derived shared address %s", ceremonyID, ceremony.selfPartyID, address)
+	if sealed {
+		log.Printf("keygen ceremony %s completed: party %d derived shared address %s (key share sealed in Vault)", ceremonyID, ceremony.selfPartyID, address)
+	} else {
+		log.Printf("keygen ceremony %s completed: party %d derived shared address %s (VAULT_ADDR not set -- key share held in memory only)", ceremonyID, ceremony.selfPartyID, address)
+	}
 }
 
 // ErrCeremonyNotReady means the ceremony is registered but this party's
@@ -353,9 +373,9 @@ func (m *TSSPartyManager) HandleIncomingMessage(env tssMessageEnvelope) error {
 // KeygenStatusResult is what GET /tss/keygen/{ceremonyId}/status returns.
 // Deliberately excludes raw key-share material -- the shared public
 // key/address prove the ceremony produced a real result without exposing
-// anything a caller shouldn't see over HTTP; sealing the actual share is
-// a separate concern (see services/mpc-party's Vault integration notes in
-// docs/security/audit-checklist.md) not part of this increment.
+// anything a caller shouldn't see over HTTP. Sealed reports whether the
+// share was durably persisted to Vault (see vault_seal.go) or only ever
+// existed in this process's memory.
 type KeygenStatusResult struct {
 	CeremonyID string         `json:"ceremony_id"`
 	PartyID    int            `json:"party_id"`
@@ -363,6 +383,7 @@ type KeygenStatusResult struct {
 	Error      string         `json:"error,omitempty"`
 	PublicKey  string         `json:"public_key,omitempty"`
 	Address    string         `json:"address,omitempty"`
+	Sealed     bool           `json:"sealed"`
 }
 
 func (m *TSSPartyManager) GetStatus(ceremonyID string) (*KeygenStatusResult, error) {
@@ -380,6 +401,7 @@ func (m *TSSPartyManager) GetStatus(ceremonyID string) (*KeygenStatusResult, err
 		PartyID:    ceremony.selfPartyID,
 		Status:     ceremony.status,
 		Error:      ceremony.errorMessage,
+		Sealed:     ceremony.sealed,
 		PublicKey:  ceremony.publicKeyHex,
 		Address:    ceremony.address,
 	}, nil
