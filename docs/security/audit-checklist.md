@@ -174,20 +174,40 @@ Status legend: ✅ done · 🟡 partial · ⬜ not started
 - 🟡 Multi-region / DR with RTO/RPO < 1h — real infrastructure exists
   (`infrastructure/terraform`'s primary+secondary VPC/Vault cluster, and
   `modules/rds-replica`'s cross-region `aws_db_instance` with
-  `replicate_source_db` for async PostgreSQL replication), but nothing
-  ties it together into an actual DR posture: no automated failover, no
-  tested/executed promotion runbook, and no RTO/RPO figure that's ever
-  been measured against a real restore. `docs/PHASE3-BACKUP-RECOVERY-
-  PROCEDURES.md`'s specific "RTO ≤ 4h / RPO ≤ 1h" numbers were found
-  during this pass to be illustrative placeholders describing a backup
-  service that has no entrypoint (`services/backup` has no `func main()`
-  anywhere in it — nothing invokes it, no cron, no scheduled workflow) —
-  corrected in place with a reality-check header rather than left to be
-  read as an operational runbook it isn't. Real next steps, in order:
-  give `services/backup` an actual entrypoint and wire it to something
-  that runs on a schedule; provision the S3/WAL-archiving infrastructure
-  that document assumes; then run one real failover/restore drill and
-  record the actual numbers instead of estimates.
+  `replicate_source_db` for async PostgreSQL replication), and the
+  backup/restore half of this is now real: `services/backup` had no
+  `func main()` anywhere in it (nothing invoked it, no cron, no scheduled
+  workflow); it now has a real entrypoint (`cmd/backup-server`), real
+  `pg_dump -Fc`/`pg_restore` for Postgres, and a real recursive Vault KV
+  export/import (honestly not a full Raft snapshot — Vault dev mode's
+  in-memory storage doesn't support that API; see `vault_backup.go`'s doc
+  comment for what a production raft-backed Vault should use instead).
+  A real drill was run and is now a permanent, re-runnable test
+  (`services/backup/integration_test.go`,
+  `TestFullBackupAndRestoreDrill`): real backup, real restore into an
+  isolated database, byte-identical data verified, a real Vault secret
+  deleted and restored back with its exact value confirmed. Measured (not
+  estimated): ~110-125ms for a full backup, well under a second for a
+  full restore — against a dev-scale dataset (1 row, ~128KB), so these
+  numbers say nothing about production-scale timing, but they are real
+  measurements from a real drill for the first time, replacing
+  `docs/PHASE3-BACKUP-RECOVERY-PROCEDURES.md`'s illustrative "RTO ≤ 4h /
+  RPO ≤ 1h" / "~500GB-1TB" placeholders (that document corrected in place
+  with a reality-check header + an update noting what's now real).
+  Fixed two real bugs found only by actually running this:
+  `BackupManager.ExecuteFullBackup` never called `storage.StoreBackup`,
+  so its own `VerifyBackup` step unconditionally failed every real
+  backup; and `RestoreFromPoint` handed each backend the combined
+  manifest's ID instead of that backend's own component backup ID.
+  Still 🟡, not ✅: incremental backups are full dumps repeated, not true
+  WAL-based incrementals; no S3 storage is provisioned (local disk only);
+  and — the part still genuinely unbuilt — cross-region **failover**
+  (promoting the secondary region) remains honestly unimplemented.
+  `DisasterRecoveryCoordinator.InitiateFailover` was exercised over real
+  HTTP this pass too (`/dr/failover`) and correctly, immediately reports
+  `status: "failed"` for the `postgres` component with rollback marked
+  "not implemented" — exactly the honest behavior a prior pass built,
+  now confirmed working end-to-end rather than only read as code.
 - 🟡 Secrets via external-secrets / sealed-secrets (no plaintext in cluster)
   — `infrastructure/terraform/modules/secrets` now generates real random
   credentials (DB passwords for both the RLS-scoped `app` role and the

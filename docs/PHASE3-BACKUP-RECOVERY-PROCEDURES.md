@@ -33,6 +33,23 @@
 > `docs/security/audit-checklist.md`'s Disaster Recovery section for
 > current status, and `docs/security/key-rotation.md` for the credential/
 > key-rotation side of durability, which this document doesn't cover at all.
+>
+> **Update**: `services/backup` now has a real entrypoint
+> (`cmd/backup-server`), real `pg_dump`/`pg_restore`-backed Postgres
+> backup/restore, and a real Vault KV export/import — see that command's
+> doc comment and `docs/security/audit-checklist.md` for what's real vs.
+> still a gap (true WAL-based incrementals, S3 storage, and cross-region
+> failover promotion are not built). A real drill has been run against
+> real Postgres and Vault (`services/backup/integration_test.go`,
+> `TestFullBackupAndRestoreDrill`): full backup completed in **~110-125ms**
+> and full restore (into an isolated database, verified byte-identical
+> against the original) in well under a second end-to-end, against a
+> dev-scale database (1 customer row, ~128KB combined Postgres+Vault
+> payload). Those are real measurements, not estimates — but at dev scale,
+> not production scale; they say nothing about how long a restore takes
+> against hundreds of GB, which is what the RTO figures in this document
+> are actually meant to describe. Re-run that test against a
+> production-sized dataset before trusting an RTO number derived from it.
 
 ## Executive Summary
 

@@ -1,8 +1,10 @@
 package backup
 
 import (
+	"bytes"
 	"context"
 	"crypto/md5"
+	"encoding/json"
 	"fmt"
 	"io"
 	"time"
@@ -118,6 +120,35 @@ func (b *BackupManager) ExecuteFullBackup(ctx context.Context, destination strin
 		return metadata, err
 	}
 	metadata.Size += vaultMetadata.Size
+
+	// metadata.ID is this combined record's own identity, distinct from
+	// pgMetadata.ID/vaultMetadata.ID (each component backend generates its
+	// own ID for where IT stored its data -- see RealPostgreSQLBackup and
+	// RealVaultBackup, which write to their own local directories directly
+	// rather than through the BackupStorage interface, since that
+	// interface's job is durable long-term storage of the resulting
+	// artifact, e.g. S3, not where a backend stages its own dump files).
+	// VerifyBackup below reads metadata.ID back out of storage to confirm
+	// round-trip integrity -- nothing had written anything under that ID
+	// until this manifest, so record the actual pointers to the real data
+	// (component IDs + Destination paths) as that manifest, rather than
+	// have VerifyBackup unconditionally fail every real backup with
+	// "not found."
+	metadata.BackupChain = []string{pgMetadata.ID, vaultMetadata.ID}
+	manifest, err := json.Marshal(map[string]*BackupMetadata{
+		"postgres": pgMetadata,
+		"vault":    vaultMetadata,
+	})
+	if err != nil {
+		metadata.Status = BackupStatusFailed
+		metadata.ErrorMessage = fmt.Sprintf("failed to build backup manifest: %v", err)
+		return metadata, err
+	}
+	if err := b.storage.StoreBackup(ctx, metadata.ID, bytes.NewReader(manifest)); err != nil {
+		metadata.Status = BackupStatusFailed
+		metadata.ErrorMessage = fmt.Sprintf("failed to store backup manifest: %v", err)
+		return metadata, err
+	}
 
 	// Mark as completed
 	metadata.Status = BackupStatusCompleted
@@ -236,13 +267,23 @@ func (b *BackupManager) RestoreFromPoint(ctx context.Context, restorePoint Resto
 	// Restore full backup first
 	for _, backup := range backups {
 		if backup.Type == BackupTypeFull {
-			// Restore PostgreSQL
-			if err := b.postgres.Restore(ctx, backup.ID); err != nil {
+			// backup.ID is the combined manifest record's own identity
+			// (see the matching comment in ExecuteFullBackup) -- it is
+			// NOT a valid ID to hand to either component backend, since
+			// each one generated and returned its own ID for where it
+			// actually stored its data. BackupChain[0]/[1] carry those
+			// real component IDs, in the same order ExecuteFullBackup
+			// set them (postgres, then vault).
+			if len(backup.BackupChain) != 2 {
+				return fmt.Errorf("backup %s has no recorded component backup IDs (expected postgres+vault in BackupChain, got %d entries) -- was it created by ExecuteFullBackup?", backup.ID, len(backup.BackupChain))
+			}
+			postgresBackupID, vaultBackupID := backup.BackupChain[0], backup.BackupChain[1]
+
+			if err := b.postgres.Restore(ctx, postgresBackupID); err != nil {
 				return fmt.Errorf("failed to restore PostgreSQL: %w", err)
 			}
 
-			// Restore Vault
-			if err := b.vault.Restore(ctx, backup.ID); err != nil {
+			if err := b.vault.Restore(ctx, vaultBackupID); err != nil {
 				return fmt.Errorf("failed to restore Vault: %w", err)
 			}
 
