@@ -123,8 +123,24 @@ Status legend: ✅ done · 🟡 partial · ⬜ not started
   correctly rejected (confirmed in the server's own TLS handshake logs)
   a request with no client cert, a request with a cert signed by a
   different/untrusted CA, and a plain-HTTP request to the same port.
-  Still 🟡, not ✅: this is one proven link, not mesh-wide — the other
-  ~10 internal HTTP links in this platform (api-gateway -> policy,
+  A second link was added in a later pass: `services/temporal-worker`'s
+  `CheckPolicy` activity (its shared `httpClient`, used for every HTTP
+  call `Activities` makes) against `services/policy-service` — chosen
+  because policy evaluation gates every signing request, comparable in
+  stakes to the DKG transport. Same opt-in env-var convention, same
+  `serverTLSConfigFromEnv`/`clientTLSConfigFromEnv` implementation copied
+  into `policy-service/mtls.go`. `NewActivities` now fails loudly
+  (`log.Fatalf`) on a genuine mTLS misconfiguration (cert files set but
+  unusable) rather than silently falling back to plaintext, matching
+  `NewDKGRoundCoordinator`'s existing standard. Live-verified the same
+  three-scenario way: a real `policy-service` HTTPS server requiring
+  client certs correctly accepted a request from the real `CheckPolicy`
+  activity code (`approved=true` back from a genuine `/evaluate` call,
+  not a stub), and correctly rejected — confirmed in the server's own
+  TLS handshake logs — a request with no client cert and a request with a
+  cert signed by a different/untrusted CA.
+  Still 🟡, not ✅: two proven links now, not mesh-wide — the other ~9
+  internal HTTP links in this platform (api-gateway -> policy,
   api-gateway -> mpc-signer, settlement -> chain RPCs excluded, etc.)
   don't have the pattern applied yet, and no service mesh/sidecar
   (Istio, Linkerd, AWS App Mesh) is used — this is direct in-process TLS

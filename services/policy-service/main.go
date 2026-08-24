@@ -207,6 +207,18 @@ func main() {
 		Handler:           mux,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
-	log.Printf("policy-service listening on :%s", port)
+
+	tlsConfig, mtlsEnabled, err := serverTLSConfigFromEnv()
+	if err != nil {
+		log.Fatalf("mTLS configuration error: %v", err)
+	}
+	if mtlsEnabled {
+		srv.TLSConfig = tlsConfig
+		log.Printf("policy-service listening on :%s (mTLS: client certs required)", port)
+		log.Fatal(srv.ListenAndServeTLS("", "")) // certs already loaded into TLSConfig
+	}
+
+	log.Printf("policy-service listening on :%s (mTLS disabled: %s/%s/%s not all set)",
+		port, envMTLSCertFile, envMTLSKeyFile, envMTLSCAFile)
 	log.Fatal(srv.ListenAndServe())
 }
