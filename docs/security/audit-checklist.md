@@ -37,8 +37,32 @@ Status legend: ✅ done · 🟡 partial · ⬜ not started
   real network transport (as opposed to keygen) is real, valuable,
   separate work not attempted here — the single largest remaining item
   before this line can move to ✅.
-- ⬜ HSM-backed Vault auto-unseal
-- ⬜ Documented key ceremony + rotation procedure
+- 🟡 HSM-backed Vault auto-unseal — this checklist previously listed it
+  ⬜, which was wrong: it's already real. `modules/vault/user_data.sh`'s
+  rendered `vault.hcl` has a `seal "awskms"` stanza (not Shamir), and
+  `security.tf`'s `vault_primary`/`vault_secondary` IAM roles both grant
+  `kms:Decrypt`/`kms:Encrypt`/`kms:GenerateDataKey*`/`kms:DescribeKey`
+  scoped to their region's own KMS key ARN, matching the `kms_key_id`
+  each Vault module instance is passed in `main.tf`. AWS KMS is the
+  standard cloud-native equivalent of an HSM-backed seal (a dedicated
+  physical HSM cluster is the CloudHSM-backed alternative, not used
+  here). `terraform validate` passes and `terraform plan` resolves the
+  graph, failing only at the AWS-credentials boundary like everything
+  else in this tree. Still 🟡, not ✅: never applied against a real AWS
+  account, so a real Vault node actually auto-unsealing via this path at
+  boot has not been observed, only the Terraform/IAM/config wiring that
+  should produce it.
+- 🟡 Documented key ceremony + rotation procedure — see
+  `docs/security/key-rotation.md`, written this pass, covering all five
+  categories of key/credential this platform issues (threshold signing
+  keys, mTLS certs, DB credentials, `JWT_SECRET`, `ADMIN_API_KEY`) with
+  what's real vs. not for each. The threshold-key rotation workflow
+  (`KeyRotationWorkflow`) genuinely generates a new key via the real DKG
+  protocol now, but has an explicit `TODO` for retiring/deactivating the
+  old key's shares and no balance-migration step — so it currently
+  provisions a second key rather than completing a rotation. DB
+  credential and cert rotation are documented manual procedures, not
+  automated ones.
 - ⬜ External cryptographic audit of the signing layer
 
 ## Application security
@@ -147,7 +171,23 @@ Status legend: ✅ done · 🟡 partial · ⬜ not started
   configuration instead, which is simpler to reason about here given
   there's no live Kubernetes/App-Mesh deployment target settled on yet
   (see the ECS-vs-Helm finding elsewhere in this checklist).
-- ⬜ Multi-region / DR with RTO/RPO < 1h
+- 🟡 Multi-region / DR with RTO/RPO < 1h — real infrastructure exists
+  (`infrastructure/terraform`'s primary+secondary VPC/Vault cluster, and
+  `modules/rds-replica`'s cross-region `aws_db_instance` with
+  `replicate_source_db` for async PostgreSQL replication), but nothing
+  ties it together into an actual DR posture: no automated failover, no
+  tested/executed promotion runbook, and no RTO/RPO figure that's ever
+  been measured against a real restore. `docs/PHASE3-BACKUP-RECOVERY-
+  PROCEDURES.md`'s specific "RTO ≤ 4h / RPO ≤ 1h" numbers were found
+  during this pass to be illustrative placeholders describing a backup
+  service that has no entrypoint (`services/backup` has no `func main()`
+  anywhere in it — nothing invokes it, no cron, no scheduled workflow) —
+  corrected in place with a reality-check header rather than left to be
+  read as an operational runbook it isn't. Real next steps, in order:
+  give `services/backup` an actual entrypoint and wire it to something
+  that runs on a schedule; provision the S3/WAL-archiving infrastructure
+  that document assumes; then run one real failover/restore drill and
+  record the actual numbers instead of estimates.
 - 🟡 Secrets via external-secrets / sealed-secrets (no plaintext in cluster)
   — `infrastructure/terraform/modules/secrets` now generates real random
   credentials (DB passwords for both the RLS-scoped `app` role and the

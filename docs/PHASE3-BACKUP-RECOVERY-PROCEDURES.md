@@ -2,6 +2,38 @@
 
 **Status:** Implementation Guide for RTO ≤ 4 hours, RPO ≤ 1 hour
 
+> ## ⚠️ Reality check (added after auditing this document against the actual codebase)
+> This document reads as an operational runbook for a system that is running
+> in production. It is not — treat everything below as a **target design**,
+> not a description of what exists today. Specifically:
+>
+> - **`services/backup` has no `func main()` anywhere in it.** It's two Go
+>   files (`backup_manager.go`, `disaster_recovery.go`) with no entrypoint —
+>   nothing invokes them, there's no binary, no cron job, no scheduled
+>   Temporal workflow calling into this package. None of the "Daily at 00:00
+>   UTC" / "Every 4 hours" schedules below run anywhere.
+> - **No S3 backup bucket, WAL archiving, or cross-region replication is
+>   provisioned in Terraform** for this purpose (`infrastructure/terraform`
+>   has S3 buckets for Vault's Raft storage backend, not for the database/
+>   Temporal/Vault backup scheme this document describes).
+> - **The `2024-06-30 14:30:00` example timestamp** in the PITR procedure
+>   below is template boilerplate, not evidence anyone has run this
+>   procedure — a sign this document was generated as a plan, not written
+>   from operational experience.
+> - **The RTO/RPO figures (≤4h / ≤1h) and backup sizes ("~500GB-1TB",
+>   "~300GB") are illustrative placeholders**, not measurements — there is
+>   no production data to size a backup against yet.
+>
+> None of this means the design is wrong — PITR via WAL archiving, Raft
+> snapshot export for Vault, and a replica-promotion runbook are all
+> reasonable, standard choices. It means: before quoting an RTO/RPO number
+> to a customer, auditor, or regulator, someone needs to actually build
+> `services/backup`'s entrypoint, provision the S3/WAL infrastructure, and
+> **run a real restore drill** to measure the real numbers — see
+> `docs/security/audit-checklist.md`'s Disaster Recovery section for
+> current status, and `docs/security/key-rotation.md` for the credential/
+> key-rotation side of durability, which this document doesn't cover at all.
+
 ## Executive Summary
 
 This document defines backup, recovery, and disaster recovery procedures for OpenFireblocks' multi-region deployment. All systems (PostgreSQL, Vault, Temporal) are designed to achieve:
