@@ -73,6 +73,24 @@ spec:
               value: {{ .Values.external.ethereumRpcSepolia | quote }}
             - name: REDIS_URL
               value: {{ .Values.external.redisUrl | quote }}
+            # Durable settlements (SettlementsController) and real DKG key
+            # provisioning (KeysService.createKey -> ProvisionKeyWorkflow)
+            # both need a real Temporal connection -- previously unset
+            # here even though SettlementsController's TemporalService
+            # already required it, so durable settlements silently 503'd
+            # in this chart's own deployment. Empty is a valid, explicit
+            # "not configured" state both services handle by rejecting
+            # with 503 rather than hanging or crash-looping.
+            - name: TEMPORAL_HOSTPORT
+              value: {{ .Values.external.temporalHostPort | quote }}
+            - name: TEMPORAL_NAMESPACE
+              value: {{ .Values.external.temporalNamespace | quote }}
+            # Where KeysService derives each DKG party's endpoint from --
+            # {id} is replaced 1..total_parties. Matches
+            # templates/mpc-party.yaml's per-party Service naming
+            # (party-<N>) and .Values.mpcParty.port.
+            - name: MPC_PARTY_ENDPOINT_TEMPLATE
+              value: {{ printf "http://party-{id}:%d" (int .Values.mpcParty.port) | quote }}
           livenessProbe:
             httpGet: { path: /health, port: http }
             initialDelaySeconds: 10

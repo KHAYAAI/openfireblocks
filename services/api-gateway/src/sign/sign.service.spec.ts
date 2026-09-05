@@ -35,10 +35,9 @@ describe('SignService', () => {
   };
 
   const customer: Customer = {
-    id: 1,
     customer_id: 'demo',
+    name: 'demo',
     email: 'demo@x.io',
-    api_key: 'k',
     status: 'active',
     tier: 'pro',
     policies: {},

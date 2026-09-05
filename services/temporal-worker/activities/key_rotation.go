@@ -54,6 +54,38 @@ func (a *Activities) SetKeyPairStatus(ctx context.Context, req workflows.SetKeyP
 	return nil
 }
 
+// SetCeremonyStatus transitions dkg_ceremonies.status, used by
+// ProvisionKeyWorkflow to keep the ceremony's own tracking row truthful
+// (initiated -> in_progress -> completed/failed) independent of
+// key_pairs.status. Runs on the same app_admin (BYPASSRLS) connection as
+// every other activity in this package.
+func (a *Activities) SetCeremonyStatus(ctx context.Context, req workflows.SetCeremonyStatusRequest) error {
+	if a.db == nil {
+		return fmt.Errorf("no database connection configured; cannot set dkg_ceremonies %s status", req.CeremonyID)
+	}
+	var errMsg interface{}
+	if req.ErrorMessage != "" {
+		errMsg = req.ErrorMessage
+	}
+	terminal := req.Status == "completed" || req.Status == "failed"
+	res, err := a.db.ExecContext(ctx,
+		`UPDATE dkg_ceremonies
+		 SET status = $2,
+		     error_message = $3,
+		     completed_at = CASE WHEN $4 THEN now() ELSE completed_at END,
+		     updated_at = now()
+		 WHERE ceremony_id = $1::uuid`,
+		req.CeremonyID, req.Status, errMsg, terminal,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to set dkg_ceremonies %s status to %q: %w", req.CeremonyID, req.Status, err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("dkg_ceremonies row %s not found", req.CeremonyID)
+	}
+	return nil
+}
+
 // DeactivateOldKeyShares soft-deletes (Vault KV v2 "delete" -- recoverable
 // via "undelete" until the mount's delete_version_after policy or an
 // operator permanently destroys it) every party's sealed share for a

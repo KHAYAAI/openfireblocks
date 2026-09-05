@@ -15,8 +15,8 @@ function ctxWith(headers: Record<string, string>): {
 }
 
 const activeCustomer: Customer = {
-  id: 1,
   customer_id: 'demo',
+  name: 'demo',
   email: 'demo@x.io',
   api_key: 'hash',
   status: 'active',

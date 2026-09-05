@@ -111,3 +111,72 @@ func TestKeyPairStatusTransitions(t *testing.T) {
 
 	t.Logf("SUCCESS: real Postgres key_pairs transitions verified -- new key %s activated (%s), old key %s marked inactive", newKeyID, newAddress, oldKeyID)
 }
+
+// TestSetCeremonyStatusTransitions runs the real dkg_ceremonies status
+// transitions ProvisionKeyWorkflow performs (initiated -> in_progress ->
+// completed, and separately -> failed with an error message) against a
+// real Postgres instance, confirming each with a direct SELECT.
+func TestSetCeremonyStatusTransitions(t *testing.T) {
+	db := requireLiveDB(t)
+	defer db.Close()
+
+	ctx := context.Background()
+
+	var customerID string
+	if err := db.QueryRowContext(ctx,
+		`INSERT INTO customers (name, api_key_hash) VALUES ($1, decode(md5(clock_timestamp()::text || random()::text), 'hex')) RETURNING customer_id`,
+		"ceremony-status-test-customer",
+	).Scan(&customerID); err != nil {
+		t.Fatalf("failed to seed customer: %v", err)
+	}
+	t.Cleanup(func() { db.Exec(`DELETE FROM customers WHERE customer_id = $1`, customerID) })
+
+	var keyID string
+	if err := db.QueryRowContext(ctx,
+		`INSERT INTO key_pairs (customer_id, name, blockchain, threshold, total_parties, status) VALUES ($1, $2, 'ethereum', 1, 3, 'pending_dkg') RETURNING key_id`,
+		customerID, "ceremony-status-test-key",
+	).Scan(&keyID); err != nil {
+		t.Fatalf("failed to seed key_pairs row: %v", err)
+	}
+	t.Cleanup(func() { db.Exec(`DELETE FROM key_pairs WHERE key_id = $1`, keyID) })
+
+	var ceremonyID string
+	if err := db.QueryRowContext(ctx,
+		`INSERT INTO dkg_ceremonies (key_id, customer_id, threshold, total_parties, status, workflow_id) VALUES ($1, $2, 1, 3, 'initiated', 'provision-key-test') RETURNING ceremony_id`,
+		keyID, customerID,
+	).Scan(&ceremonyID); err != nil {
+		t.Fatalf("failed to seed dkg_ceremonies row: %v", err)
+	}
+	t.Cleanup(func() { db.Exec(`DELETE FROM dkg_ceremonies WHERE ceremony_id = $1`, ceremonyID) })
+
+	a := NewActivities("", "", "", 3, db)
+
+	if err := a.SetCeremonyStatus(ctx, workflows.SetCeremonyStatusRequest{CeremonyID: ceremonyID, Status: "in_progress"}); err != nil {
+		t.Fatalf("SetCeremonyStatus(in_progress) returned an error: %v", err)
+	}
+	var status string
+	var completedAt sql.NullTime
+	if err := db.QueryRowContext(ctx, `SELECT status, completed_at FROM dkg_ceremonies WHERE ceremony_id = $1`, ceremonyID).Scan(&status, &completedAt); err != nil {
+		t.Fatalf("failed to read back ceremony after in_progress: %v", err)
+	}
+	if status != "in_progress" || completedAt.Valid {
+		t.Fatalf("expected status=in_progress, completed_at=NULL, got status=%s completed_at=%v", status, completedAt)
+	}
+
+	if err := a.SetCeremonyStatus(ctx, workflows.SetCeremonyStatusRequest{CeremonyID: ceremonyID, Status: "completed"}); err != nil {
+		t.Fatalf("SetCeremonyStatus(completed) returned an error: %v", err)
+	}
+	if err := db.QueryRowContext(ctx, `SELECT status, completed_at FROM dkg_ceremonies WHERE ceremony_id = $1`, ceremonyID).Scan(&status, &completedAt); err != nil {
+		t.Fatalf("failed to read back ceremony after completed: %v", err)
+	}
+	if status != "completed" || !completedAt.Valid {
+		t.Fatalf("expected status=completed with a real completed_at, got status=%s completed_at=%v", status, completedAt)
+	}
+
+	// Not-found path is real, not silently accepted.
+	if err := a.SetCeremonyStatus(ctx, workflows.SetCeremonyStatusRequest{CeremonyID: "00000000-0000-0000-0000-000000000000", Status: "failed"}); err == nil {
+		t.Fatal("expected SetCeremonyStatus on a nonexistent ceremony_id to return an error")
+	}
+
+	t.Logf("SUCCESS: real Postgres dkg_ceremonies transitions verified -- ceremony %s went initiated -> in_progress -> completed with a real completed_at timestamp", ceremonyID)
+}

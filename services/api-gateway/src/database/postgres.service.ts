@@ -164,6 +164,48 @@ export class PostgresService {
     );
   }
 
+  // Records the DKG ceremony KeysService starts for a new key. Status
+  // starts 'initiated' here; ProvisionKeyWorkflow's SetCeremonyStatus
+  // activity (services/temporal-worker/activities/key_rotation.go) moves
+  // it through in_progress -> completed/failed as the real ceremony runs.
+  async createCeremony(ceremony: {
+    ceremonyId: string;
+    keyId: string;
+    customerId: string;
+    threshold: number;
+    totalParties: number;
+    workflowId: string;
+  }) {
+    await this.withTenant(ceremony.customerId, (client) =>
+      client.query(
+        `INSERT INTO dkg_ceremonies (ceremony_id, key_id, customer_id, threshold, total_parties, status, workflow_id)
+         VALUES ($1, $2, $3, $4, $5, 'initiated', $6)`,
+        [
+          ceremony.ceremonyId,
+          ceremony.keyId,
+          ceremony.customerId,
+          ceremony.threshold,
+          ceremony.totalParties,
+          ceremony.workflowId,
+        ],
+      ),
+    );
+  }
+
+  // Marks a ceremony failed when starting its Temporal workflow itself
+  // threw (e.g. Temporal unreachable) -- the ceremony row already exists
+  // by that point, so this keeps it truthful instead of stuck 'initiated'
+  // forever for a ceremony that never actually ran.
+  async setCeremonyFailed(ceremonyId: string, customerId: string, errorMessage: string) {
+    await this.withTenant(customerId, (client) =>
+      client.query(
+        `UPDATE dkg_ceremonies SET status = 'failed', error_message = $2, completed_at = now(), updated_at = now()
+         WHERE ceremony_id = $1`,
+        [ceremonyId, errorMessage],
+      ),
+    );
+  }
+
   async listKeys(customerId: string) {
     const result = await this.withTenant(customerId, (client) =>
       client.query(

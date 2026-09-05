@@ -149,3 +149,14 @@ type AssembleSweepTransactionResult struct {
 	SignedTxHex string `json:"signedTxHex"`
 	TxHash      string `json:"txHash"`
 }
+
+// SetCeremonyStatusRequest is passed to the SetCeremonyStatus activity:
+// transitions dkg_ceremonies.status (initiated -> in_progress ->
+// completed/failed), used by ProvisionKeyWorkflow. Status must be one of
+// dkg_ceremonies' CHECK-constrained values (initiated, in_progress,
+// completed, failed).
+type SetCeremonyStatusRequest struct {
+	CeremonyID   string `json:"ceremonyId"`
+	Status       string `json:"status"`
+	ErrorMessage string `json:"errorMessage,omitempty"`
+}
