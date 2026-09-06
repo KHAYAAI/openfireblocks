@@ -447,6 +447,32 @@ Status legend: ✅ done · 🟡 partial · ⬜ not started
   deployable as-is and has no template; noted rather than silently
   skipped or given a fabricated entrypoint.
 
+  **Open finding — `services/ceremony-orchestrator` is a dead, broken,
+  redundant second ceremony API, and the chart deploys it.** Found while
+  wiring api-gateway to Temporal. Three independent problems, all
+  pre-existing:
+
+  1. It does not compile — `go.sum` has no entry for `gin`, its HTTP
+     framework. Like `mpc-signer`'s `chains/` package (fixed elsewhere in
+     this checklist), it was committed without ever being built.
+  2. `CreateCeremony` inserts into a `ceremonies` table that **exists in
+     no migration**. Even if it compiled, every write would fail. This is
+     the same pattern as `temporal-worker`'s dead `ceremony_rounds` store.
+  3. It duplicates, in a second language and against a second data model,
+     what `api-gateway`'s `POST /keys` -> `ProvisionKeyWorkflow` now does
+     for real against the tables that actually exist (`key_pairs`,
+     `dkg_ceremonies`) — and which is verified end to end by
+     `keys.provisioning.live.spec.ts`.
+
+  Deliberately not "fixed" here: making it build would produce a
+  maintained second ceremony API competing with the working one, which is
+  precisely the unreconciled-parallel-implementation pattern this codebase
+  has already been bitten by three times (two `customers` schemas, Helm vs
+  ECS, this). The recommendation is to **delete the service and its Helm
+  template**, but deleting a whole service is a product call, not a
+  cleanup, so it is recorded here rather than done unilaterally. Until
+  then, `helm install` will deploy a pod whose image cannot be built.
+
   Also wired: `mpcParty.mtls`/`temporalWorker.mtls` (opt-in, mounts a
   `kubernetes.io/tls`-shaped secret and sets `MTLS_CERT_FILE`/
   `MTLS_KEY_FILE`/`MTLS_CA_FILE`, matching `services/mpc-party/mtls.go`)
