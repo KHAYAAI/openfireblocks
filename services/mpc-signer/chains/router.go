@@ -2,7 +2,6 @@ package chains
 
 import (
 	"context"
-	"encoding/hex"
 	"fmt"
 )
 
@@ -25,9 +24,9 @@ func NewSignerRouter() *SignerRouter {
 
 // SignMultiChain routes a signing request to the appropriate chain signer.
 func (sr *SignerRouter) SignMultiChain(ctx context.Context, req *ChainSignRequest, privKeyHex string) (*ChainSignResponse, error) {
-	signer, ok := sr.signers[req.ChainId]
+	signer, ok := sr.signers[req.ChainID]
 	if !ok {
-		return nil, fmt.Errorf("unsupported chain: %s", req.ChainId)
+		return nil, fmt.Errorf("unsupported chain: %s", req.ChainID)
 	}
 
 	// Sign the message
@@ -44,66 +43,66 @@ func (sr *SignerRouter) SignMultiChain(ctx context.Context, req *ChainSignReques
 	}
 
 	return &ChainSignResponse{
-		ChainID:    req.ChainId,
-		Signature:  sig,
-		SignedTx:   "", // TODO: Add full transaction building
-		From:       from,
-		Status:     "signed",
+		ChainID:     req.ChainID,
+		Signature:   sig,
+		SignedTx:    "", // TODO: Add full transaction building
+		From:        from,
+		Status:      "signed",
 		Broadcasted: false,
 	}, nil
 }
 
 // VerifySignature verifies a signature for a specific chain.
-func (sr *SignerRouter) VerifySignature(ctx context.Context, chainId string, message []byte, signature *Signature, pubKey string) (bool, error) {
-	signer, ok := sr.signers[chainId]
+func (sr *SignerRouter) VerifySignature(ctx context.Context, chainID string, message []byte, signature *Signature, pubKey string) (bool, error) {
+	signer, ok := sr.signers[chainID]
 	if !ok {
-		return false, fmt.Errorf("unsupported chain: %s", chainId)
+		return false, fmt.Errorf("unsupported chain: %s", chainID)
 	}
 
 	return signer.VerifySignature(ctx, message, signature, pubKey)
 }
 
 // RecoverAddress recovers the signer address for a specific chain.
-func (sr *SignerRouter) RecoverAddress(ctx context.Context, chainId string, message []byte, signature *Signature) (string, error) {
-	signer, ok := sr.signers[chainId]
+func (sr *SignerRouter) RecoverAddress(ctx context.Context, chainID string, message []byte, signature *Signature) (string, error) {
+	signer, ok := sr.signers[chainID]
 	if !ok {
-		return "", fmt.Errorf("unsupported chain: %s", chainId)
+		return "", fmt.Errorf("unsupported chain: %s", chainID)
 	}
 
 	return signer.RecoverAddress(ctx, message, signature)
 }
 
 // BuildTransaction builds a transaction for a specific chain.
-func (sr *SignerRouter) BuildTransaction(ctx context.Context, chainId string, tx interface{}) ([]byte, error) {
-	signer, ok := sr.signers[chainId]
+func (sr *SignerRouter) BuildTransaction(ctx context.Context, chainID string, tx interface{}) ([]byte, error) {
+	signer, ok := sr.signers[chainID]
 	if !ok {
-		return nil, fmt.Errorf("unsupported chain: %s", chainId)
+		return nil, fmt.Errorf("unsupported chain: %s", chainID)
 	}
 
 	return signer.BuildTransaction(ctx, tx)
 }
 
 // BroadcastTransaction broadcasts a signed transaction for a specific chain.
-func (sr *SignerRouter) BroadcastTransaction(ctx context.Context, chainId string, signedTx []byte) (string, error) {
-	signer, ok := sr.signers[chainId]
+func (sr *SignerRouter) BroadcastTransaction(ctx context.Context, chainID string, signedTx []byte) (string, error) {
+	signer, ok := sr.signers[chainID]
 	if !ok {
-		return "", fmt.Errorf("unsupported chain: %s", chainId)
+		return "", fmt.Errorf("unsupported chain: %s", chainID)
 	}
 
 	return signer.BroadcastTransaction(ctx, signedTx)
 }
 
-// IsValidChainId checks if a chain is supported.
-func (sr *SignerRouter) IsValidChainId(chainId string) bool {
-	_, ok := sr.signers[chainId]
+// IsValidChainID checks if a chain is supported.
+func (sr *SignerRouter) IsValidChainID(chainID string) bool {
+	_, ok := sr.signers[chainID]
 	return ok
 }
 
 // SupportedChains returns a list of supported chains.
 func (sr *SignerRouter) SupportedChains() []string {
 	chains := make([]string, 0, len(sr.signers))
-	for chainId := range sr.signers {
-		chains = append(chains, chainId)
+	for chainID := range sr.signers {
+		chains = append(chains, chainID)
 	}
 	return chains
 }

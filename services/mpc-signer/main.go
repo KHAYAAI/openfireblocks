@@ -9,11 +9,11 @@ import (
 	"os"
 	"time"
 
+	"forge-crypto/mpc-signer/chains"
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"forge-crypto/mpc-signer/chains"
 )
 
 // main.go wires the MPC signer's HTTP API.
@@ -118,7 +118,7 @@ func (s *server) handleSignMultiChain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.signerRouter.IsValidChainId(req.ChainID) {
+	if !s.signerRouter.IsValidChainID(req.ChainID) {
 		writeJSON(w, http.StatusBadRequest, map[string]interface{}{
 			"error":     fmt.Sprintf("unsupported chain: %s", req.ChainID),
 			"requestId": requestID,
@@ -127,7 +127,7 @@ func (s *server) handleSignMultiChain(w http.ResponseWriter, r *http.Request) {
 	}
 
 	signReq := &chains.ChainSignRequest{
-		ChainId: req.ChainID,
+		ChainID: req.ChainID,
 		Message: []byte(req.Message),
 	}
 
@@ -164,7 +164,7 @@ func (s *server) handleBroadcast(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.signerRouter.IsValidChainId(req.ChainID) {
+	if !s.signerRouter.IsValidChainID(req.ChainID) {
 		writeJSON(w, http.StatusBadRequest, map[string]interface{}{
 			"error": fmt.Sprintf("unsupported chain: %s", req.ChainID),
 		})
@@ -199,7 +199,7 @@ type MultiChainSignRequest struct {
 
 // BroadcastRequest is the request body for /broadcast.
 type BroadcastRequest struct {
-	ChainID string `json:"chainId"`
+	ChainID  string `json:"chainId"`
 	SignedTx string `json:"signedTx"`
 }
 
@@ -267,6 +267,20 @@ func main() {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
-	log.Printf("MPC signer listening on %s", addr)
+	// mTLS, matching services/policy-service/main.go's identical block: a
+	// misconfiguration is fatal rather than a silent fallback to plaintext,
+	// since this endpoint hands out signatures.
+	tlsConfig, mtlsEnabled, err := serverTLSConfigFromEnv()
+	if err != nil {
+		log.Fatalf("mTLS configuration error: %v", err)
+	}
+	if mtlsEnabled {
+		srv.TLSConfig = tlsConfig
+		log.Printf("MPC signer listening on %s (mTLS: client certs required)", addr)
+		log.Fatal(srv.ListenAndServeTLS("", "")) // certs already loaded into TLSConfig
+	}
+
+	log.Printf("MPC signer listening on %s (mTLS disabled: %s/%s/%s not all set)",
+		addr, envMTLSCertFile, envMTLSKeyFile, envMTLSCAFile)
 	log.Fatal(srv.ListenAndServe())
 }

@@ -2,7 +2,6 @@ package chains
 
 import (
 	"context"
-	"crypto/ecdsa"
 	"encoding/hex"
 	"fmt"
 	"math/big"
