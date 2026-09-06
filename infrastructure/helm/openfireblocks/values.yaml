@@ -221,9 +221,21 @@ ceremonyOrchestrator:
 # key is, and comes from a Secret.
 workos:
   enabled: false
-  clientId: "" # client_... from the WorkOS dashboard for this environment
-  redirectUri: "" # this gateway's public https://<host>/auth/sso/callback
-  apiKeySecret: openfireblocks-secrets # secret holding key "workos-api-key"
+  # The OpenFireblocks WorkOS project's Staging environment
+  # (project_01M1W63MVY8MYB9DVFZVT9VDWJ /
+  # environment_01M1W63MW47Z4E659C7ABTBWP1). Not a secret -- the client id
+  # travels in the authorization URL the browser is redirected to. Replace
+  # with the Production environment's client id when one is created.
+  clientId: "client_01M1W63N542APF5C0JEBCBX1C1"
+  # Must exactly match a redirect URI registered on that environment.
+  # http://localhost:3000/auth/sso/callback is registered for local
+  # development; register the real https://<host>/auth/sso/callback before
+  # enabling this in a deployed environment.
+  redirectUri: ""
+  # The sk_... API key IS a secret and cannot be read back from the WorkOS
+  # API -- copy it from the dashboard for this environment into this Secret
+  # under the key "workos-api-key".
+  apiKeySecret: openfireblocks-secrets
 
 ingress:
   enabled: false
