@@ -50,11 +50,21 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.external.databaseUrlSecret }}
                   key: database-url
+            - name: DATABASE_ADMIN_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.external.databaseAdminUrlSecret }}
+                  key: database-admin-url
             - name: ADMIN_API_KEY
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.adminApiKeySecret }}
                   key: admin-api-key
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.jwtSecretSecret }}
+                  key: jwt-secret
             - name: MPC_SIGNER_URL
               value: http://{{ include "ofb.fullname" . }}-mpc-signer:{{ .Values.mpcSigner.port }}
             - name: POLICY_SERVICE_URL
@@ -63,6 +73,40 @@ spec:
               value: {{ .Values.external.ethereumRpcSepolia | quote }}
             - name: REDIS_URL
               value: {{ .Values.external.redisUrl | quote }}
+            # Durable settlements (SettlementsController) and real DKG key
+            # provisioning (KeysService.createKey -> ProvisionKeyWorkflow)
+            # both need a real Temporal connection -- previously unset
+            # here even though SettlementsController's TemporalService
+            # already required it, so durable settlements silently 503'd
+            # in this chart's own deployment. Empty is a valid, explicit
+            # "not configured" state both services handle by rejecting
+            # with 503 rather than hanging or crash-looping.
+            - name: TEMPORAL_HOSTPORT
+              value: {{ .Values.external.temporalHostPort | quote }}
+            - name: TEMPORAL_NAMESPACE
+              value: {{ .Values.external.temporalNamespace | quote }}
+            # Where KeysService derives each DKG party's endpoint from --
+            # {id} is replaced 1..total_parties. Matches
+            # templates/mpc-party.yaml's per-party Service naming
+            # (party-<N>) and .Values.mpcParty.port.
+            - name: MPC_PARTY_ENDPOINT_TEMPLATE
+              value: {{ printf "http://party-{id}:%d" (int .Values.mpcParty.port) | quote }}
+            {{- if .Values.workos.enabled }}
+            # Enterprise SSO via WorkOS AuthKit
+            # (services/api-gateway/src/identity/workos-sso.service.ts).
+            # Entirely optional: with these unset the /auth/sso routes
+            # report enabled:false and fail closed with 503, and the local
+            # password + TOTP login path is unaffected.
+            - name: WORKOS_CLIENT_ID
+              value: {{ .Values.workos.clientId | quote }}
+            - name: WORKOS_REDIRECT_URI
+              value: {{ .Values.workos.redirectUri | quote }}
+            - name: WORKOS_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.workos.apiKeySecret }}
+                  key: workos-api-key
+            {{- end }}
           livenessProbe:
             httpGet: { path: /health, port: http }
             initialDelaySeconds: 10

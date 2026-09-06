@@ -3,8 +3,10 @@ package activities
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"time"
 
@@ -14,6 +16,7 @@ import (
 	"github.com/ethereum/go-ethereum/ethclient"
 	"go.temporal.io/sdk/activity"
 
+	"forge-crypto/temporal-worker/db"
 	"forge-crypto/temporal-worker/workflows"
 )
 
@@ -26,19 +29,50 @@ type Activities struct {
 	EthereumRPC           string
 	RequiredConfirmations int64
 	httpClient            *http.Client
+	db                    *sql.DB
+	roundStore            *db.CeremonyRoundStore
 }
 
-// NewActivities builds an Activities with sane defaults.
-func NewActivities(policyURL, mpcURL, ethRPC string, confirmations int64) *Activities {
+// NewActivities builds an Activities with sane defaults. Its shared
+// httpClient (used for CheckPolicy against services/policy-service among
+// other calls) presents a client certificate when
+// MTLS_CERT_FILE/MTLS_KEY_FILE/MTLS_CA_FILE are all set -- the same
+// opt-in convention as clientTLSConfigFromEnv's other caller,
+// NewDKGRoundCoordinator (mtls.go). Policy evaluation gates every signing
+// request, so it's a high-value link for authenticated, encrypted
+// transport rather than plaintext HTTP; presenting a client cert to
+// endpoints that don't ask for one (blockchain RPC, external services)
+// is harmless, since TLS client-cert auth is opt-in on the server side.
+func NewActivities(policyURL, mpcURL, ethRPC string, confirmations int64, database *sql.DB) *Activities {
 	if confirmations <= 0 {
 		confirmations = 3
 	}
+
+	var roundStore *db.CeremonyRoundStore
+	if database != nil {
+		roundStore = db.NewCeremonyRoundStore(database)
+	}
+
+	httpClient := &http.Client{Timeout: 15 * time.Second}
+	tlsConfig, mtlsEnabled, err := clientTLSConfigFromEnv()
+	if err != nil {
+		// Cert files were specified but unusable -- fail loudly at
+		// startup rather than silently falling back to plaintext, the
+		// same standard NewDKGRoundCoordinator holds itself to.
+		log.Fatalf("mTLS configuration error: %v", err)
+	}
+	if mtlsEnabled {
+		httpClient.Transport = &http.Transport{TLSClientConfig: tlsConfig}
+	}
+
 	return &Activities{
 		PolicyURL:             policyURL,
 		MpcSignerURL:          mpcURL,
 		EthereumRPC:           ethRPC,
 		RequiredConfirmations: confirmations,
-		httpClient:            &http.Client{Timeout: 15 * time.Second},
+		httpClient:            httpClient,
+		db:                    database,
+		roundStore:            roundStore,
 	}
 }
 

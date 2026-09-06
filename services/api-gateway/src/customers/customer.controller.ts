@@ -17,6 +17,10 @@ class CreateCustomerDto {
 
   @IsOptional()
   @IsString()
+  name?: string;
+
+  @IsOptional()
+  @IsString()
   customerId?: string;
 
   @IsOptional()
@@ -29,8 +33,12 @@ class UpdatePoliciesDto {
   policies: Record<string, unknown>;
 }
 
+// Must match customers_status_check (migration 001) exactly -- there is
+// no 'deleted' status in the real schema (this previously listed one that
+// doesn't exist, which would have failed the CHECK constraint on every
+// real attempt to use it).
 class SetStatusDto {
-  @IsIn(['active', 'suspended', 'deleted'])
+  @IsIn(['active', 'inactive', 'suspended'])
   status: string;
 }
 

@@ -18,7 +18,8 @@ containerSecurityContext:
 # Endpoints of stateful dependencies (provisioned outside this chart: RDS,
 # managed Temporal, etc.). Override per environment.
 external:
-  databaseUrlSecret: openfireblocks-secrets # secret holding key "database-url"
+  databaseUrlSecret: openfireblocks-secrets # secret holding key "database-url" (RLS-scoped `app` role)
+  databaseAdminUrlSecret: openfireblocks-secrets # secret holding key "database-admin-url" (BYPASSRLS `app_admin` role — see migration 011)
   temporalHostPort: temporal-frontend:7233
   temporalNamespace: default
   ethereumRpcSepolia: "" # set to enable broadcasting
@@ -27,6 +28,10 @@ external:
 
 # Static admin token for customer provisioning (replace with Keycloak in prod).
 adminApiKeySecret: openfireblocks-secrets # secret holding key "admin-api-key"
+
+# JWT_SECRET is required at boot (services/api-gateway/src/identity/jwt.strategy.ts
+# throws if unset) — must come from the same secret store, never a chart default.
+jwtSecretSecret: openfireblocks-secrets # secret holding key "jwt-secret"
 
 apiGateway:
   enabled: true
@@ -74,6 +79,163 @@ temporalWorker:
   resources:
     requests: { cpu: 100m, memory: 128Mi }
     limits: { cpu: 500m, memory: 256Mi }
+  mtls:
+    enabled: false # opt-in, see services/temporal-worker/activities/mtls.go
+    certSecret: openfireblocks-mtls # secret holding keys tls.crt/tls.key/ca.crt
+    # autoIssue runs services/vault-pki-init as an init container instead
+    # of mounting certSecret: each pod requests its own short-lived cert
+    # from Vault's PKI engine at startup (infrastructure/terraform/modules/vault-pki,
+    # with kubernetes_auth_enabled=true) rather than reading one out of a
+    # long-lived Kubernetes Secret. Only meaningful when mtls.enabled is
+    # also true; ignored otherwise.
+    autoIssue:
+      enabled: false
+      image: vault-pki-init
+      tag: latest
+      vaultAddr: "" # e.g. http://vault.vault:8200
+      k8sRole: internal-service # matches vault_kubernetes_auth_backend_role.internal_service.role_name
+      pkiMount: pki/production
+      pkiRole: internal-service
+      certTTL: 24h
+      commonName: temporal-worker.internal
+
+# mpcParty runs one Deployment+Service PER PARTY, not N replicas of one
+# Deployment -- each party has a distinct identity (PARTY_ID) and a
+# stable hostname (party-1, party-2, ...) that services/temporal-worker's
+# DKGRoundCoordinator and services/mpc-party's own peer-relay code both
+# hardcode as the addressing convention (see mpc-party/main.go's
+# endpointBase and tss_party.go's deterministicPartyIDs). partyCount
+# below drives a {{ range }} loop in templates/mpc-party.yaml -- do not
+# deploy this as a single autoscaled Deployment, the parties are not
+# interchangeable replicas of each other.
+mpcParty:
+  enabled: true
+  image: mpc-party
+  tag: latest
+  partyCount: 3 # n; threshold (k+1 to sign) is set per-ceremony at DKG time, not here
+  port: 7000
+  resources:
+    requests: { cpu: 250m, memory: 256Mi }
+    limits: { cpu: "1", memory: 512Mi }
+  mtls:
+    enabled: false # opt-in, see services/mpc-party/mtls.go
+    certSecret: openfireblocks-mtls
+    # See temporalWorker.mtls.autoIssue's comment -- same mechanism.
+    # commonName is derived per-party in templates/mpc-party.yaml
+    # (party-<N>.internal), not set here.
+    autoIssue:
+      enabled: false
+      image: vault-pki-init
+      tag: latest
+      vaultAddr: ""
+      k8sRole: internal-service
+      pkiMount: pki/production
+      pkiRole: internal-service
+      certTTL: 24h
+  vault:
+    addr: "" # e.g. http://vault.vault:8200 -- empty disables key-share sealing, see vault_seal.go
+    tokenSecret: openfireblocks-secrets # secret holding key "vault-token"
+
+# policyApi is services/policy (customer-facing policy CRUD + evaluate
+# API) -- distinct from policyService (services/policy-service, the
+# OPA/Rego sanctions-screening engine, already templated above). Same
+# word "policy" in both names is a pre-existing naming collision in the
+# services/ directory, not something this chart invented; kept distinct
+# component names here specifically to avoid compounding that confusion.
+policyApi:
+  enabled: true
+  image: policy
+  tag: latest
+  replicas: 2
+  port: 8083
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 256Mi }
+
+settlement:
+  enabled: true
+  image: settlement
+  tag: latest
+  replicas: 2
+  port: 8084
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: 500m, memory: 512Mi }
+
+billing:
+  enabled: true
+  image: billing
+  tag: latest
+  replicas: 2
+  port: 8085
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 256Mi }
+  stripeApiKeySecret: openfireblocks-secrets # secret holding key "stripe-api-key"
+
+webhooks:
+  enabled: true
+  image: webhooks
+  tag: latest
+  replicas: 2
+  port: 8086
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 256Mi }
+
+marketplace:
+  enabled: true
+  image: marketplace
+  tag: latest
+  replicas: 2
+  port: 8087
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 256Mi }
+
+compliance:
+  enabled: true
+  image: compliance
+  tag: latest
+  replicas: 2
+  port: 8081
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: 500m, memory: 512Mi }
+
+ceremonyOrchestrator:
+  enabled: true
+  image: ceremony-orchestrator
+  tag: latest
+  replicas: 2
+  port: 7001
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 256Mi }
+
+# Enterprise SSO via WorkOS AuthKit (services/api-gateway's
+# /auth/sso/* routes). Off by default -- the local password + TOTP login
+# path works without it, and with this disabled the SSO routes report
+# enabled:false rather than half-working. clientId is not a secret (it
+# appears in the authorization URL the browser is redirected to); the API
+# key is, and comes from a Secret.
+workos:
+  enabled: false
+  # The OpenFireblocks WorkOS project's Staging environment
+  # (project_01M1W63MVY8MYB9DVFZVT9VDWJ /
+  # environment_01M1W63MW47Z4E659C7ABTBWP1). Not a secret -- the client id
+  # travels in the authorization URL the browser is redirected to. Replace
+  # with the Production environment's client id when one is created.
+  clientId: "client_01M1W63N542APF5C0JEBCBX1C1"
+  # Must exactly match a redirect URI registered on that environment.
+  # http://localhost:3000/auth/sso/callback is registered for local
+  # development; register the real https://<host>/auth/sso/callback before
+  # enabling this in a deployed environment.
+  redirectUri: ""
+  # The sk_... API key IS a secret and cannot be read back from the WorkOS
+  # API -- copy it from the dashboard for this environment into this Secret
+  # under the key "workos-api-key".
+  apiKeySecret: openfireblocks-secrets
 
 ingress:
   enabled: false

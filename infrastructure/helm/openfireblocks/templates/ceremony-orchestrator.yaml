@@ -1,0 +1,64 @@
+{{- if .Values.ceremonyOrchestrator.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ofb.fullname" . }}-ceremony-orchestrator
+  labels:
+    {{- include "ofb.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ceremony-orchestrator
+spec:
+  replicas: {{ .Values.ceremonyOrchestrator.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: ceremony-orchestrator
+  template:
+    metadata:
+      labels:
+        {{- include "ofb.labels" . | nindent 8 }}
+        app.kubernetes.io/component: ceremony-orchestrator
+    spec:
+      serviceAccountName: {{ include "ofb.fullname" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: ceremony-orchestrator
+          image: {{ include "ofb.image" (dict "root" . "image" .Values.ceremonyOrchestrator.image "tag" .Values.ceremonyOrchestrator.tag) }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.ceremonyOrchestrator.port }}
+          env:
+            - name: PORT
+              value: {{ .Values.ceremonyOrchestrator.port | quote }}
+            - name: TEMPORAL_HOSTPORT
+              value: {{ .Values.external.temporalHostPort | quote }}
+            - name: TEMPORAL_NAMESPACE
+              value: {{ .Values.external.temporalNamespace | quote }}
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          resources:
+            {{- toYaml .Values.ceremonyOrchestrator.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ofb.fullname" . }}-ceremony-orchestrator
+  labels:
+    {{- include "ofb.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ceremony-orchestrator
+spec:
+  selector:
+    app.kubernetes.io/component: ceremony-orchestrator
+  ports:
+    - name: http
+      port: {{ .Values.ceremonyOrchestrator.port }}
+      targetPort: http
+{{- end }}

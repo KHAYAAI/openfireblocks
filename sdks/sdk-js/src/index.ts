@@ -57,6 +57,41 @@ export interface AuditEvent {
   [key: string]: unknown;
 }
 
+export interface SignMultiChainRequest {
+  chainId: string;
+  message: string;
+  metadata?: {
+    network?: string;
+    [key: string]: unknown;
+  };
+}
+
+export interface SignMultiChainResponse {
+  requestId: string;
+  chainId: string;
+  signature: string;
+  signedTx?: string;
+  from: string;
+  status: 'signed' | 'failed';
+  broadcasted: boolean;
+  error?: string;
+}
+
+export interface SupportedChainsResponse {
+  chains: string[];
+  count: number;
+}
+
+export interface BroadcastRequest {
+  chainId: string;
+  signedTx: string;
+}
+
+export interface BroadcastResponse {
+  txHash: string;
+  status: string;
+}
+
 // Error thrown for any non-2xx response, carrying the parsed body when available.
 export class OpenFireblocksError extends Error {
   constructor(
@@ -176,6 +211,24 @@ export class OpenFireblocksClient {
     return this.request('POST', `/settlements/${encodeURIComponent(workflowId)}/approve`, {
       approved,
     });
+  }
+
+  // --- Multi-chain signing ---
+
+  // Get list of supported blockchain networks.
+  getSupportedChains(): Promise<SupportedChainsResponse> {
+    return this.request<SupportedChainsResponse>('POST', '/sign-multi-chain/chains');
+  }
+
+  // Sign a transaction on any supported blockchain.
+  // Supports: ethereum, bitcoin, solana, cosmos-hub
+  signMultiChain(req: SignMultiChainRequest): Promise<SignMultiChainResponse> {
+    return this.request<SignMultiChainResponse>('POST', '/sign-multi-chain', req);
+  }
+
+  // Broadcast a signed transaction for any supported blockchain.
+  broadcastTransaction(req: BroadcastRequest): Promise<BroadcastResponse> {
+    return this.request<BroadcastResponse>('POST', '/sign-multi-chain/broadcast', req);
   }
 }
 

@@ -1,0 +1,68 @@
+{{- if .Values.webhooks.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ofb.fullname" . }}-webhooks
+  labels:
+    {{- include "ofb.labels" . | nindent 4 }}
+    app.kubernetes.io/component: webhooks
+spec:
+  replicas: {{ .Values.webhooks.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: webhooks
+  template:
+    metadata:
+      labels:
+        {{- include "ofb.labels" . | nindent 8 }}
+        app.kubernetes.io/component: webhooks
+    spec:
+      serviceAccountName: {{ include "ofb.fullname" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: webhooks
+          image: {{ include "ofb.image" (dict "root" . "image" .Values.webhooks.image "tag" .Values.webhooks.tag) }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.webhooks.port }}
+          env:
+            - name: PORT
+              value: {{ .Values.webhooks.port | quote }}
+            # app_admin (BYPASSRLS): webhook delivery fans out across
+            # whichever customer's event fired, not one tenant session --
+            # see the dsn comment in services/webhooks/db.go.
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.external.databaseAdminUrlSecret }}
+                  key: database-admin-url
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          resources:
+            {{- toYaml .Values.webhooks.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ofb.fullname" . }}-webhooks
+  labels:
+    {{- include "ofb.labels" . | nindent 4 }}
+    app.kubernetes.io/component: webhooks
+spec:
+  selector:
+    app.kubernetes.io/component: webhooks
+  ports:
+    - name: http
+      port: {{ .Values.webhooks.port }}
+      targetPort: http
+{{- end }}

@@ -1,0 +1,77 @@
+{{/*
+policyApi is services/policy (customer-facing policy CRUD + evaluate
+API) -- NOT the same thing as policy-service.yaml's policyService
+(services/policy-service, the OPA/Rego sanctions-screening engine). Two
+different services both containing the word "policy" is a pre-existing
+naming collision in services/, not introduced here -- component names
+below are kept distinct (policy-api vs policy-service) specifically so
+`kubectl get pods` doesn't compound that confusion.
+*/}}
+{{- if .Values.policyApi.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ofb.fullname" . }}-policy-api
+  labels:
+    {{- include "ofb.labels" . | nindent 4 }}
+    app.kubernetes.io/component: policy-api
+spec:
+  replicas: {{ .Values.policyApi.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: policy-api
+  template:
+    metadata:
+      labels:
+        {{- include "ofb.labels" . | nindent 8 }}
+        app.kubernetes.io/component: policy-api
+    spec:
+      serviceAccountName: {{ include "ofb.fullname" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: policy-api
+          image: {{ include "ofb.image" (dict "root" . "image" .Values.policyApi.image "tag" .Values.policyApi.tag) }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.policyApi.port }}
+          env:
+            - name: PORT
+              value: {{ .Values.policyApi.port | quote }}
+            # app_admin (BYPASSRLS): policy evaluation runs for whichever
+            # customer/key a signing request names, not one authenticated
+            # tenant session -- see the dsn comment in services/policy/db.go.
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.external.databaseAdminUrlSecret }}
+                  key: database-admin-url
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          resources:
+            {{- toYaml .Values.policyApi.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ofb.fullname" . }}-policy-api
+  labels:
+    {{- include "ofb.labels" . | nindent 4 }}
+    app.kubernetes.io/component: policy-api
+spec:
+  selector:
+    app.kubernetes.io/component: policy-api
+  ports:
+    - name: http
+      port: {{ .Values.policyApi.port }}
+      targetPort: http
+{{- end }}
