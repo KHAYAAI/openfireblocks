@@ -213,6 +213,18 @@ ceremonyOrchestrator:
     requests: { cpu: 100m, memory: 128Mi }
     limits: { cpu: 500m, memory: 256Mi }
 
+# Enterprise SSO via WorkOS AuthKit (services/api-gateway's
+# /auth/sso/* routes). Off by default -- the local password + TOTP login
+# path works without it, and with this disabled the SSO routes report
+# enabled:false rather than half-working. clientId is not a secret (it
+# appears in the authorization URL the browser is redirected to); the API
+# key is, and comes from a Secret.
+workos:
+  enabled: false
+  clientId: "" # client_... from the WorkOS dashboard for this environment
+  redirectUri: "" # this gateway's public https://<host>/auth/sso/callback
+  apiKeySecret: openfireblocks-secrets # secret holding key "workos-api-key"
+
 ingress:
   enabled: false
   className: nginx

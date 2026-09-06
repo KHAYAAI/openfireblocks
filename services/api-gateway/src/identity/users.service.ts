@@ -6,8 +6,13 @@ import { PG_POOL } from '../database/pg-pool.token';
 export interface User {
   id: string;
   email: string;
-  password_hash: string;
+  // Null for SSO-provisioned users -- the identity provider holds the
+  // credential (migration 015).
+  password_hash: string | null;
   full_name: string;
+  auth_provider?: string;
+  workos_user_id?: string | null;
+  workos_organization_id?: string | null;
   role: string;
   status: string;
   mfa_secret: string | null;
@@ -59,7 +64,63 @@ export class UsersService {
     return result.rows[0] ?? null;
   }
 
+  async findByWorkosUserId(workosUserId: string): Promise<User | null> {
+    const result = await this.pool.query(
+      `SELECT * FROM users WHERE workos_user_id = $1`,
+      [workosUserId],
+    );
+    return result.rows[0] ?? null;
+  }
+
+  // Provisioned on first SSO login (see WorkosSsoService). No password is
+  // set -- migration 015 makes password_hash nullable for exactly this, and
+  // its CHECK constraint requires an SSO row to carry a workos_user_id.
+  async createSsoUser(input: {
+    email: string;
+    fullName: string;
+    workosUserId: string;
+    workosOrganizationId?: string;
+    role?: string;
+  }): Promise<User> {
+    const result = await this.pool.query(
+      `INSERT INTO users (email, full_name, role, auth_provider, workos_user_id, workos_organization_id)
+       VALUES ($1, $2, $3, 'workos_sso', $4, $5)
+       RETURNING *`,
+      [
+        input.email.toLowerCase(),
+        input.fullName,
+        input.role ?? 'user',
+        input.workosUserId,
+        input.workosOrganizationId ?? null,
+      ],
+    );
+    return result.rows[0];
+  }
+
+  // Links an existing (password) account to a WorkOS identity. The caller
+  // is responsible for having established that this is safe -- see
+  // WorkosSsoService.resolveLocalUser, which requires the IdP to have
+  // verified the email first. The password stays in place: linking adds a
+  // second way in, it does not remove the original one.
+  async linkWorkosIdentity(
+    userId: string,
+    input: { workosUserId: string; workosOrganizationId?: string },
+  ): Promise<User> {
+    const result = await this.pool.query(
+      `UPDATE users
+       SET workos_user_id = $2, workos_organization_id = $3, updated_at = now()
+       WHERE id = $1
+       RETURNING *`,
+      [userId, input.workosUserId, input.workosOrganizationId ?? null],
+    );
+    return result.rows[0];
+  }
+
   verifyPassword(user: User, password: string): Promise<boolean> {
+    // An SSO-provisioned account has no password to compare against;
+    // bcrypt.compare(x, null) would throw, and any fallback that returns
+    // true here would be an authentication bypass.
+    if (!user.password_hash) return Promise.resolve(false);
     return bcrypt.compare(password, user.password_hash);
   }
 

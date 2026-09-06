@@ -91,6 +91,22 @@ spec:
             # (party-<N>) and .Values.mpcParty.port.
             - name: MPC_PARTY_ENDPOINT_TEMPLATE
               value: {{ printf "http://party-{id}:%d" (int .Values.mpcParty.port) | quote }}
+            {{- if .Values.workos.enabled }}
+            # Enterprise SSO via WorkOS AuthKit
+            # (services/api-gateway/src/identity/workos-sso.service.ts).
+            # Entirely optional: with these unset the /auth/sso routes
+            # report enabled:false and fail closed with 503, and the local
+            # password + TOTP login path is unaffected.
+            - name: WORKOS_CLIENT_ID
+              value: {{ .Values.workos.clientId | quote }}
+            - name: WORKOS_REDIRECT_URI
+              value: {{ .Values.workos.redirectUri | quote }}
+            - name: WORKOS_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.workos.apiKeySecret }}
+                  key: workos-api-key
+            {{- end }}
           livenessProbe:
             httpGet: { path: /health, port: http }
             initialDelaySeconds: 10
