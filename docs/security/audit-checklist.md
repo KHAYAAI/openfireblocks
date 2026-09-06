@@ -359,14 +359,48 @@ Status legend: ✅ done · 🟡 partial · ⬜ not started
   backup; and `RestoreFromPoint` handed each backend the combined
   manifest's ID instead of that backend's own component backup ID.
   Still 🟡, not ✅: incremental backups are full dumps repeated, not true
-  WAL-based incrementals; no S3 storage is provisioned (local disk only);
-  and — the part still genuinely unbuilt — cross-region **failover**
-  (promoting the secondary region) remains honestly unimplemented.
-  `DisasterRecoveryCoordinator.InitiateFailover` was exercised over real
-  HTTP this pass too (`/dr/failover`) and correctly, immediately reports
-  `status: "failed"` for the `postgres` component with rollback marked
-  "not implemented" — exactly the honest behavior a prior pass built,
-  now confirmed working end-to-end rather than only read as code.
+  WAL-based incrementals, and no S3 storage is provisioned (local disk
+  only).
+
+  **Later pass — cross-region failover is now real for the database.**
+  Previously every component of `InitiateFailover` honestly reported
+  `failed` because none of them were implemented. The component that
+  actually holds customer data now is: `PostgresFailover`
+  (`services/backup/failover_postgres.go`) promotes a real
+  streaming-replication standby — it confirms the target really is a
+  standby (`pg_is_in_recovery()`, so a mistargeted failover can't cause
+  split-brain), measures replication lag, **refuses to promote past the
+  plan's RPO** (promotion discards whatever the standby hasn't received,
+  so this is the step that decides how much data a failover loses;
+  `force` is the deliberate "the primary is gone, take the loss"
+  override), calls `pg_promote()`, waits for recovery to end, and then
+  verifies the server actually accepts writes rather than trusting the
+  call.
+
+  Verified against a genuinely real replication pair, not a simulation: a
+  standby was built with `pg_basebackup` from the live primary, confirmed
+  to be streaming WAL, confirmed to reject writes with a read-only error
+  beforehand (asserted specifically, so the check can't pass because of an
+  unrelated permissions failure), then promoted through this code.
+  **Measured: promotion completed in 252ms**, data written on the primary
+  before failover survived intact, and the promoted server accepted writes
+  immediately afterwards. That is a real RTO number for the database
+  component, replacing an unimplemented stub. The RPO refusal logic is
+  covered separately by table-driven unit tests, because real lag on an
+  idle replica is legitimately zero and a database-backed test of that
+  path would not be deterministic.
+
+  Still 🟡, not ✅, and specifically: **only the database component fails
+  over.** Vault, api-gateway and Temporal still report `failed` with a
+  message naming exactly what each would require (Enterprise DR
+  replication or an operator-driven restore-and-unseal; Route53/ALB
+  updates and cloud credentials; a Kubernetes rollout repointing Temporal
+  at the promoted database). Those are deliberately not faked. A full
+  regional failover therefore still needs an operator for three of its
+  four components, and none of this has run against two actual AWS
+  regions — the promotion was proven against two local Postgres
+  instances, which exercises the same `pg_promote()` path RDS uses but
+  not the cross-region networking, DNS, or IAM around it.
 - 🟡 Secrets via external-secrets / sealed-secrets (no plaintext in cluster)
   — `infrastructure/terraform/modules/secrets` now generates real random
   credentials (DB passwords for both the RLS-scoped `app` role and the

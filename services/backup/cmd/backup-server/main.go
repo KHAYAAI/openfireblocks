@@ -12,6 +12,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	vaultapi "github.com/hashicorp/vault/api"
@@ -55,6 +56,23 @@ func main() {
 	manager := backup.NewBackupManager(storage, vaultBackend, pg)
 	drCoordinator := backup.NewDisasterRecoveryCoordinator(manager)
 
+	// Real cross-region failover for the component that holds customer
+	// data. Without STANDBY_DATABASE_URL the coordinator has no replica to
+	// promote and reports the postgres component failed with that reason,
+	// rather than claiming a failover it did not perform.
+	if standbyURI := os.Getenv("STANDBY_DATABASE_URL"); standbyURI != "" {
+		drCoordinator.SetPostgresFailover(&backup.PostgresFailover{
+			StandbyDSN: standbyURI,
+			// Promotion discards anything the standby has not received, so
+			// it is refused past the DR plan's RPO unless FAILOVER_FORCE is
+			// set to accept the data loss deliberately.
+			Force: os.Getenv("FAILOVER_FORCE") == "true",
+		})
+		log.Printf("cross-region Postgres failover configured (standby: %s)", redactDSN(standbyURI))
+	} else {
+		log.Printf("no STANDBY_DATABASE_URL set: Postgres failover is unavailable and will report failed if a failover is initiated")
+	}
+
 	srv := &backupServer{manager: manager, storage: storage, dr: drCoordinator}
 
 	mux := http.NewServeMux()
@@ -78,4 +96,14 @@ func main() {
 	}
 	log.Printf("backup service listening on :%s (dump dir: %s)", port, dumpDir)
 	log.Fatal(httpSrv.ListenAndServe())
+}
+
+// redactDSN strips credentials before a DSN reaches the log.
+func redactDSN(dsn string) string {
+	if at := strings.LastIndex(dsn, "@"); at != -1 {
+		if scheme := strings.Index(dsn, "://"); scheme != -1 && scheme+3 < at {
+			return dsn[:scheme+3] + "***@" + dsn[at+1:]
+		}
+	}
+	return dsn
 }

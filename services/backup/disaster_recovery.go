@@ -67,14 +67,34 @@ type DisasterRecoveryCoordinator struct {
 	plans         map[string]*DisasterRecoveryPlan
 	operations    map[string]*FailoverOperation
 	mu            sync.RWMutex
+
+	// postgresFailover promotes the secondary region's streaming-replication
+	// standby. Nil when no standby has been configured, in which case the
+	// postgres component reports failed with a message saying so rather than
+	// pretending to have failed over.
+	postgresFailover *PostgresFailover
+
+	// componentErrors records why each component ended where it did, so a
+	// failed failover explains itself instead of just saying "failed".
+	componentErrors map[string]string
+}
+
+// SetPostgresFailover wires in a real standby promoter. See
+// PostgresFailover -- without this, the postgres component of a failover
+// cannot succeed, by design.
+func (d *DisasterRecoveryCoordinator) SetPostgresFailover(pf *PostgresFailover) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.postgresFailover = pf
 }
 
 // NewDisasterRecoveryCoordinator creates a new DR coordinator
 func NewDisasterRecoveryCoordinator(backupManager *BackupManager) *DisasterRecoveryCoordinator {
 	return &DisasterRecoveryCoordinator{
-		backupManager: backupManager,
-		plans:         make(map[string]*DisasterRecoveryPlan),
-		operations:    make(map[string]*FailoverOperation),
+		backupManager:   backupManager,
+		plans:           make(map[string]*DisasterRecoveryPlan),
+		operations:      make(map[string]*FailoverOperation),
+		componentErrors: make(map[string]string),
 	}
 }
 
@@ -165,17 +185,18 @@ func (d *DisasterRecoveryCoordinator) executeFailover(ctx context.Context, opera
 		}
 
 		componentStart := time.Now()
-		status := d.failoverComponent(ctx, component)
+		status := d.failoverComponent(ctx, component, plan.RPO)
 		componentDuration := time.Since(componentStart)
 
 		operation.Components[component] = ComponentStatus{
 			Name:         component,
 			Status:       status,
 			FailoverTime: componentDuration,
+			ErrorMessage: d.componentError(component),
 		}
 
 		if status == "failed" {
-			operation.ErrorMessage = fmt.Sprintf("Component %s failed to failover", component)
+			operation.ErrorMessage = fmt.Sprintf("Component %s failed to failover: %s", component, d.componentError(component))
 			operation.Status = FailoverStatusFailed
 
 			// Attempt rollback
@@ -193,11 +214,11 @@ func (d *DisasterRecoveryCoordinator) executeFailover(ctx context.Context, opera
 }
 
 // failoverComponent performs failover for a specific component
-func (d *DisasterRecoveryCoordinator) failoverComponent(ctx context.Context, component string) string {
+func (d *DisasterRecoveryCoordinator) failoverComponent(ctx context.Context, component string, rpo time.Duration) string {
 	// Component failover logic varies by component type
 	switch component {
 	case "postgres":
-		return d.failoverPostgres(ctx)
+		return d.failoverPostgres(ctx, rpo)
 	case "vault":
 		return d.failoverVault(ctx)
 	case "api-gateway":
@@ -211,44 +232,89 @@ func (d *DisasterRecoveryCoordinator) failoverComponent(ctx context.Context, com
 
 // Failover component implementations.
 //
-// All four of these used to unconditionally `return "healthy"` with no
-// logic at all -- for a disaster-recovery coordinator, that means the one
-// moment this code's correctness actually matters (a live incident) is
-// exactly when it would report full success regardless of whether any of
-// the four steps in each function's own comment ever ran. executeFailover
-// above treats "healthy" as "this component is done, move to the next
-// one" -- so a real failover would sail through reporting every component
-// healthy while doing nothing.
-//
-// Fixed to fail explicitly rather than fabricate success: implementing the
-// real steps (verify replica sync, promote via a Postgres client; unseal
-// via the Vault API; update a load balancer/DNS provider; restart Temporal
-// workers) each depends on a live target environment and credentials this
-// codebase doesn't have wired up anywhere yet, so the honest state is "not
-// implemented," not "healthy."
-func (d *DisasterRecoveryCoordinator) failoverPostgres(ctx context.Context) string {
-	// Promote replica to primary: verify replica is in sync, stop writes to
-	// primary, promote replica, update DNS/routing. None of this is wired
-	// up to a real Postgres client yet.
-	return "failed"
+// History worth keeping in view: all four of these once unconditionally
+// returned "healthy" with no logic at all, which meant the one moment this
+// code's correctness actually matters (a live incident) was exactly when it
+// would report full success regardless of whether anything happened. They
+// were then changed to return "failed" honestly. postgres is now genuinely
+// implemented; the rest still report failed, with a message naming what
+// they would need, because a DR coordinator that lies is worse than one
+// that admits it cannot act.
+
+// failoverPostgres promotes the secondary region's streaming-replication
+// standby to primary. This is the component that holds customer data, so it
+// is the one that determines whether a failover is real.
+func (d *DisasterRecoveryCoordinator) failoverPostgres(ctx context.Context, rpo time.Duration) string {
+	d.mu.RLock()
+	pf := d.postgresFailover
+	d.mu.RUnlock()
+
+	if pf == nil {
+		d.recordComponentError("postgres", "no standby configured: set STANDBY_DATABASE_URL so the coordinator knows which replica to promote")
+		return "failed"
+	}
+
+	result, err := pf.Promote(ctx, rpo)
+	if err != nil {
+		d.recordComponentError("postgres", err.Error())
+		return "failed"
+	}
+	if !result.WritableAfter {
+		d.recordComponentError("postgres", "promotion completed but the server is not accepting writes")
+		return "failed"
+	}
+
+	if result.Promoted {
+		d.recordComponentError("postgres", fmt.Sprintf(
+			"promoted in %s; replication lag at promotion was %s (this is the failover's real RPO)",
+			result.PromotionTime, result.LagAtPromotion))
+	} else {
+		d.recordComponentError("postgres", result.Message)
+	}
+	return "healthy"
 }
 
 func (d *DisasterRecoveryCoordinator) failoverVault(ctx context.Context) string {
-	// Promote secondary Vault cluster: verify secondary state, elect new
-	// primary, unseal, update auth credentials. Not wired up.
+	// Promoting a secondary Vault cluster is a Vault Enterprise DR
+	// replication operation; on OSS the secondary is a separate cluster
+	// restored from backup and unsealed by an operator. Either path needs
+	// credentials and a target cluster this service is not configured with.
+	d.recordComponentError("vault", "not implemented: promoting a Vault secondary requires either Enterprise DR replication or an operator-driven restore-and-unseal of the secondary cluster; neither is wired up")
 	return "failed"
 }
 
 func (d *DisasterRecoveryCoordinator) failoverAPIGateway(ctx context.Context) string {
-	// Route traffic to secondary API Gateway: health check secondary,
-	// update load balancer, drain primary connections. Not wired up.
+	// Routing traffic to the secondary region means updating a DNS record
+	// or load balancer target group (Route53 / ALB in this platform's
+	// Terraform), which needs cloud credentials this service does not hold.
+	d.recordComponentError("api-gateway", "not implemented: shifting traffic requires DNS or load-balancer updates (Route53/ALB) and cloud credentials this service does not hold")
 	return "failed"
 }
 
 func (d *DisasterRecoveryCoordinator) failoverTemporal(ctx context.Context) string {
-	// Failover Temporal: sync database from backup, update frontend
-	// endpoints, restart workers. Not wired up.
+	// Temporal follows Postgres: once the database is promoted, the
+	// frontend and workers need to be pointed at it and restarted, which is
+	// an orchestration-layer action (a Helm/Kubernetes rollout), not
+	// something this process can perform against itself.
+	d.recordComponentError("temporal", "not implemented: after the database is promoted, Temporal's frontend and workers must be repointed and restarted by the orchestration layer (a Kubernetes rollout), which this service cannot perform")
 	return "failed"
+}
+
+// recordComponentError stores the reason a component ended where it did, so
+// InitiateFailover's result explains itself.
+func (d *DisasterRecoveryCoordinator) recordComponentError(component, message string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.componentErrors == nil {
+		d.componentErrors = make(map[string]string)
+	}
+	d.componentErrors[component] = message
+}
+
+func (d *DisasterRecoveryCoordinator) componentError(component string) string {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.componentErrors[component]
 }
 
 // rollbackFailover rolls back a failed failover.
