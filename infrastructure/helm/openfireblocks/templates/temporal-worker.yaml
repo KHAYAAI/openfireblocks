@@ -53,6 +53,11 @@ spec:
           securityContext:
             {{- toYaml .Values.containerSecurityContext | nindent 12 }}
           env:
+            # Makes each service refuse to fall back to local development
+            # credentials if its DSN/config env var is missing, instead of
+            # silently attempting a localhost connection (gosec G101).
+            - name: APP_ENV
+              value: production
             - name: TEMPORAL_HOSTPORT
               value: {{ .Values.external.temporalHostPort | quote }}
             - name: TEMPORAL_NAMESPACE

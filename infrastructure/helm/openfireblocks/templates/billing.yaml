@@ -30,6 +30,11 @@ spec:
             - name: http
               containerPort: {{ .Values.billing.port }}
           env:
+            # Makes each service refuse to fall back to local development
+            # credentials if its DSN/config env var is missing, instead of
+            # silently attempting a localhost connection (gosec G101).
+            - name: APP_ENV
+              value: production
             - name: PORT
               value: {{ .Values.billing.port | quote }}
             # app_admin (BYPASSRLS): billing evaluates usage/invoices across

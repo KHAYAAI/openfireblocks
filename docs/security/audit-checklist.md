@@ -27,16 +27,15 @@ Status legend: ✅ done · 🟡 partial · ⬜ not started
   the import path; `go build -tags tss ./tss/...` and its test
   (`TestThresholdKeygenAndSign`) now genuinely pass, confirming the
   in-process claim was correct once the module actually builds — but
-  the wider module (`main.go`, `chains/bitcoin.go`, `chains/cosmos.go`,
-  `chains/solana.go`) still doesn't build: those files reference
-  `btcutil`/`cosmos-sdk`/`base58` packages never added to `go.mod`, and
-  `cosmos-sdk`'s current version needs a newer Go toolchain than
-  installed in this sandbox. Out of scope for this pass (unrelated to
-  threshold-signing correctness) and left as a disclosed, separate gap
-  rather than silently worked around. Threshold **signing** over the new
-  real network transport (as opposed to keygen) is real, valuable,
-  separate work not attempted here — the single largest remaining item
-  before this line can move to ✅.
+  the wider module (`main.go`, `chains/*.go`) still didn't build at that
+  point.
+
+  **Both of those have since been closed.** Threshold *signing* over the
+  real network transport is implemented and live-verified (see the
+  key-rotation entry above and `TestLiveBalanceMigrationSweep`). And the
+  `chains/` package now compiles and is correct — see the multi-chain
+  entry below for what was wrong with it, which turned out to be
+  considerably worse than missing `go.mod` entries.
 - 🟡 HSM-backed Vault auto-unseal — this checklist previously listed it
   ⬜, which was wrong: it's already real. `modules/vault/user_data.sh`'s
   rendered `vault.hcl` has a `seal "awskms"` stanza (not Shamir), and
@@ -103,22 +102,58 @@ Status legend: ✅ done · 🟡 partial · ⬜ not started
   standalone, no live processes needed, including a rejection test proving
   a signature that recovers to the wrong address is refused, not returned).
 
-  Still 🟡, not ✅, honestly: broadcasting the assembled sweep transaction
-  against a real funded address on a live chain was not exercised — no
-  funded testnet address or reachable RPC endpoint exists in this sandbox,
-  so `BuildSweepTransaction`'s balance/gas/nonce queries and the final
-  `BroadcastTransaction` call are real, wired code that has not itself been
-  run against a live network (a failed broadcast still returns the real
-  signed tx hex as `status: "signed_not_broadcast"` rather than losing it).
-  And, found while building this, out of this item's scope but disclosed
-  rather than left silent: `services/api-gateway/src/keys/keys.service.ts`'s
-  `createKey` has its own `// TODO: Trigger DKG ceremony workflow` —
-  nothing in the customer-facing "create a key" API path actually starts a
-  Temporal workflow yet, DKG or rotation. Every workflow this checklist
-  describes as real has been exercised directly (test environment or real
-  `-tags live` processes), not through that API surface, which doesn't
-  reach any of it today. See `docs/security/key-rotation.md` section 1 for
-  the full detail.
+  **Both caveats that stood here have since been closed.** The sweep has
+  now been broadcast and mined on a real Ethereum node
+  (`TestLiveChain_SweepEmptiesAddress`): `BuildSweepTransaction` read real
+  on-chain balance/gas/nonce, the assembled transaction was accepted and
+  mined, and the retiring address ended at **exactly 0 wei** with the
+  replacement holding exactly the swept amount. That was a local dev node
+  (geth --dev), not a public testnet — it proves the encoding, broadcast
+  and confirmation path against a real node, not mainnet conditions. And
+  `services/api-gateway/src/keys/keys.service.ts`'s `createKey` now starts
+  a real `ProvisionKeyWorkflow` (see the api-gateway section below), so
+  the finding recorded here — that nothing in the customer-facing "create
+  a key" path actually started a Temporal workflow, so none of the real
+  DKG/rotation/signing machinery was reachable from the API — no longer
+  holds. See `docs/security/key-rotation.md` section 1 for the full
+  detail.
+- 🟡 Multi-chain signing (Bitcoin / Cosmos / Solana) — `services/mpc-signer`
+  did not compile **at all**, and never had: `chains/router.go` referenced a
+  field name that does not exist, `types.go` declared `Cosmosfee` while
+  referencing `CosmosFee`, `bitcoin.go` called btcd APIs that exist in no
+  version of that library, three imported modules were absent from
+  `go.mod`, and the package's own tests passed 12-byte strings where
+  secp256k1 requires a 32-byte hash. The service holding the signing key
+  was therefore undeployable.
+
+  Worse than the build: `cosmos.go` derived addresses as
+  `Keccak256(pubkey)[:20]` — Ethereum's hash. Cosmos addresses are
+  `bech32(prefix, RIPEMD160(SHA256(compressed pubkey)))`. The old code
+  produced well-formed addresses that **nobody could ever spend from**.
+
+  Rewritten with no new dependencies (btcec v1 is kept deliberately:
+  `btcd/btcutil` v1.2.0 wants a newer btcd that dropped the v1 btcec path
+  `bnb-chain/tss-lib` requires, and tss-lib wins that conflict). Bitcoin
+  now produces recoverable compact signatures, real P2PKH derivation, and
+  per-input signing; Cosmos uses the correct hash chain and canonical
+  amino-JSON SignDoc hashing; Solana emits a correct legacy message —
+  3-byte header, compact-u16 lengths, account de-duplication and the
+  required privilege ordering with the fee payer first.
+
+  Verified by tests that compute expected values independently from each
+  chain's specification rather than from the implementation (so a revert
+  to Keccak256 fails), and live over real Vault-PKI mTLS: all four chains
+  signed and returned correctly-shaped addresses. A subsequent gosec scan
+  then found a real bug in the new Solana code — unchecked `int`→`byte`
+  conversions meant >255 accounts would silently truncate into a message
+  addressing the *wrong* accounts, and then be signed; now refused, with
+  the 255 boundary pinned by test.
+
+  Still 🟡: no Bitcoin, Cosmos or Solana network has ever accepted one of
+  these transactions. Every `BroadcastTransaction` for those chains
+  returns an explicit "not implemented" rather than a stub reporting
+  success, and Cosmos supports only `SIGN_MODE_LEGACY_AMINO_JSON`, not
+  `SIGN_MODE_DIRECT`.
 - ⬜ External cryptographic audit of the signing layer
 
 ## Application security

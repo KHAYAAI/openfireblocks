@@ -29,7 +29,7 @@ func getenv(key, def string) string {
 
 func main() {
 	dumpDir := getenv("BACKUP_DUMP_DIR", "/var/lib/openfireblocks-backup")
-	connURI := getenv("DATABASE_URL", "postgres://app_admin:dev-only@localhost:5432/openfireblocks?sslmode=disable")
+	connURI := mustDSN("DATABASE_URL", "postgres://app_admin:dev-only@localhost:5432/openfireblocks?sslmode=disable")
 	restoreURI := getenv("RESTORE_DATABASE_URL", connURI)
 
 	pg := &backup.RealPostgreSQLBackup{ConnURI: connURI, RestoreURI: restoreURI, DumpDir: dumpDir + "/postgres"}
@@ -106,4 +106,26 @@ func redactDSN(dsn string) string {
 		}
 	}
 	return dsn
+}
+
+// mustDSN returns the DSN from env, or the local development fallback.
+//
+// Deliberately NOT written as getenv(key, devFallback(...)): Go evaluates
+// arguments eagerly, so that shape would consult (and reject) the fallback
+// even when the environment variable is correctly set. The fallback carries
+// a well-known password, so it must only ever be reached when the variable
+// is genuinely absent -- and in a deployed environment that is a hard
+// failure rather than a silent localhost connection attempt. Flagged by
+// gosec G101.
+func mustDSN(envVar, fallback string) string {
+	if v := os.Getenv(envVar); v != "" {
+		return v
+	}
+	for _, k := range []string{"APP_ENV", "ENVIRONMENT"} {
+		switch os.Getenv(k) {
+		case "production", "prod":
+			log.Fatalf("%s is not set and this is a production environment (APP_ENV/ENVIRONMENT); refusing to fall back to local development credentials", envVar)
+		}
+	}
+	return fallback
 }

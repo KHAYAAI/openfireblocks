@@ -77,6 +77,11 @@ spec:
             - name: http
               containerPort: {{ $.Values.mpcParty.port }}
           env:
+            # Makes each service refuse to fall back to local development
+            # credentials if its DSN/config env var is missing, instead of
+            # silently attempting a localhost connection (gosec G101).
+            - name: APP_ENV
+              value: production
             - name: PARTY_ID
               value: {{ $partyID | quote }}
             - name: PORT

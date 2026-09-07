@@ -28,14 +28,8 @@ type PostgresDB struct {
 }
 
 func NewPostgresDB() (*PostgresDB, error) {
-	adminDSN := os.Getenv("DATABASE_URL")
-	if adminDSN == "" {
-		adminDSN = "postgres://app_admin:dev-only@localhost:5432/openfireblocks?sslmode=disable"
-	}
-	tenantDSN := os.Getenv("DATABASE_TENANT_URL")
-	if tenantDSN == "" {
-		tenantDSN = "postgres://app:dev-only@localhost:5432/openfireblocks?sslmode=disable"
-	}
+	adminDSN := mustDSN("DATABASE_URL", "postgres://app_admin:dev-only@localhost:5432/openfireblocks?sslmode=disable")
+	tenantDSN := mustDSN("DATABASE_TENANT_URL", "postgres://app:dev-only@localhost:5432/openfireblocks?sslmode=disable")
 
 	admin, err := sql.Open("postgres", adminDSN)
 	if err != nil {
@@ -270,4 +264,32 @@ func (p *PostgresDB) GetWebhookDeliveries(ctx context.Context, webhookID string,
 		return nil, err
 	}
 	return deliveries, nil
+}
+
+// mustDSN returns the DSN from env, or the local development fallback.
+//
+// The fallback carries a well-known password, so it must never be used by
+// accident in a deployed environment: with APP_ENV (or ENVIRONMENT) set to
+// production this fails immediately and loudly instead of silently
+// attempting a localhost connection with dev credentials. Same standard as
+// api-gateway's jwtSecret(), which throws in production rather than falling
+// back. Flagged by gosec G101 ("hardcoded credentials: password in URL").
+func mustDSN(envVar, fallback string) string {
+	if v := os.Getenv(envVar); v != "" {
+		return v
+	}
+	if isProductionEnv() {
+		log.Fatalf("%s is not set and this is a production environment (APP_ENV/ENVIRONMENT); refusing to fall back to local development credentials", envVar)
+	}
+	return fallback
+}
+
+func isProductionEnv() bool {
+	for _, k := range []string{"APP_ENV", "ENVIRONMENT"} {
+		switch os.Getenv(k) {
+		case "production", "prod":
+			return true
+		}
+	}
+	return false
 }

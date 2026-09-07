@@ -33,7 +33,7 @@ func NewPostgresDB() (*PostgresDB, error) {
 		// zero out every platform-wide query. app_admin has BYPASSRLS for
 		// exactly this kind of back-office job; see migration 011's
 		// header comment.
-		dsn = "postgres://app_admin:dev-only@localhost:5432/openfireblocks?sslmode=disable"
+		dsn = devFallbackDSN("DATABASE_URL", "postgres://app_admin:dev-only@localhost:5432/openfireblocks?sslmode=disable")
 	}
 
 	db, err := sql.Open("postgres", dsn)
@@ -463,4 +463,18 @@ func nullableTime(t time.Time) interface{} {
 		return nil
 	}
 	return t
+}
+
+// devFallbackDSN returns the local development DSN, refusing to do so in a
+// deployed environment: the fallback carries a well-known password, so
+// using it by accident in production must fail loudly rather than silently
+// attempt a localhost connection. Flagged by gosec G101.
+func devFallbackDSN(envVar, fallback string) string {
+	for _, k := range []string{"APP_ENV", "ENVIRONMENT"} {
+		switch os.Getenv(k) {
+		case "production", "prod":
+			log.Fatalf("%s is not set and this is a production environment (APP_ENV/ENVIRONMENT); refusing to fall back to local development credentials", envVar)
+		}
+	}
+	return fallback
 }
