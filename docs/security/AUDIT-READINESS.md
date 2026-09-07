@@ -113,17 +113,75 @@ Offered so an auditor can skip re-deriving it — and to be explicit that
 
 ---
 
+## 2b. Automated scan results (gosec), triaged
+
+`gosec` runs in CI (advisory) and was run across all Go modules. 149
+findings: 37 high, 28 medium, 84 low. Triaged rather than either fixed
+wholesale or ignored — offered here so an auditor can skip the ones
+already reasoned about and challenge the reasoning where it is wrong.
+
+**Fixed as real:**
+
+- **G115, `chains/solana.go` (6)** — unchecked `int`→`byte` conversions in
+  the Solana message serializer. Account indices and the three header
+  counts are single bytes, so a transaction with >255 accounts would have
+  truncated into a well-formed message addressing the *wrong* accounts,
+  and then been signed. Now refused, with the 255 boundary pinned by test.
+  This was a genuine bug in newly written code and the single most
+  valuable thing the scan found.
+- **G101 (11)** — dev-credential DSN fallbacks. Now refused when
+  `APP_ENV`/`ENVIRONMENT` is production.
+
+**Assessed as not exploitable in context, with reasoning:**
+
+- **G703/G704 (path traversal / SSRF, 12)** — the "tainted" inputs are
+  operator-supplied environment variables (`MTLS_CERT_FILE`, `VAULT_ADDR`),
+  not request data. An operator who can set the process environment does
+  not need an SSRF to reach anything.
+- **G104 (unhandled errors, 72)** — overwhelmingly deferred `Close()` and
+  best-effort cleanup. Worth a pass for style; not a security finding.
+- **G501/G401 (MD5, 6)** — MD5 is used for backup *checksums*
+  (`services/backup/postgres_backup.go`), never for authentication or
+  signatures. Integrity-against-corruption, not against an adversary. An
+  auditor may reasonably argue for SHA-256 anyway; the cost is low.
+- **G117 (struct field matches a secret pattern, 3)** — the `ApiKey` field
+  on marketplace integration records. It holds the customer's third-party
+  integration key, is never logged, and is only returned to the tenant
+  that owns it.
+
+**Deliberately left, and worth an auditor's opinion:**
+
+- **G114 (HTTP servers without timeouts, 6)** — several services use
+  `http.ListenAndServe` without read/write timeouts, which is a slowloris
+  exposure. These are internal services behind mTLS rather than
+  internet-facing, which lowers but does not eliminate it. A reasonable
+  hardening item.
+- **G118 (`context.Background()` in request handlers, 3)** — goroutines
+  that outlive their request. Correctness/resource concern more than a
+  security one.
+
+---
+
 ## 3. What is NOT verified — audit here first
 
 We would rather hand this over than have it found.
 
-1. **Nothing has been broadcast to a live chain.** Every signature is
-   cryptographically verified; not one has been accepted by a real network.
-   Bitcoin, Cosmos and Solana `BroadcastTransaction` return "not
-   implemented" outright.
-2. **Nothing has run on a real cluster.** Helm renders cleanly and
-   Terraform validates; neither has been applied. The Kubernetes-auth path
-   in `vault-pki-init` (as opposed to the token path) has never executed.
+1. **Ethereum transactions have now been broadcast and mined — against a
+   local dev node (geth --dev), not a public network.** A signed transfer
+   and a full balance-migration sweep were both accepted, mined and
+   confirmed, and the swept address ended at exactly 0 wei. This proves
+   the encoding, broadcast and confirmation path against a real node; it
+   proves nothing about mainnet economics, reorgs, mempool behaviour or
+   public network conditions. **Bitcoin, Cosmos and Solana remain entirely
+   unbroadcast** — their `BroadcastTransaction` returns "not implemented"
+   outright.
+2. **Nothing has run on a real cluster.** Terraform validates and the
+   chart now passes `kubeconform` strict validation against real
+   Kubernetes 1.29 API schemas (all 29 objects, with every optional
+   feature enabled) — which proves the API server would *accept* the
+   manifests, not that the system runs. Neither has been applied. The
+   Kubernetes-auth path in `vault-pki-init` (as opposed to the token path)
+   has never executed.
 3. **No production-scale load.** All timings are single-node local numbers
    and should not be read as capacity data.
 4. **Multi-chain signing is unexercised against real networks.** The
