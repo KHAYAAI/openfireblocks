@@ -15,6 +15,7 @@ import { CreateKeyRequest } from './dto/create-key.dto';
 import { ApiKeyGuard } from '../auth/api-key.guard';
 import { CurrentCustomer } from '../auth/current-customer.decorator';
 import { Customer } from '../customers/customer.service';
+import { ThresholdSignRequestDto } from './dto/threshold-sign.dto';
 
 @Controller('keys')
 @UseGuards(ApiKeyGuard)
@@ -54,6 +55,19 @@ export class KeysController {
     }
 
     return this.keysService.createKey(customer, req);
+  }
+
+  // Sign with a key this customer provisioned. Distinct from POST /sign,
+  // which routes to mpc-signer's separate single-key path -- this is the
+  // only route that uses a threshold key produced by POST /keys.
+  @Post(':keyId/sign')
+  @HttpCode(HttpStatus.OK)
+  async signWithKey(
+    @CurrentCustomer() customer: Customer,
+    @Param('keyId') keyId: string,
+    @Body() req: ThresholdSignRequestDto,
+  ) {
+    return this.keysService.signWithKey(customer, keyId, req);
   }
 
   @Get()

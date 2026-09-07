@@ -84,7 +84,12 @@ keys, or transactions.**
   (link an existing password account only on an IdP-verified email) —
   `services/api-gateway/src/identity/workos-sso.service.ts`
 - Policy enforcement, which is fail-closed and gates every signing request
-  — `services/policy-service`, and `CheckPolicy` in temporal-worker
+  — `services/policy-service`, and `CheckPolicy` in temporal-worker.
+  Note that `ThresholdSigningWorkflow` itself performs no policy check:
+  the gate lives in the API layer (`KeysService.signWithKey`), so anything
+  that can start that workflow in Temporal directly bypasses policy
+  entirely. Whether that boundary is in the right place is worth an
+  opinion.
 
 ### Priority 4 — Penetration test (separate engagement)
 
@@ -199,14 +204,18 @@ We would rather hand this over than have it found.
    `SIGN_MODE_DIRECT`.
 5. **Regional failover is one component of four.** Only Postgres promotes;
    Vault, api-gateway and Temporal report "not implemented" with the reason.
-6. **A provisioned threshold key cannot be used through the API.**
-   `POST /sign` routes to `mpc-signer` — the separate single-key,
-   non-threshold path. `ThresholdSigningWorkflow` is reachable only by
-   starting it in Temporal directly. A customer can create a 2-of-3 key
-   through the public API and has no public API with which to sign with it.
-   A functional gap rather than a security one, but worth knowing when
-   considering Priority 1 question 5: the two signing paths are not merely
-   separate — only one of them is reachable from outside at all.
+6. **Policy cannot verify what a signed digest commits to.**
+   `POST /keys/:keyId/sign` is the route that signs with a threshold key
+   (it did not exist until running the system on a cluster showed that no
+   such route did). It is gated fail-closed by the policy service, but it
+   signs a caller-supplied digest, and a digest is opaque: the declared
+   `to`/`value`/`chainId` that policy evaluates cannot be checked against
+   what the digest actually commits to. **A caller who declares one
+   transaction and signs the digest of another gets a policy decision
+   about the wrong transaction.** This is the single most valuable thing
+   for an auditor to attack in the authorization layer. Constraining it
+   properly means the gateway building and hashing the transaction itself
+   (the settlement path), rather than accepting a digest.
 7. **immudb audit anchoring is unexercised.** The integration is real SDK
    code but has not run against a live immudb instance.
 8. **HSM auto-unseal is unapplied.** The AWS KMS seal stanza and IAM are

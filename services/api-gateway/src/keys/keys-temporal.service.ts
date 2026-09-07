@@ -8,6 +8,7 @@ import { Connection, WorkflowClient } from '@temporalio/client';
 
 const TASK_QUEUE = 'transaction-settlement';
 const WORKFLOW_TYPE = 'ProvisionKeyWorkflow';
+const SIGNING_WORKFLOW_TYPE = 'ThresholdSigningWorkflow';
 
 // Starts services/temporal-worker/workflows/provision_key.go's
 // ProvisionKeyWorkflow -- this is what closes KeysService.createKey's
@@ -95,6 +96,43 @@ export class KeysTemporalService implements OnModuleDestroy {
       ],
     });
     return { workflowId };
+  }
+
+  // Runs a threshold signing ceremony and waits for its result.
+  //
+  // Unlike start() above this blocks on the workflow's result: signing is
+  // a request/response operation from the caller's point of view, and the
+  // ceremony is seconds, not the minutes a DKG takes. workflowId carries a
+  // caller-supplied requestId so a retried HTTP request reuses the same
+  // workflow rather than starting a second signing ceremony over the same
+  // message.
+  async signWithThreshold(params: {
+    requestId: string;
+    ceremonyId: string;
+    message: string;
+    partyIds: number[];
+    partyEndpoints: string[];
+    chainId: string;
+  }): Promise<{ status: string; signature?: string; error?: string }> {
+    const client = await this.getClient();
+    const handle = await client.start(SIGNING_WORKFLOW_TYPE, {
+      taskQueue: TASK_QUEUE,
+      workflowId: `threshold-sign-${params.requestId}`,
+      args: [
+        {
+          ceremonyId: params.ceremonyId,
+          message: params.message,
+          partyIds: params.partyIds,
+          partyEndpoints: params.partyEndpoints,
+          chainId: params.chainId,
+        },
+      ],
+    });
+    return (await handle.result()) as {
+      status: string;
+      signature?: string;
+      error?: string;
+    };
   }
 
   async onModuleDestroy() {

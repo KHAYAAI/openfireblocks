@@ -1,13 +1,17 @@
 import {
   ConflictException,
+  ForbiddenException,
   Injectable,
   Logger,
+  NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { PostgresService } from '../database/postgres.service';
 import { KeysTemporalService } from './keys-temporal.service';
 import { CreateKeyRequest } from './dto/create-key.dto';
 import { Customer } from '../customers/customer.service';
+import { PolicyService } from '../policies/policy.service';
+import { ThresholdSignRequestDto } from './dto/threshold-sign.dto';
 import { v4 as uuidv4 } from 'uuid';
 
 // Derives each party's endpoint from MPC_PARTY_ENDPOINT_TEMPLATE (default
@@ -33,6 +37,7 @@ export class KeysService {
   constructor(
     private readonly postgres: PostgresService,
     private readonly temporal: KeysTemporalService,
+    private readonly policy: PolicyService,
   ) {}
 
   async createKey(customer: Customer, req: CreateKeyRequest) {
@@ -135,6 +140,118 @@ export class KeysService {
       address: null,
       public_key: null,
       created_at: now,
+    };
+  }
+
+  // Produces a threshold signature with a key this customer provisioned.
+  //
+  // Before this existed there was no route that could use a key created by
+  // POST /keys at all: POST /sign goes to mpc-signer, which is the
+  // separate single-key, non-threshold service, and
+  // ThresholdSigningWorkflow could only be started from inside Temporal.
+  // A customer could provision a 2-of-3 key through the public API and had
+  // no public API with which to sign with it.
+  //
+  // Fail-closed on policy, matching SignService: the policy engine is
+  // consulted first and an unreachable policy service denies rather than
+  // permits. See ThresholdSignRequestDto for what policy can and cannot
+  // actually verify about a request to sign an opaque digest.
+  async signWithKey(customer: Customer, keyId: string, req: ThresholdSignRequestDto) {
+    const customerId = customer.customer_id;
+    const requestId = req.idempotencyKey ?? uuidv4();
+
+    const key = await this.postgres.getKey(keyId, customerId);
+    if (!key) {
+      throw new NotFoundException(`no key ${keyId}`);
+    }
+    if (key.status !== 'active') {
+      throw new ConflictException(
+        `key ${keyId} is ${key.status}, not active; only an active key can sign`,
+      );
+    }
+
+    const overrides = (customer.policies ?? {}) as Record<string, unknown>;
+    const decision = await this.policy.evaluate({
+      customerId,
+      customerTier: customer.tier,
+      to: req.to,
+      value: req.value,
+      // req.chainId (a number), not key.blockchain (a name like
+      // "ethereum") -- policy-service's PolicyRequest.ChainID is an int
+      // and rejects the name with 400.
+      chainId: req.chainId,
+      whitelist: overrides.whitelist as string[] | undefined,
+      blockedCountries: overrides.blockedCountries as string[] | undefined,
+      country: req.country,
+    });
+    if (!decision.approved) {
+      throw new ForbiddenException({
+        error: 'policy denied',
+        denials: decision.denials,
+        requiresApproval: decision.requiresApproval,
+        requestId,
+      });
+    }
+
+    // Shares are addressed by ceremony, not by key -- each party sealed
+    // its share under .../party-N/<ceremony-id> -- so signing means
+    // resolving which completed ceremony produced this key.
+    const ceremony = await this.postgres.getCompletedCeremonyForKey(keyId, customerId);
+    if (!ceremony) {
+      throw new ConflictException(
+        `key ${keyId} has no completed DKG ceremony; its shares do not exist yet`,
+      );
+    }
+
+    // threshold+1 signers, not all total_parties: signing with the whole
+    // committee would make an n-of-n key out of a k-of-n one, and the
+    // point of the threshold is that it tolerates absent parties. The
+    // first threshold+1 by id is a deterministic choice, not a
+    // load-balancing one.
+    const signerCount = Math.min(key.threshold, ceremony.total_parties);
+    const { partyIds, partyEndpoints } = derivePartyEndpoints(ceremony.total_parties);
+
+    this.logger.log(
+      `threshold signing with key ${keyId} (ceremony ${ceremony.ceremony_id}, ` +
+        `${signerCount} of ${ceremony.total_parties} parties)`,
+    );
+
+    let result: { status: string; signature?: string; error?: string };
+    try {
+      result = await this.temporal.signWithThreshold({
+        requestId,
+        ceremonyId: ceremony.ceremony_id,
+        message: req.message,
+        partyIds: partyIds.slice(0, signerCount),
+        partyEndpoints: partyEndpoints.slice(0, signerCount),
+        chainId: key.blockchain,
+      });
+    } catch (err) {
+      this.logger.error(
+        `threshold signing workflow failed for key ${keyId}: ${(err as Error).message}`,
+      );
+      throw new ServiceUnavailableException('threshold signing is unavailable');
+    }
+
+    // The workflow reports a failed ceremony as a *result*, not an
+    // exception (see ThresholdSigningWorkflow), so a caller that only
+    // checked for a thrown error would treat a failure as success and
+    // return no signature with a 201.
+    if (result.status !== 'completed' || !result.signature) {
+      throw new ServiceUnavailableException(
+        `threshold signing did not complete: ${result.error ?? result.status}`,
+      );
+    }
+
+    return {
+      request_id: requestId,
+      key_id: keyId,
+      address: key.address,
+      message: req.message,
+      signature: result.signature,
+      parties: partyIds.slice(0, signerCount),
+      threshold: key.threshold,
+      total_parties: ceremony.total_parties,
     };
   }
 

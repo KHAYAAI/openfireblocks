@@ -5,6 +5,8 @@ import { CustomerService } from '../customers/customer.service';
 import { PostgresService } from '../database/postgres.service';
 import { KeysTemporalService } from './keys-temporal.service';
 import { KeysService } from './keys.service';
+import { HttpService } from '@nestjs/axios';
+import { PolicyService } from '../policies/policy.service';
 
 // Live end-to-end test of the whole customer-facing key-provisioning path:
 // a real customer authenticating against real Postgres, POST /keys' service
@@ -89,7 +91,11 @@ describe('key provisioning (live: real Postgres + Temporal + 3 mpc-party process
     const adminPool = new Pool({ connectionString: ADMIN_DSN });
     const postgres = new PostgresService(tenantPool as never);
     const temporal = new KeysTemporalService();
-    const keys = new KeysService(postgres, temporal);
+    // A real PolicyService against the real policy-service: this test is
+    // about the real path, and a stub here would skip the fail-closed
+    // policy gate that every signing request goes through.
+    const policy = new PolicyService(new HttpService());
+    const keys = new KeysService(postgres, temporal, policy);
 
     const customer = await customers.createCustomer({
       email: `live-provisioning-${Date.now()}@openfireblocks.test`,

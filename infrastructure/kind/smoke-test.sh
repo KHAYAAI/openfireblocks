@@ -5,8 +5,9 @@
 #
 #   create a tenant -> provision a 2-of-3 threshold key (real DKG across
 #   three party pods) -> confirm all three sealed a share in Vault ->
-#   threshold-sign with two of them -> confirm the signature recovers to
-#   the DKG-derived address.
+#   threshold-sign with two of them through the public API -> confirm the
+#   policy gate denies an over-limit request and another tenant cannot use
+#   the key -> confirm the signature recovers to the DKG-derived address.
 #
 # The last step is the one that matters. Everything before it can appear to
 # succeed while producing a key nobody can sign with; recovering the
@@ -71,23 +72,36 @@ for n in 1 2 3; do
   echo "    party-${n} sealed a share"
 done
 
-echo "==> threshold-signing with 2 of the 3 parties"
-# There is deliberately no API call here: the gateway exposes no route that
-# signs with a DKG-provisioned key. POST /sign goes to mpc-signer, which is
-# the separate single-key path. See docs/deployment/CLUSTER-DEPLOYMENT.md.
+echo "==> threshold-signing through the API with 2 of the 3 parties"
 message=$(python3 -c "import hashlib,sys;print(hashlib.sha256(b'smoke ${suffix}').hexdigest())")
-tpod=$(kubectl -n "${NS}" get pod -l app=temporal-frontend --field-selector=status.phase=Running \
-  -o jsonpath='{.items[0].metadata.name}')
-kubectl -n "${NS}" exec "${tpod}" -- temporal workflow start \
-  --address temporal-frontend:7233 --task-queue transaction-settlement \
-  --type ThresholdSigningWorkflow --workflow-id "smoke-sign-${suffix}" \
-  --input "{\"ceremonyId\":\"${ceremony_id}\",\"message\":\"${message}\",\"partyIds\":[1,2],\"partyEndpoints\":[\"http://party-1:7000\",\"http://party-2:7000\"],\"chainId\":\"ethereum\"}" \
-  >/dev/null
-result=$(kubectl -n "${NS}" exec "${tpod}" -- temporal workflow result \
-  --address temporal-frontend:7233 -w "smoke-sign-${suffix}" 2>/dev/null)
-signature=$(echo "${result}" | grep -o '"signature":"[0-9a-f]*"' | cut -d'"' -f4)
-[[ -n "${signature}" ]] || fail "no signature: ${result}"
-echo "    signature ${signature:0:32}..."
+signed=$("${CURL[@]}" -X POST "${API}/keys/${key_id}/sign" \
+  -H 'Content-Type: application/json' -H "x-api-key: ${api_key}" \
+  -d "{\"message\":\"${message}\",\"to\":\"0x1111111111111111111111111111111111111111\",\"value\":\"1000\",\"chainId\":11155111}")
+signature=$(echo "${signed}" | jqp 'd.get("signature","")') || fail "sign failed: ${signed}"
+[[ -n "${signature}" ]] || fail "no signature: ${signed}"
+parties=$(echo "${signed}" | jqp 'd["parties"]')
+# 2 of 3, not 3 of 3: signing with the whole committee would make an n-of-n
+# key out of a k-of-n one.
+[[ "${parties}" == "[1, 2]" ]] || fail "expected parties [1, 2], got ${parties}"
+echo "    signature ${signature:0:32}... from parties ${parties}"
+
+echo "==> policy gate denies an over-limit request"
+denied_code=$("${CURL[@]}" -o /dev/null -w '%{http_code}' -X POST "${API}/keys/${key_id}/sign" \
+  -H 'Content-Type: application/json' -H "x-api-key: ${api_key}" \
+  -d "{\"message\":\"${message}\",\"to\":\"0x1111111111111111111111111111111111111111\",\"value\":\"100000000000000000000000000\",\"chainId\":11155111}")
+[[ "${denied_code}" == "403" ]] || fail "over-limit request returned ${denied_code}, expected 403"
+echo "    403"
+
+echo "==> another tenant cannot sign with this key"
+other=$("${CURL[@]}" -X POST "${API}/admin/customers" \
+  -H 'Content-Type: application/json' -H "x-admin-key: ${ADMIN_KEY}" \
+  -d "{\"email\":\"smoke-other-${suffix}@example.com\",\"name\":\"smoke-other-${suffix}\",\"tier\":\"pro\"}")
+other_key=$(echo "${other}" | jqp 'd["api_key"]')
+cross_code=$("${CURL[@]}" -o /dev/null -w '%{http_code}' -X POST "${API}/keys/${key_id}/sign" \
+  -H 'Content-Type: application/json' -H "x-api-key: ${other_key}" \
+  -d "{\"message\":\"${message}\",\"to\":\"0x1111111111111111111111111111111111111111\",\"value\":\"1000\",\"chainId\":11155111}")
+[[ "${cross_code}" == "404" ]] || fail "cross-tenant sign returned ${cross_code}, expected 404"
+echo "    404 (row-level security, all the way through the stack)"
 
 echo "==> recovering the signer from the signature"
 recovered=$(cd "$(dirname "${BASH_SOURCE[0]}")/recover" && go run . "${message}" "${signature}")
@@ -97,4 +111,5 @@ echo "${recovered}" | grep -qi "${address}" \
 
 echo
 echo "PASS: threshold key ${address} provisioned by real DKG across three pods,"
-echo "      shares sealed by all three, and a 2-of-3 signature recovers to it."
+echo "      shares sealed by all three, policy and tenant isolation enforced,"
+echo "      and a 2-of-3 signature from the public API recovers to it."

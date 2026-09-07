@@ -281,6 +281,29 @@ export class PostgresService {
     return result.rows[0]?.count ?? 0;
   }
 
+  // The completed DKG ceremony that produced this key's shares.
+  //
+  // Threshold signing addresses shares by ceremony id, not key id -- each
+  // party sealed its share under
+  // secret/openfireblocks/mpc-party/party-N/<ceremony-id> -- so signing
+  // with a key means first resolving which ceremony created it. Restricted
+  // to 'completed' because a key is only signable with shares that a
+  // ceremony actually finished producing; newest first so a rotated key
+  // signs with its current ceremony rather than a superseded one.
+  async getCompletedCeremonyForKey(keyId: string, customerId: string) {
+    const result = await this.withTenant(customerId, (client) =>
+      client.query(
+        `SELECT ceremony_id, threshold, total_parties
+           FROM dkg_ceremonies
+          WHERE key_id = $1 AND status = 'completed'
+          ORDER BY completed_at DESC NULLS LAST
+          LIMIT 1`,
+        [keyId],
+      ),
+    );
+    return result.rows[0] ?? null;
+  }
+
   async getKeyShares(keyId: string, customerId: string) {
     const result = await this.withTenant(customerId, (client) =>
       client.query(

@@ -1,6 +1,12 @@
-import { ConflictException, ServiceUnavailableException } from '@nestjs/common';
+import {
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { KeysService } from './keys.service';
 import { PostgresService } from '../database/postgres.service';
+import { PolicyService } from '../policies/policy.service';
 import { KeysTemporalService } from './keys-temporal.service';
 import { Customer } from '../customers/customer.service';
 import { CreateKeyRequest } from './dto/create-key.dto';
@@ -33,9 +39,27 @@ describe('KeysService.createKey', () => {
       createCeremony: jest.fn().mockResolvedValue(undefined),
       setCeremonyFailed: jest.fn().mockResolvedValue(undefined),
       setKeyFailed: jest.fn().mockResolvedValue(undefined),
+      getKey: jest.fn().mockResolvedValue(null),
+      getCompletedCeremonyForKey: jest.fn().mockResolvedValue(null),
     } as unknown as PostgresService;
-    const temporal = { start: temporalStart } as unknown as KeysTemporalService;
-    return { service: new KeysService(postgres, temporal), postgres, temporal };
+    const temporal = {
+      start: temporalStart,
+      signWithThreshold: jest.fn(),
+    } as unknown as KeysTemporalService;
+    const policy = {
+      evaluate: jest.fn().mockResolvedValue({
+        approved: true,
+        denials: [],
+        requiresApproval: false,
+        reason: 'ok',
+      }),
+    } as unknown as PolicyService;
+    return {
+      service: new KeysService(postgres, temporal, policy),
+      postgres,
+      temporal,
+      policy,
+    };
   }
 
   afterEach(() => {
@@ -137,5 +161,153 @@ describe('KeysService.createKey', () => {
     const { service } = build(start, jest.fn().mockRejectedValue(other));
 
     await expect(service.createKey(customer, req)).rejects.toThrow('connection terminated');
+  });
+});
+
+// Before this endpoint existed there was no route that could use a key
+// created by POST /keys: POST /sign goes to mpc-signer (the separate
+// single-key path) and ThresholdSigningWorkflow could only be started from
+// inside Temporal.
+describe('KeysService.signWithKey', () => {
+  const customer: Customer = {
+    customer_id: 'cust-1',
+    name: 'demo',
+    email: 'demo@x.io',
+    status: 'active',
+    tier: 'pro',
+    policies: {},
+  };
+
+  const signReq = {
+    message: 'a'.repeat(64),
+    to: '0x1111111111111111111111111111111111111111',
+    value: '1000',
+    chainId: 11155111,
+  };
+
+  const activeKey = {
+    key_id: 'key-1',
+    status: 'active',
+    threshold: 2,
+    total_parties: 3,
+    blockchain: 'ethereum',
+    address: '0xabc',
+  };
+  const ceremony = { ceremony_id: 'cer-1', threshold: 2, total_parties: 3 };
+
+  function build(overrides: {
+    key?: unknown;
+    ceremony?: unknown;
+    approved?: boolean;
+    sign?: jest.Mock;
+  }) {
+    const postgres = {
+      getKey: jest.fn().mockResolvedValue(
+        overrides.key === undefined ? activeKey : overrides.key,
+      ),
+      getCompletedCeremonyForKey: jest.fn().mockResolvedValue(
+        overrides.ceremony === undefined ? ceremony : overrides.ceremony,
+      ),
+    } as unknown as PostgresService;
+    const temporal = {
+      signWithThreshold:
+        overrides.sign ??
+        jest.fn().mockResolvedValue({ status: 'completed', signature: 'ff'.repeat(65) }),
+    } as unknown as KeysTemporalService;
+    const policy = {
+      evaluate: jest.fn().mockResolvedValue({
+        approved: overrides.approved !== false,
+        denials: overrides.approved === false ? ['amount_limit'] : [],
+        requiresApproval: false,
+        reason: 'x',
+      }),
+    } as unknown as PolicyService;
+    return { service: new KeysService(postgres, temporal, policy), postgres, temporal, policy };
+  }
+
+  it('signs with threshold parties, not all of them', async () => {
+    const sign = jest
+      .fn()
+      .mockResolvedValue({ status: 'completed', signature: 'ff'.repeat(65) });
+    const { service } = build({ sign });
+
+    const out = await service.signWithKey(customer, 'key-1', signReq);
+
+    // 2 of 3, not 3 of 3: signing with the whole committee would turn a
+    // 2-of-3 key into a 3-of-3 one and lose the fault tolerance that is
+    // the entire point of a threshold.
+    expect(sign).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ceremonyId: 'cer-1',
+        partyIds: [1, 2],
+        partyEndpoints: ['http://party-1:7000', 'http://party-2:7000'],
+      }),
+    );
+    expect(out.signature).toBe('ff'.repeat(65));
+    expect(out.parties).toEqual([1, 2]);
+  });
+
+  // policy-service takes chainId as an int and rejects the blockchain
+  // name with 400, so passing key.blockchain here denied every request.
+  it('passes the numeric chainId to policy, not the blockchain name', async () => {
+    const { service, policy } = build({});
+    await service.signWithKey(customer, 'key-1', signReq);
+    expect(policy.evaluate).toHaveBeenCalledWith(
+      expect.objectContaining({ chainId: 11155111 }),
+    );
+  });
+
+  it('denies when policy denies, before starting any ceremony', async () => {
+    const sign = jest.fn();
+    const { service } = build({ approved: false, sign });
+
+    await expect(service.signWithKey(customer, 'key-1', signReq)).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+    expect(sign).not.toHaveBeenCalled();
+  });
+
+  it('404s for a key the customer does not have', async () => {
+    const { service } = build({ key: null });
+    await expect(service.signWithKey(customer, 'key-1', signReq)).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+  });
+
+  it('refuses to sign with a key that is not active', async () => {
+    const { service } = build({ key: { ...activeKey, status: 'pending_dkg' } });
+    await expect(service.signWithKey(customer, 'key-1', signReq)).rejects.toBeInstanceOf(
+      ConflictException,
+    );
+  });
+
+  it('refuses when no completed ceremony produced the shares', async () => {
+    const { service } = build({ ceremony: null });
+    await expect(service.signWithKey(customer, 'key-1', signReq)).rejects.toBeInstanceOf(
+      ConflictException,
+    );
+  });
+
+  // ThresholdSigningWorkflow reports a failed ceremony as a RESULT with
+  // status:"failed", not as a thrown error. A caller that only checked for
+  // an exception would return 200 with no signature.
+  it('treats a failed signing result as a failure, not a success', async () => {
+    const sign = jest
+      .fn()
+      .mockResolvedValue({ status: 'failed', error: 'party 2 unreachable' });
+    const { service } = build({ sign });
+
+    await expect(service.signWithKey(customer, 'key-1', signReq)).rejects.toThrow(
+      /party 2 unreachable/,
+    );
+  });
+
+  it('treats a completed result with no signature as a failure', async () => {
+    const sign = jest.fn().mockResolvedValue({ status: 'completed' });
+    const { service } = build({ sign });
+
+    await expect(service.signWithKey(customer, 'key-1', signReq)).rejects.toBeInstanceOf(
+      ServiceUnavailableException,
+    );
   });
 });

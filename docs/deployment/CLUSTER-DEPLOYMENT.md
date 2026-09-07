@@ -39,8 +39,9 @@ cluster (`infrastructure/kind/smoke-test.sh`):
    each seals its own distinct share into Vault under
    `secret/openfireblocks/mpc-party/party-N/<ceremony-id>`.
 5. The key is activated with that address and public key.
-6. `ThresholdSigningWorkflow` with **two** of the three parties produces a
-   signature.
+6. `POST /keys/:keyId/sign` runs a threshold signing ceremony with **two**
+   of the three parties and returns a signature — gated by the same
+   fail-closed policy evaluation as every other signing path.
 7. That signature recovers, via `crypto.SigToPub`, to exactly the address
    the ceremony derived.
 
@@ -48,12 +49,19 @@ Step 7 is the one that matters. Steps 1–6 can all report success while the
 pieces belong to different keys; recovering the signer from the signature
 is what ties them together.
 
+Also checked, because a signing route is only as good as what it refuses:
+an over-limit request is denied 403 with the specific policy reason, a
+different tenant asking to sign with the same key gets 404 (row-level
+security holding all the way from the API to the row), and a malformed
+digest is rejected 400 before anything is started.
+
 Measured:
 
 | | |
 |---|---|
 | DKG end to end, cold pre-params pool | **101s** |
 | DKG end to end, warm pre-params pool | **26s** |
+| Threshold signature via `POST /keys/:keyId/sign` | **1.06s** |
 | Migrations, fresh database | 16 applied |
 | Migrations, second run | 0 applied, 16 skipped |
 | Tenant isolation | tenant A sees 1 of 2 rows; no tenant context sees 0 |
@@ -138,14 +146,17 @@ released; `createKey` marks the key failed as well as the ceremony and maps
 
 Do not read section 2 as more than it is.
 
-1. **No customer-facing route signs with a provisioned key.** `POST /sign`
-   goes to `mpc-signer`, which is the separate **single-key, non-threshold**
-   path. `ThresholdSigningWorkflow` is reachable only from Temporal — the
-   smoke test starts it with the `temporal` CLI, and before that it was
-   started only from a test file. A customer can create a threshold key
-   through the API and has no API with which to use it. This is the largest
-   remaining functional gap and it is squarely on the critical path to
-   launch.
+1. **Policy cannot verify what a signed digest actually commits to.**
+   `POST /keys/:keyId/sign` (added after this deployment surfaced that no
+   such route existed at all) is gated by the same fail-closed policy
+   evaluation as `POST /sign`, but it signs a digest the caller supplies.
+   A digest is opaque, so the declared `to`/`value`/`chainId` the policy
+   engine evaluates cannot be checked against what the digest really
+   commits to. A caller who lies gets a policy decision about a
+   transaction they are not signing. Policy over *verified* intent needs
+   the settlement path, where the gateway builds the transaction and
+   hashes it itself. `POST /sign` remains a separate thing entirely: it
+   routes to `mpc-signer`, the single-key non-threshold service.
 2. **Single node.** Everything ran on one kubelet. Nothing here exercises
    scheduling across nodes, pod anti-affinity (the chart declares it for
    api-gateway), rolling updates under load, or a node failure. Three
