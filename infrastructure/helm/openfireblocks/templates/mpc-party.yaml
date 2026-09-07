@@ -37,6 +37,29 @@ spec:
       serviceAccountName: {{ include "ofb.fullname" $ }}
       securityContext:
         {{- toYaml $.Values.podSecurityContext | nindent 8 }}
+      {{- if ne $.Values.mpcParty.spreadAcrossNodes "off" }}
+      # Keeps each party on its own node. Matched on the component label
+      # rather than the per-party one: the point is that party-1 does not
+      # share a kubelet with party-2 or party-3, so the term has to select
+      # all parties, not just this one.
+      affinity:
+        podAntiAffinity:
+          {{- if eq $.Values.mpcParty.spreadAcrossNodes "required" }}
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app.kubernetes.io/component: mpc-party
+              topologyKey: kubernetes.io/hostname
+          {{- else }}
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/component: mpc-party
+                topologyKey: kubernetes.io/hostname
+          {{- end }}
+      {{- end }}
       {{- if and $.Values.mpcParty.mtls.enabled $.Values.mpcParty.mtls.autoIssue.enabled }}
       # Requests this party's own short-lived leaf cert from Vault PKI at
       # pod startup and writes it to the mtls-certs emptyDir below, instead

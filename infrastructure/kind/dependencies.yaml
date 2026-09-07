@@ -152,6 +152,10 @@ spec:
     metadata:
       labels: { app: vault }
     spec:
+      # The `vault` service account (infrastructure/kind/vault-pki-bootstrap.yaml)
+      # carries system:auth-delegator, which Vault needs to call the
+      # Kubernetes TokenReview API when a pod logs in via kubernetes auth.
+      serviceAccountName: vault
       containers:
         - name: vault
           image: hashicorp/vault:1.17

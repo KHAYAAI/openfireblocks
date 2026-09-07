@@ -2,7 +2,7 @@
 
 # Build stage.
 #
-# golang:1.24 because services/settlement/go.mod declares `go 1.24`. The
+# golang:1.24 because services/webhooks/go.mod declares `go 1.24`. The
 # golang:1.21-alpine base used across this repository could never have
 # compiled these modules, and its runtime stage ran `apk add`, which needs
 # network access to the Alpine mirrors at build time.
@@ -26,7 +26,7 @@ COPY . .
 
 # CGO_ENABLED=0: nothing here needs cgo, and a static binary is what the
 # distroless/static runtime below can execute.
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags='-s -w' -o /out/settlement .
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags='-s -w' -o /out/webhooks .
 
 # Runtime stage.
 #
@@ -37,10 +37,10 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags='-s -w' -o /out/settlem
 # read.
 FROM gcr.io/distroless/static-debian12:nonroot
 
-COPY --from=build /out/settlement /usr/local/bin/settlement
+COPY --from=build /out/webhooks /usr/local/bin/webhooks
 
 USER 65532:65532
 
 # No HEALTHCHECK: the old one shelled out to wget, which does not exist in a
 # distroless image. Kubernetes probes over HTTP via the chart instead.
-ENTRYPOINT ["/usr/local/bin/settlement"]
+ENTRYPOINT ["/usr/local/bin/webhooks"]

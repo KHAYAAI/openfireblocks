@@ -114,6 +114,20 @@ mpcParty:
   tag: latest
   partyCount: 3 # n; threshold (k+1 to sign) is set per-ceremony at DKG time, not here
   port: 7000
+  # Whether the parties must land on different nodes.
+  #
+  # "required" by default, and deliberately so. Threshold signing's entire
+  # security argument is that no single failure or compromise reaches
+  # enough shares to sign; three party pods sharing one kubelet are not
+  # three failure domains, they are one wearing three hats. A cluster that
+  # cannot place them separately should say so loudly (pods stay Pending)
+  # rather than quietly co-locating every key share on one machine.
+  #
+  # Set to "preferred" for a single-node development cluster -- where the
+  # pods would otherwise never schedule -- and understand that doing so in
+  # production gives up the property the whole design exists for. "off"
+  # removes the constraint entirely.
+  spreadAcrossNodes: required # required | preferred | off
   resources:
     requests: { cpu: 250m, memory: 256Mi }
     limits: { cpu: "1", memory: 512Mi }

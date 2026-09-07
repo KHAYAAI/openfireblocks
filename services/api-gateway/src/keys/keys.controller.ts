@@ -16,6 +16,7 @@ import { ApiKeyGuard } from '../auth/api-key.guard';
 import { CurrentCustomer } from '../auth/current-customer.decorator';
 import { Customer } from '../customers/customer.service';
 import { ThresholdSignRequestDto } from './dto/threshold-sign.dto';
+import { SignTransactionDto } from './dto/sign-transaction.dto';
 
 @Controller('keys')
 @UseGuards(ApiKeyGuard)
@@ -68,6 +69,22 @@ export class KeysController {
     @Body() req: ThresholdSignRequestDto,
   ) {
     return this.keysService.signWithKey(customer, keyId, req);
+  }
+
+  // Sign a transaction this service builds from the supplied fields.
+  //
+  // Prefer this over POST :keyId/sign for anything that is actually a
+  // transaction: here the digest that gets signed is computed from the same
+  // fields the policy engine evaluated, so policy governs what is really
+  // being signed rather than what the caller says it is.
+  @Post(':keyId/transactions')
+  @HttpCode(HttpStatus.OK)
+  async signTransaction(
+    @CurrentCustomer() customer: Customer,
+    @Param('keyId') keyId: string,
+    @Body() req: SignTransactionDto,
+  ) {
+    return this.keysService.signTransaction(customer, keyId, req);
   }
 
   @Get()

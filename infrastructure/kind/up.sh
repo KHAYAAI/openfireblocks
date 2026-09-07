@@ -34,7 +34,11 @@ DEPENDENCY_IMAGES=(postgres:16-bookworm hashicorp/vault:1.17 temporalio/auto-set
 need() { command -v "$1" >/dev/null || { echo "missing required tool: $1" >&2; exit 1; }; }
 need docker; need kind; need kubectl; need helm
 
-# Loads a local image into the node's containerd.
+# Loads a local image into every node's containerd.
+#
+# Every node, not just the control plane: with three workers a pod can be
+# scheduled anywhere, and imagePullPolicy IfNotPresent against images that
+# exist only locally means a node without the image cannot start the pod.
 #
 # Not `kind load docker-image`: with Docker's containerd image store (the
 # default from Docker 28) kind 0.24 reports "failed to detect containerd
@@ -46,14 +50,22 @@ need docker; need kind; need kubectl; need helm
 # --all-platforms fails on the missing ones.
 load_image() {
   local image="$1"
-  docker save "${image}" \
-    | docker exec -i "${CLUSTER}-control-plane" \
-        ctr -n k8s.io images import --platform linux/amd64 - >/dev/null
+  local archive
+  archive="$(mktemp)"
+  docker save "${image}" -o "${archive}"
+  for node in $(kind get nodes --name "${CLUSTER}"); do
+    docker exec -i "${node}" \
+      ctr -n k8s.io images import --platform linux/amd64 - < "${archive}" >/dev/null
+  done
+  rm -f "${archive}"
 }
 
 if ! kind get clusters 2>/dev/null | grep -qx "${CLUSTER}"; then
   echo "==> creating cluster ${CLUSTER} (${NODE_IMAGE})"
-  kind create cluster --name "${CLUSTER}" --image "${NODE_IMAGE}" --wait 300s
+  # cluster.yaml gives three workers so the MPC parties can be placed on
+  # separate nodes, which the chart requires by default.
+  kind create cluster --name "${CLUSTER}" --image "${NODE_IMAGE}" \
+    --config "${HERE}/cluster.yaml" --wait 300s
 else
   echo "==> cluster ${CLUSTER} already exists"
 fi
@@ -117,6 +129,16 @@ kubectl -n "${NS}" create secret generic openfireblocks-secrets \
   --from-literal=jwt-secret='dev-jwt-secret-not-for-production' \
   --from-literal=vault-token='dev-root-token' \
   --dry-run=client -o yaml | kubectl apply -f -
+
+echo "==> configuring Vault PKI + kubernetes auth"
+# Must precede the chart install: mpc-party and temporal-worker pods run
+# vault-pki-init as an init container, and it blocks pod startup until it
+# has a certificate. Without the PKI mount, role and kubernetes auth
+# backend in place, every one of those pods sits in Init:Error.
+kubectl -n "${NS}" delete job vault-pki-bootstrap --ignore-not-found --wait=true
+kubectl apply -f "${HERE}/vault-pki-bootstrap.yaml"
+kubectl -n "${NS}" wait --for=condition=complete job/vault-pki-bootstrap --timeout=300s
+kubectl -n "${NS}" logs job/vault-pki-bootstrap | tail -2
 
 echo "==> waiting for Temporal"
 # The frontend binds the pod IP, not loopback, so an in-pod `temporal`

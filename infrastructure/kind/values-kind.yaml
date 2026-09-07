@@ -30,6 +30,11 @@ apiGateway:
 mpcParty:
   enabled: true
   partyCount: 3
+  # The chart's default, restated here so it is visible in the deployment
+  # that actually exercises it: infrastructure/kind/cluster.yaml provisions
+  # three workers precisely so this can be "required" rather than softened
+  # to "preferred" for convenience.
+  spreadAcrossNodes: required
   vault:
     # Key shares are sealed into the dev Vault rather than held only in
     # process memory -- this is the path services/mpc-party/vault_seal.go
@@ -37,12 +42,16 @@ mpcParty:
     # weaker in-memory fallback instead.
     addr: http://vault:8200
   mtls:
-    # Off for this bring-up. The mTLS path is proven separately against
-    # real Vault-PKI-issued certs; turning it on here would additionally
-    # require the Vault Kubernetes auth method to be configured, which is
-    # its own (still unexercised) piece of work -- see
-    # docs/security/AUDIT-READINESS.md section 3.
-    enabled: false
+    # On, with certs issued per-pod at startup rather than mounted from a
+    # Secret. infrastructure/kind/vault-pki-bootstrap.yaml configures the
+    # Vault side (PKI mount, role, policy, kubernetes auth backend), which
+    # is what makes services/vault-pki-init take its kubernetesLogin()
+    # path -- the branch that had never executed anywhere before this,
+    # since only the VAULT_TOKEN path was ever exercised.
+    enabled: true
+    autoIssue:
+      enabled: true
+      vaultAddr: http://vault:8200
 
 mpcSigner:
   enabled: true
@@ -53,7 +62,12 @@ policyService:
 temporalWorker:
   enabled: true
   mtls:
-    enabled: false
+    # The client side of the same links: temporal-worker dials the parties'
+    # DKG/signing endpoints, which now require a client certificate.
+    enabled: true
+    autoIssue:
+      enabled: true
+      vaultAddr: http://vault:8200
 
 # Not built by scripts/build-images.sh and therefore not deployable here.
 # services/ceremony-orchestrator in particular is known-dead: it does not

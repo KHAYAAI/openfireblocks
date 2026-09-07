@@ -24,11 +24,12 @@ REGISTRY="${REGISTRY:-openfireblocks}"
 TAG="${TAG:-latest}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# The services with a Dockerfile that the chart actually deploys. The
-# remaining directories under services/ (billing, webhooks, marketplace,
-# settlement, policy, compliance, ceremony-orchestrator, backup) are not
-# built here -- see docs/deployment/CLUSTER-DEPLOYMENT.md for which of those
-# are live and which are known-dead.
+# Every service the chart can deploy.
+#
+# Not built here: services/ceremony-orchestrator, which does not compile and
+# whose responsibilities are already covered by temporal-worker's
+# DKGCeremonyWorkflow; and services/backup, which is a scheduled job rather
+# than a chart workload. See docs/deployment/CLUSTER-DEPLOYMENT.md.
 SERVICES=(
   api-gateway
   mpc-party
@@ -36,6 +37,12 @@ SERVICES=(
   policy-service
   temporal-worker
   vault-pki-init
+  billing
+  webhooks
+  marketplace
+  settlement
+  policy
+  compliance
 )
 
 build_args=()

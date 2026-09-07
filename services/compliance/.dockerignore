@@ -1,0 +1,9 @@
+# Not part of the build: the Dockerfile copies the whole directory, and
+# these only invalidate the build cache or bloat the context.
+Dockerfile
+.dockerignore
+*.md
+*_test.go
+testdata/
+.git
+*.log

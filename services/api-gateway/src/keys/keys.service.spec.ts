@@ -1,9 +1,11 @@
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
+import { Transaction, Wallet, getAddress } from 'ethers';
 import { KeysService } from './keys.service';
 import { PostgresService } from '../database/postgres.service';
 import { PolicyService } from '../policies/policy.service';
@@ -309,5 +311,204 @@ describe('KeysService.signWithKey', () => {
     await expect(service.signWithKey(customer, 'key-1', signReq)).rejects.toBeInstanceOf(
       ServiceUnavailableException,
     );
+  });
+});
+
+// The reason this endpoint exists: unlike signWithKey, the digest that gets
+// signed is computed by this service from the same fields it gave the policy
+// engine, so there is no caller-supplied digest that can disagree with the
+// declared intent.
+describe('KeysService.signTransaction', () => {
+  const customer: Customer = {
+    customer_id: 'cust-1',
+    name: 'demo',
+    email: 'demo@x.io',
+    status: 'active',
+    tier: 'pro',
+    policies: {},
+  };
+
+  // A throwaway key used only to produce real signatures. Threshold and
+  // single-key signatures are indistinguishable at this layer by
+  // construction, which is the point of threshold ECDSA.
+  const wallet = new Wallet(
+    '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d',
+  );
+
+  const txReq = {
+    to: '0x70997970C51812dc3A010C7d01b50e0d17dc79C8',
+    value: '1000000000000000000',
+    gasLimit: 21000,
+    nonce: 7,
+    chainId: 11155111,
+    gasPrice: '20000000000',
+  };
+
+  const activeKey = {
+    key_id: 'key-1',
+    status: 'active',
+    threshold: 2,
+    total_parties: 3,
+    blockchain: 'ethereum',
+    address: wallet.address,
+  };
+  const ceremony = { ceremony_id: 'cer-1', threshold: 2, total_parties: 3 };
+
+  // Signs whatever digest the service asks for, the way a real ceremony
+  // does: 65 bytes [R||S||V] with V as a 0/1 recovery byte.
+  function signingCeremony(signer: { signingKey: { sign: (d: string) => { r: string; s: string; yParity: number } } } = wallet) {
+    return jest.fn().mockImplementation(async ({ message }: { message: string }) => {
+      const sig = signer.signingKey.sign('0x' + message);
+      return {
+        status: 'completed',
+        signature:
+          sig.r.slice(2) + sig.s.slice(2) + (sig.yParity === 0 ? '00' : '01'),
+      };
+    });
+  }
+
+  function build(overrides: { key?: unknown; approved?: boolean; sign?: jest.Mock } = {}) {
+    const postgres = {
+      getKey: jest
+        .fn()
+        .mockResolvedValue(overrides.key === undefined ? activeKey : overrides.key),
+      getCompletedCeremonyForKey: jest.fn().mockResolvedValue(ceremony),
+    } as unknown as PostgresService;
+    const temporal = {
+      signWithThreshold: overrides.sign ?? signingCeremony(),
+    } as unknown as KeysTemporalService;
+    const policy = {
+      evaluate: jest.fn().mockResolvedValue({
+        approved: overrides.approved !== false,
+        denials: overrides.approved === false ? ['amount_limit'] : [],
+        requiresApproval: false,
+        reason: 'x',
+      }),
+    } as unknown as PolicyService;
+    return { service: new KeysService(postgres, temporal, policy), postgres, temporal, policy };
+  }
+
+  it('returns a broadcastable transaction whose sender is the key address', async () => {
+    const { service } = build();
+
+    const out = await service.signTransaction(customer, 'key-1', txReq);
+
+    expect(out.from).toBe(getAddress(wallet.address));
+    const parsed = Transaction.from(out.raw_transaction);
+    expect(parsed.to).toBe(getAddress(txReq.to));
+    expect(parsed.value).toBe(BigInt(txReq.value));
+    expect(parsed.nonce).toBe(txReq.nonce);
+    expect(parsed.chainId).toBe(BigInt(txReq.chainId));
+    expect(parsed.from).toBe(getAddress(wallet.address));
+  });
+
+  // The guarantee the endpoint exists to provide: what policy evaluated and
+  // what got hashed are the same values.
+  it('signs the digest of exactly the fields policy evaluated', async () => {
+    const sign = signingCeremony();
+    const { service, policy } = build({ sign });
+
+    const out = await service.signTransaction(customer, 'key-1', txReq);
+
+    expect(policy.evaluate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: txReq.to,
+        value: txReq.value,
+        chainId: txReq.chainId,
+      }),
+    );
+    // The ceremony was asked to sign the transaction's own signing hash,
+    // and that hash is the one reported back.
+    const signedDigest = sign.mock.calls[0][0].message;
+    expect(signedDigest).toBe(out.signing_hash);
+    const reference = Transaction.from({
+      type: 0,
+      to: txReq.to,
+      value: BigInt(txReq.value),
+      data: '0x',
+      gasLimit: txReq.gasLimit,
+      gasPrice: BigInt(txReq.gasPrice),
+      nonce: txReq.nonce,
+      chainId: txReq.chainId,
+    });
+    expect('0x' + signedDigest).toBe(reference.unsignedHash);
+  });
+
+  it('denies before building a ceremony when policy denies', async () => {
+    const sign = jest.fn();
+    const { service } = build({ approved: false, sign });
+
+    await expect(service.signTransaction(customer, 'key-1', txReq)).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+    expect(sign).not.toHaveBeenCalled();
+  });
+
+  // A malformed request should not consume a policy evaluation or a signing
+  // ceremony.
+  it('rejects a malformed fee combination as 400, before policy', async () => {
+    const sign = jest.fn();
+    const { service, policy } = build({ sign });
+
+    await expect(
+      service.signTransaction(customer, 'key-1', {
+        ...txReq,
+        maxFeePerGas: '1',
+        maxPriorityFeePerGas: '1',
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(policy.evaluate).not.toHaveBeenCalled();
+    expect(sign).not.toHaveBeenCalled();
+  });
+
+  it('404s for a key the customer does not have', async () => {
+    const { service } = build({ key: null });
+    await expect(service.signTransaction(customer, 'key-1', txReq)).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+  });
+
+  it('refuses to sign with a key that is not active', async () => {
+    const { service } = build({ key: { ...activeKey, status: 'pending_dkg' } });
+    await expect(service.signTransaction(customer, 'key-1', txReq)).rejects.toBeInstanceOf(
+      ConflictException,
+    );
+  });
+
+  // The check that matters most: a ceremony returning a well-formed
+  // signature from the WRONG key must not yield a transaction. Handing that
+  // back would give the customer valid bytes spending from an address they
+  // do not control.
+  it('refuses when the ceremony signs with a different key', async () => {
+    const { service } = build({ sign: signingCeremony(Wallet.createRandom()) });
+
+    await expect(service.signTransaction(customer, 'key-1', txReq)).rejects.toThrow(
+      /refusing to return a transaction signed by the wrong key/,
+    );
+  });
+
+  it('treats a failed signing result as a failure, not a success', async () => {
+    const sign = jest.fn().mockResolvedValue({ status: 'failed', error: 'party 2 unreachable' });
+    const { service } = build({ sign });
+
+    await expect(service.signTransaction(customer, 'key-1', txReq)).rejects.toThrow(
+      /party 2 unreachable/,
+    );
+  });
+
+  it('signs EIP-1559 transactions too', async () => {
+    const { service } = build();
+    const out = await service.signTransaction(customer, 'key-1', {
+      to: txReq.to,
+      value: txReq.value,
+      gasLimit: txReq.gasLimit,
+      nonce: txReq.nonce,
+      chainId: txReq.chainId,
+      maxFeePerGas: '30000000000',
+      maxPriorityFeePerGas: '1000000000',
+    });
+    const parsed = Transaction.from(out.raw_transaction);
+    expect(parsed.type).toBe(2);
+    expect(parsed.from).toBe(getAddress(wallet.address));
   });
 });

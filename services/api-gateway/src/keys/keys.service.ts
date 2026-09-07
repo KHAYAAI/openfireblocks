@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   Injectable,
@@ -12,6 +13,14 @@ import { CreateKeyRequest } from './dto/create-key.dto';
 import { Customer } from '../customers/customer.service';
 import { PolicyService } from '../policies/policy.service';
 import { ThresholdSignRequestDto } from './dto/threshold-sign.dto';
+import { SignTransactionDto } from './dto/sign-transaction.dto';
+import {
+  BuiltTx,
+  SignedTx,
+  TransactionBuildError,
+  assembleSignedTransaction,
+  buildUnsignedTransaction,
+} from './eth-transaction';
 import { v4 as uuidv4 } from 'uuid';
 
 // Derives each party's endpoint from MPC_PARTY_ENDPOINT_TEMPLATE (default
@@ -157,9 +166,124 @@ export class KeysService {
   // permits. See ThresholdSignRequestDto for what policy can and cannot
   // actually verify about a request to sign an opaque digest.
   async signWithKey(customer: Customer, keyId: string, req: ThresholdSignRequestDto) {
-    const customerId = customer.customer_id;
     const requestId = req.idempotencyKey ?? uuidv4();
 
+    const key = await this.loadSignableKey(keyId, customer.customer_id);
+    await this.enforcePolicy(customer, requestId, {
+      to: req.to,
+      value: req.value,
+      chainId: req.chainId,
+      country: req.country,
+    });
+    const signed = await this.runSigningCeremony(
+      key,
+      keyId,
+      customer.customer_id,
+      requestId,
+      req.message,
+    );
+
+    return {
+      request_id: requestId,
+      key_id: keyId,
+      address: key.address,
+      message: req.message,
+      signature: signed.signature,
+      parties: signed.parties,
+      threshold: key.threshold,
+      total_parties: signed.totalParties,
+    };
+  }
+
+  // Signs a transaction this service builds, rather than a digest the
+  // caller supplies.
+  //
+  // That is the entire point of it existing alongside signWithKey. There,
+  // the digest is opaque: policy evaluates what the caller *claims* it
+  // commits to, and a caller who declares one transaction and submits the
+  // digest of another gets a policy decision about the wrong transaction.
+  // Here the fields policy sees are the fields that get hashed -- there is
+  // no caller-supplied digest to disagree with them.
+  async signTransaction(customer: Customer, keyId: string, req: SignTransactionDto) {
+    const requestId = req.idempotencyKey ?? uuidv4();
+
+    const key = await this.loadSignableKey(keyId, customer.customer_id);
+
+    // Built BEFORE the policy call, deliberately: a request that cannot
+    // produce a valid transaction should be rejected as malformed rather
+    // than consuming a policy evaluation and a signing ceremony.
+    let built: BuiltTx;
+    try {
+      built = buildUnsignedTransaction({
+        to: req.to,
+        value: req.value,
+        data: req.data,
+        gasLimit: req.gasLimit,
+        nonce: req.nonce,
+        chainId: req.chainId,
+        gasPrice: req.gasPrice,
+        maxFeePerGas: req.maxFeePerGas,
+        maxPriorityFeePerGas: req.maxPriorityFeePerGas,
+      });
+    } catch (err) {
+      if (err instanceof TransactionBuildError) {
+        throw new BadRequestException((err as Error).message);
+      }
+      throw err;
+    }
+
+    // The same to/value/chainId that went into the bytes just hashed.
+    await this.enforcePolicy(customer, requestId, {
+      to: req.to,
+      value: req.value,
+      chainId: req.chainId,
+      country: req.country,
+    });
+
+    const signed = await this.runSigningCeremony(
+      key,
+      keyId,
+      customer.customer_id,
+      requestId,
+      built.signingHash,
+    );
+
+    // Refuses if the signature recovers to anything but this key's
+    // address -- see assembleSignedTransaction. A ceremony can return a
+    // well-formed signature belonging to a different key, and handing that
+    // back would give the customer a valid transaction spending from an
+    // address they do not control.
+    let assembled: SignedTx;
+    try {
+      assembled = assembleSignedTransaction(built, signed.signature, key.address);
+    } catch (err) {
+      this.logger.error(
+        `assembling the signed transaction for key ${keyId} failed: ${(err as Error).message}`,
+      );
+      throw new ServiceUnavailableException((err as Error).message);
+    }
+
+    return {
+      request_id: requestId,
+      key_id: keyId,
+      from: assembled.from,
+      to: req.to,
+      value: req.value,
+      chain_id: req.chainId,
+      nonce: req.nonce,
+      signing_hash: built.signingHash,
+      raw_transaction: assembled.raw,
+      transaction_hash: assembled.hash,
+      signature: signed.signature,
+      parties: signed.parties,
+      threshold: key.threshold,
+      total_parties: signed.totalParties,
+    };
+  }
+
+  // Loads a key the customer owns and that is in a state where signing is
+  // meaningful. Tenant-scoped, so another customer's key is simply absent.
+  private async loadSignableKey(keyId: string, customerId: string) {
     const key = await this.postgres.getKey(keyId, customerId);
     if (!key) {
       throw new NotFoundException(`no key ${keyId}`);
@@ -169,20 +293,29 @@ export class KeysService {
         `key ${keyId} is ${key.status}, not active; only an active key can sign`,
       );
     }
+    return key;
+  }
 
+  // Fail-closed policy evaluation, shared by both signing routes so neither
+  // can quietly end up ungated.
+  private async enforcePolicy(
+    customer: Customer,
+    requestId: string,
+    intent: { to: string; value: string; chainId: number; country?: string },
+  ) {
     const overrides = (customer.policies ?? {}) as Record<string, unknown>;
     const decision = await this.policy.evaluate({
-      customerId,
+      customerId: customer.customer_id,
       customerTier: customer.tier,
-      to: req.to,
-      value: req.value,
-      // req.chainId (a number), not key.blockchain (a name like
-      // "ethereum") -- policy-service's PolicyRequest.ChainID is an int
-      // and rejects the name with 400.
-      chainId: req.chainId,
+      to: intent.to,
+      value: intent.value,
+      // A number, not key.blockchain (a name like "ethereum"):
+      // policy-service's PolicyRequest.ChainID is an int and rejects the
+      // name with 400.
+      chainId: intent.chainId,
       whitelist: overrides.whitelist as string[] | undefined,
       blockedCountries: overrides.blockedCountries as string[] | undefined,
-      country: req.country,
+      country: intent.country,
     });
     if (!decision.approved) {
       throw new ForbiddenException({
@@ -192,10 +325,23 @@ export class KeysService {
         requestId,
       });
     }
+  }
 
-    // Shares are addressed by ceremony, not by key -- each party sealed
-    // its share under .../party-N/<ceremony-id> -- so signing means
-    // resolving which completed ceremony produced this key.
+  // Resolves the key's ceremony, picks a threshold-sized committee, and
+  // runs the signing workflow over `messageHash`.
+  private async runSigningCeremony(
+    key: { threshold: number; blockchain: string; address: string },
+    keyId: string,
+    customerId: string,
+    requestId: string,
+    messageHash: string,
+  ): Promise<{ signature: string; parties: number[]; totalParties: number }> {
+    // Shares are addressed by ceremony, not by key -- each party sealed its
+    // share under .../party-N/<ceremony-id> -- so signing means resolving
+    // which completed ceremony produced this key. customerId is passed
+    // explicitly rather than read off the key row: the lookup is
+    // tenant-scoped, and a silently-empty customer id would return no
+    // ceremony and surface as a confusing "shares do not exist yet".
     const ceremony = await this.postgres.getCompletedCeremonyForKey(keyId, customerId);
     if (!ceremony) {
       throw new ConflictException(
@@ -203,13 +349,13 @@ export class KeysService {
       );
     }
 
-    // threshold+1 signers, not all total_parties: signing with the whole
-    // committee would make an n-of-n key out of a k-of-n one, and the
-    // point of the threshold is that it tolerates absent parties. The
-    // first threshold+1 by id is a deterministic choice, not a
-    // load-balancing one.
+    // threshold signers, not all total_parties: signing with the whole
+    // committee would make an n-of-n key out of a k-of-n one, and the point
+    // of the threshold is that it tolerates absent parties. The first
+    // threshold by id is a deterministic choice, not a load-balancing one.
     const signerCount = Math.min(key.threshold, ceremony.total_parties);
     const { partyIds, partyEndpoints } = derivePartyEndpoints(ceremony.total_parties);
+    const parties = partyIds.slice(0, signerCount);
 
     this.logger.log(
       `threshold signing with key ${keyId} (ceremony ${ceremony.ceremony_id}, ` +
@@ -221,8 +367,8 @@ export class KeysService {
       result = await this.temporal.signWithThreshold({
         requestId,
         ceremonyId: ceremony.ceremony_id,
-        message: req.message,
-        partyIds: partyIds.slice(0, signerCount),
+        message: messageHash,
+        partyIds: parties,
         partyEndpoints: partyEndpoints.slice(0, signerCount),
         chainId: key.blockchain,
       });
@@ -236,7 +382,7 @@ export class KeysService {
     // The workflow reports a failed ceremony as a *result*, not an
     // exception (see ThresholdSigningWorkflow), so a caller that only
     // checked for a thrown error would treat a failure as success and
-    // return no signature with a 201.
+    // return no signature with a 200.
     if (result.status !== 'completed' || !result.signature) {
       throw new ServiceUnavailableException(
         `threshold signing did not complete: ${result.error ?? result.status}`,
@@ -244,14 +390,9 @@ export class KeysService {
     }
 
     return {
-      request_id: requestId,
-      key_id: keyId,
-      address: key.address,
-      message: req.message,
       signature: result.signature,
-      parties: partyIds.slice(0, signerCount),
-      threshold: key.threshold,
-      total_parties: ceremony.total_parties,
+      parties,
+      totalParties: ceremony.total_parties,
     };
   }
 
