@@ -227,15 +227,6 @@ compliance:
     requests: { cpu: 100m, memory: 256Mi }
     limits: { cpu: 500m, memory: 512Mi }
 
-ceremonyOrchestrator:
-  enabled: true
-  image: ceremony-orchestrator
-  tag: latest
-  replicas: 2
-  port: 7001
-  resources:
-    requests: { cpu: 100m, memory: 128Mi }
-    limits: { cpu: 500m, memory: 256Mi }
 
 # Enterprise SSO via WorkOS AuthKit (services/api-gateway's
 # /auth/sso/* routes). Off by default -- the local password + TOTP login

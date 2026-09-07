@@ -10,6 +10,10 @@ export interface Customer {
   status: string;
   tier: string;
   policies: Record<string, unknown>;
+  // Allows POST /keys/:keyId/sign, which signs a caller-supplied opaque
+  // digest that policy cannot verify. Off by default -- see migration 017
+  // and KeysService.signWithKey.
+  raw_digest_signing_enabled: boolean;
   // Only ever populated on createCustomer's return value -- the plaintext
   // key is shown exactly once and never stored or read back.
   api_key?: string;
@@ -72,7 +76,8 @@ export class CustomerService {
   // when missing/suspended so the auth guard can reject without leaking which.
   async getByApiKey(apiKey: string): Promise<Customer | null> {
     const result = await this.pool.query(
-      `SELECT customer_id, name, email, status, tier, policies
+      `SELECT customer_id, name, email, status, tier, policies,
+              raw_digest_signing_enabled
        FROM customers WHERE api_key_hash = decode($1, 'hex') AND status = 'active'`,
       [hashApiKey(apiKey)],
     );
@@ -81,7 +86,8 @@ export class CustomerService {
 
   async getByCustomerId(customerId: string): Promise<Customer> {
     const result = await this.pool.query(
-      `SELECT customer_id, name, email, status, tier, policies
+      `SELECT customer_id, name, email, status, tier, policies,
+              raw_digest_signing_enabled
        FROM customers WHERE customer_id = $1::uuid`,
       [customerId],
     );
@@ -93,10 +99,27 @@ export class CustomerService {
 
   async list(): Promise<Customer[]> {
     const result = await this.pool.query(
-      `SELECT customer_id, name, email, status, tier, policies
+      `SELECT customer_id, name, email, status, tier, policies,
+              raw_digest_signing_enabled
        FROM customers ORDER BY created_at`,
     );
     return result.rows;
+  }
+
+  // Grants or revokes POST /keys/:keyId/sign for one tenant.
+  //
+  // Deliberately its own call rather than a field on customer creation:
+  // enabling it means accepting that policy can only evaluate what the
+  // caller claims a digest commits to, and that should be an explicit act
+  // against a named tenant rather than a flag someone copies into a
+  // provisioning script.
+  async setRawDigestSigning(customerId: string, enabled: boolean) {
+    await this.getByCustomerId(customerId); // 404 if missing
+    await this.pool.query(
+      `UPDATE customers SET raw_digest_signing_enabled = $1, updated_at = NOW()
+       WHERE customer_id = $2::uuid`,
+      [enabled, customerId],
+    );
   }
 
   async updatePolicies(customerId: string, policies: Record<string, unknown>) {

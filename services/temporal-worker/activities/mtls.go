@@ -2,8 +2,6 @@ package activities
 
 import (
 	"crypto/tls"
-	"crypto/x509"
-	"fmt"
 	"os"
 )
 
@@ -19,33 +17,31 @@ const (
 	envMTLSCAFile   = "MTLS_CA_FILE"
 )
 
+// sharedReloader is the process's single view of its mTLS material, so the
+// worker cannot end up with two loaders disagreeing about which generation
+// of its certificate is current.
+var sharedReloader *clientCertReloader
+
 // clientTLSConfigFromEnv mirrors serverTLSConfigFromEnv in
 // services/mpc-party/mtls.go: (nil, false, nil) when mTLS isn't
 // configured (a valid, if less secure, local-dev configuration), an error
 // only when it's partially configured or the files don't load.
+//
+// The returned config follows certificate rotation -- see certreload.go for
+// why loading the keypair exactly once means the worker stops being able to
+// reach any party the moment its startup certificate expires.
 func clientTLSConfigFromEnv() (*tls.Config, bool, error) {
 	certFile, keyFile, caFile := os.Getenv(envMTLSCertFile), os.Getenv(envMTLSKeyFile), os.Getenv(envMTLSCAFile)
 	if certFile == "" || keyFile == "" || caFile == "" {
 		return nil, false, nil
 	}
 
-	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
-	if err != nil {
-		return nil, false, fmt.Errorf("failed to load mTLS client cert/key: %w", err)
+	if sharedReloader == nil {
+		r, err := newClientCertReloader(certFile, keyFile, caFile)
+		if err != nil {
+			return nil, false, err
+		}
+		sharedReloader = r
 	}
-
-	caPEM, err := os.ReadFile(caFile)
-	if err != nil {
-		return nil, false, fmt.Errorf("failed to read mTLS CA file: %w", err)
-	}
-	caPool := x509.NewCertPool()
-	if !caPool.AppendCertsFromPEM(caPEM) {
-		return nil, false, fmt.Errorf("mTLS CA file %s contained no usable certificates", caFile)
-	}
-
-	return &tls.Config{
-		Certificates: []tls.Certificate{cert},
-		RootCAs:      caPool,
-		MinVersion:   tls.VersionTLS13,
-	}, true, nil
+	return sharedReloader.config(), true, nil
 }

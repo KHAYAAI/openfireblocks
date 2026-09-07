@@ -114,30 +114,6 @@ services:
     working_dir: /app
 
   # Ceremony Orchestrator (Go)
-  ceremony-orchestrator:
-    build:
-      context: ./services/ceremony-orchestrator
-      dockerfile: Dockerfile
-    ports:
-      - "8002:8002"
-      - "9002:9002"
-    environment:
-      TEMPORAL_ADDR: temporal:7233
-      VAULT_ADDR: http://vault:8200
-      VAULT_TOKEN: dev-token
-      POSTGRES_URL: postgres://postgres:postgres-dev-password@postgres:5432/openfireblocks
-      METRICS_PORT: 9002
-    depends_on:
-      postgres:
-        condition: service_healthy
-      vault:
-        condition: service_healthy
-      temporal:
-        condition: service_healthy
-    volumes:
-      - ./services/ceremony-orchestrator:/app
-    working_dir: /app
-
   # Compliance Service (Go)
   compliance-service:
     build:

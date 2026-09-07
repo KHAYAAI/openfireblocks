@@ -3,8 +3,16 @@
 // services/mpc-party/mtls.go, services/temporal-worker/activities/mtls.go,
 // and services/policy-service/mtls.go all expect
 // (MTLS_CERT_FILE=tls.crt, MTLS_KEY_FILE=tls.key, MTLS_CA_FILE=ca.crt).
-// Meant to run once, as a Kubernetes init container, before the main
-// container starts -- see
+// Runs in either of two shapes:
+//   - once, as an init container, so the certificate exists before the main
+//     container starts;
+//   - with RENEW=true, as a long-lived sidecar that replaces the
+//     certificate at two thirds of its life, forever. Without that second
+//     shape the certificate's expiry silently becomes the pod's lifetime.
+//     Consumers pick the new material up off disk without restarting; see
+//     services/mpc-party/certreload.go.
+//
+// See
 // infrastructure/helm/openfireblocks/templates/mpc-party.yaml and
 // temporal-worker.yaml for how it's wired in.
 //
@@ -27,7 +35,9 @@ package main
 
 import (
 	"bytes"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"log"
@@ -78,21 +88,140 @@ func main() {
 		log.Printf("authenticated to Vault via kubernetes auth (role: %s)", k8sRole)
 	}
 
-	cert, err := issueCertificate(client, vaultAddr, token, pkiMount, pkiRole, commonName, altNames, ttl)
+	// RENEW=true turns this from a one-shot init container into a sidecar
+	// that keeps the certificate fresh for as long as the pod lives.
+	//
+	// Without it, issuance is a single event at startup and the
+	// certificate's expiry becomes the pod's lifetime: every party's
+	// certificate expires at roughly the same moment, the whole committee
+	// stops being able to talk at once, and the only recovery is a restart.
+	// Short-lived certificates are the right design, but only if something
+	// renews them.
+	renew := os.Getenv("RENEW") == "true"
+
+	issueOnce := func() (time.Time, error) {
+		cert, err := issueCertificate(client, vaultAddr, token, pkiMount, pkiRole, commonName, altNames, ttl)
+		if err != nil {
+			return time.Time{}, fmt.Errorf("failed to issue certificate: %w", err)
+		}
+		if err := writeCertFiles(outDir, cert); err != nil {
+			return time.Time{}, fmt.Errorf("failed to write certificate files: %w", err)
+		}
+		sanNote := ""
+		if altNames != "" {
+			sanNote = " (SANs: " + altNames + ")"
+		}
+		expiry, perr := certNotAfter(cert.CertPEM)
+		if perr != nil {
+			// Not fatal: the certificate is written and usable. Only the
+			// renewal schedule needs the expiry, and the caller falls back
+			// to a duration derived from the requested TTL.
+			log.Printf("wrote certificate but could not parse its expiry: %v", perr)
+		}
+		log.Printf("issued and wrote mTLS certificate for %s%s to %s (serial: %s, ttl: %s)",
+			commonName, sanNote, outDir, cert.SerialNumber, ttl)
+		return expiry, nil
+	}
+
+	expiry, err := issueOnce()
 	if err != nil {
-		log.Fatalf("failed to issue certificate: %v", err)
+		log.Fatal(err)
 	}
 
-	if err := writeCertFiles(outDir, cert); err != nil {
-		log.Fatalf("failed to write certificate files: %v", err)
+	if !renew {
+		return
 	}
 
-	sanNote := ""
-	if altNames != "" {
-		sanNote = " (SANs: " + altNames + ")"
+	// Renew at two thirds of the certificate's remaining life.
+	//
+	// Early enough that a failure leaves a third of the lifetime to retry
+	// in -- renewal failures are the norm, not the exception, since Vault
+	// restarts, token TTLs lapse and networks partition -- and late enough
+	// that this is not hammering Vault. Retries below use a fraction of the
+	// remaining time rather than a fixed backoff, so attempts get closer
+	// together as expiry approaches.
+	for {
+		// Re-authenticate each cycle when using Kubernetes auth: the login
+		// token has its own TTL (an hour by default) and is long dead by
+		// the time a 24h certificate needs replacing. Reusing the startup
+		// token here is why a naive renewal loop fails its first renewal
+		// and not before -- a full day after anyone was watching.
+		wait := renewalDelay(expiry, ttl)
+		log.Printf("next renewal in %s (certificate valid until %s)",
+			wait.Round(time.Second), expiry.Format(time.RFC3339))
+		time.Sleep(wait)
+
+		if os.Getenv("VAULT_TOKEN") == "" {
+			newToken, lerr := kubernetesLogin(client, vaultAddr, os.Getenv("VAULT_K8S_ROLE"))
+			if lerr != nil {
+				log.Printf("re-authentication failed, will retry: %v", lerr)
+				expiry = retrySoon(expiry)
+				continue
+			}
+			token = newToken
+		}
+
+		newExpiry, ierr := issueOnce()
+		if ierr != nil {
+			log.Printf("renewal failed, will retry: %v", ierr)
+			expiry = retrySoon(expiry)
+			continue
+		}
+		expiry = newExpiry
 	}
-	log.Printf("issued and wrote mTLS certificate for %s%s to %s (serial: %s, ttl: %s)",
-		commonName, sanNote, outDir, cert.SerialNumber, ttl)
+}
+
+// renewalDelay returns how long to wait before replacing a certificate that
+// expires at notAfter, targeting two thirds of its remaining life.
+//
+// Falls back to the requested TTL when the expiry could not be parsed, and
+// never returns a negative or absurdly small delay -- an already-expired
+// certificate should be replaced now, but a tight loop against Vault helps
+// nobody.
+func renewalDelay(notAfter time.Time, ttl string) time.Duration {
+	remaining := time.Until(notAfter)
+	if notAfter.IsZero() {
+		if d, err := time.ParseDuration(ttl); err == nil {
+			remaining = d
+		} else {
+			remaining = time.Hour
+		}
+	}
+	delay := remaining * 2 / 3
+	if delay < minRenewalDelay {
+		delay = minRenewalDelay
+	}
+	return delay
+}
+
+// retrySoon collapses the schedule after a failure so the next attempt
+// comes sooner, without ever scheduling a busy loop.
+func retrySoon(expiry time.Time) time.Time {
+	remaining := time.Until(expiry)
+	if remaining <= 0 {
+		return time.Now().Add(minRenewalDelay * 3)
+	}
+	return time.Now().Add(remaining / 2)
+}
+
+// minRenewalDelay floors every wait, including retries after failure.
+//
+// Short enough for a test to drive several renewals with a small TTL,
+// long enough that a persistently failing renewal cannot turn into a tight
+// loop against Vault.
+const minRenewalDelay = 5 * time.Second
+
+// certNotAfter parses the expiry out of a PEM-encoded certificate.
+func certNotAfter(certPEM string) (time.Time, error) {
+	block, _ := pem.Decode([]byte(certPEM))
+	if block == nil {
+		return time.Time{}, fmt.Errorf("no PEM block in certificate")
+	}
+	parsed, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return parsed.NotAfter, nil
 }
 
 // vaultIssueResponse is the subset of Vault's PKI issue response this

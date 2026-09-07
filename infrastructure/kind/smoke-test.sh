@@ -39,7 +39,8 @@ customer=$("${CURL[@]}" -X POST "${API}/admin/customers" \
   -H 'Content-Type: application/json' -H "x-admin-key: ${ADMIN_KEY}" \
   -d "{\"email\":\"smoke-${suffix}@example.com\",\"name\":\"smoke-${suffix}\",\"tier\":\"enterprise\"}")
 api_key=$(echo "${customer}" | jqp 'd["api_key"]') || fail "no api_key: ${customer}"
-echo "    customer $(echo "${customer}" | jqp 'd["customer_id"]')"
+customer_id=$(echo "${customer}" | jqp 'd["customer_id"]')
+echo "    customer ${customer_id}"
 
 echo "==> provisioning a 2-of-3 threshold key (real DKG)"
 created=$("${CURL[@]}" -X POST "${API}/keys" \
@@ -72,8 +73,24 @@ for n in 1 2 3; do
   echo "    party-${n} sealed a share"
 done
 
-echo "==> threshold-signing through the API with 2 of the 3 parties"
+# Opaque-digest signing is off unless a tenant is granted it, because
+# policy on that route can only evaluate what the caller claims the digest
+# commits to. Check the gate actually bites before granting it -- a
+# capability that is never observed denying anything is not a capability.
+echo "==> raw-digest signing is refused until it is granted"
 message=$(python3 -c "import hashlib,sys;print(hashlib.sha256(b'smoke ${suffix}').hexdigest())")
+ungated=$("${CURL[@]}" -o /dev/null -w '%{http_code}' -X POST "${API}/keys/${key_id}/sign" \
+  -H 'Content-Type: application/json' -H "x-api-key: ${api_key}" \
+  -d "{\"message\":\"${message}\",\"to\":\"0x1111111111111111111111111111111111111111\",\"value\":\"1000\",\"chainId\":11155111}")
+[[ "${ungated}" == "403" ]] || fail "ungranted raw-digest signing returned ${ungated}, expected 403"
+echo "    403 (default: the route policy cannot fully verify is closed)"
+
+echo "==> granting it explicitly"
+"${CURL[@]}" -o /dev/null -X PUT "${API}/admin/customers/${customer_id}/raw-digest-signing" \
+  -H 'Content-Type: application/json' -H "x-admin-key: ${ADMIN_KEY}" \
+  -d '{"enabled":true}'
+
+echo "==> threshold-signing through the API with 2 of the 3 parties"
 signed=$("${CURL[@]}" -X POST "${API}/keys/${key_id}/sign" \
   -H 'Content-Type: application/json' -H "x-api-key: ${api_key}" \
   -d "{\"message\":\"${message}\",\"to\":\"0x1111111111111111111111111111111111111111\",\"value\":\"1000\",\"chainId\":11155111}")

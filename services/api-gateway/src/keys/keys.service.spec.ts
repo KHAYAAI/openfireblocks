@@ -26,6 +26,7 @@ describe('KeysService.createKey', () => {
     status: 'active',
     tier: 'pro',
     policies: {},
+    raw_digest_signing_enabled: true,
   };
 
   const req: CreateKeyRequest = {
@@ -178,6 +179,7 @@ describe('KeysService.signWithKey', () => {
     status: 'active',
     tier: 'pro',
     policies: {},
+    raw_digest_signing_enabled: true,
   };
 
   const signReq = {
@@ -226,6 +228,35 @@ describe('KeysService.signWithKey', () => {
     } as unknown as PolicyService;
     return { service: new KeysService(postgres, temporal, policy), postgres, temporal, policy };
   }
+
+  // The capability gate. signWithKey signs a digest the caller supplies, so
+  // policy can only evaluate what the caller *claims* it commits to; the
+  // route is off unless a tenant has been granted it deliberately.
+  it('refuses when the tenant does not have raw digest signing enabled', async () => {
+    const { service, postgres, policy, temporal } = build({});
+    const ungranted: Customer = { ...customer, raw_digest_signing_enabled: false };
+
+    await expect(service.signWithKey(ungranted, 'key-1', signReq)).rejects.toThrow(
+      /not enabled for this account/,
+    );
+
+    // Denied before anything is loaded, evaluated or started -- the gate is
+    // a precondition, not a check layered after the work has begun.
+    expect(postgres.getKey).not.toHaveBeenCalled();
+    expect(policy.evaluate).not.toHaveBeenCalled();
+    expect(temporal.signWithThreshold).not.toHaveBeenCalled();
+  });
+
+  it('points a refused caller at the route that does not have the gap', async () => {
+    const { service } = build({});
+    const ungranted: Customer = { ...customer, raw_digest_signing_enabled: false };
+
+    // An error that only says "forbidden" leaves the caller to guess. The
+    // whole reason this route is gated is that a better one exists.
+    await expect(service.signWithKey(ungranted, 'key-1', signReq)).rejects.toThrow(
+      /POST \/keys\/:keyId\/transactions/,
+    );
+  });
 
   it('signs with threshold parties, not all of them', async () => {
     const sign = jest
@@ -326,6 +357,7 @@ describe('KeysService.signTransaction', () => {
     status: 'active',
     tier: 'pro',
     policies: {},
+    raw_digest_signing_enabled: true,
   };
 
   // A throwaway key used only to produce real signatures. Threshold and

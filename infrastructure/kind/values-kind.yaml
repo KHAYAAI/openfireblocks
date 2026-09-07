@@ -69,24 +69,43 @@ temporalWorker:
       enabled: true
       vaultAddr: http://vault:8200
 
-# Not built by scripts/build-images.sh and therefore not deployable here.
-# services/ceremony-orchestrator in particular is known-dead: it does not
-# compile, and its responsibilities are already covered by
-# temporal-worker's DKGCeremonyWorkflow.
+# The rest of the platform. These were disabled while they had no images;
+# scripts/build-images.sh now builds all of them, so they run here and their
+# manifests get exercised rather than merely rendered.
+#
+# The chart already carries the right image name and port for each; all this
+# needs to do is turn them on and shrink the requests so thirteen
+# deployments fit on three small worker nodes.
 policyApi:
-  enabled: false
+  enabled: true
+  replicas: 1
+  resources:
+    requests: { cpu: 25m, memory: 32Mi }
 settlement:
-  enabled: false
+  enabled: true
+  replicas: 1
+  resources:
+    requests: { cpu: 25m, memory: 32Mi }
 billing:
-  enabled: false
+  enabled: true
+  replicas: 1
+  resources:
+    requests: { cpu: 25m, memory: 32Mi }
 webhooks:
-  enabled: false
+  enabled: true
+  replicas: 1
+  resources:
+    requests: { cpu: 25m, memory: 32Mi }
 marketplace:
-  enabled: false
+  enabled: true
+  replicas: 1
+  resources:
+    requests: { cpu: 25m, memory: 32Mi }
 compliance:
-  enabled: false
-ceremonyOrchestrator:
-  enabled: false
+  enabled: true
+  replicas: 1
+  resources:
+    requests: { cpu: 25m, memory: 32Mi }
 
 workos:
   # Requires a real WORKOS_API_KEY. With this off the /auth/sso routes

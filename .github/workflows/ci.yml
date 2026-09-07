@@ -161,6 +161,20 @@ jobs:
             | $(go env GOPATH)/bin/kubeconform -strict -summary \
                 -kubernetes-version 1.29.0
 
+      # kubeconform proves every object would be *accepted* by the API
+      # server. Each bug this checks for rendered perfectly valid YAML, was
+      # accepted by a real cluster, and then broke the platform at runtime --
+      # probes that cannot complete an mTLS handshake, an orchestrator
+      # dialling http:// against an HTTPS port, certificates that do not
+      # cover the name peers dial, a rollout that deadlocks under strict
+      # anti-affinity, and certificates nothing renews. They are only visible
+      # once the feature is switched on, which is exactly when nobody wants
+      # to find them.
+      - name: Check chart invariants
+        run: |
+          pip install pyyaml
+          python3 infrastructure/helm/test-chart-invariants.py
+
   terraform:
     name: Terraform
     runs-on: ubuntu-latest

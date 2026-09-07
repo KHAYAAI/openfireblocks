@@ -248,36 +248,6 @@ services:
   # OPENFIREBLOCKS SERVICES
   # ============================================
 
-  ceremony-orchestrator:
-    build:
-      context: ../../services/ceremony-orchestrator
-      dockerfile: Dockerfile
-    container_name: ceremony-orchestrator
-    environment:
-      <<: *common-env
-      PORT: 8081
-      MPC_SIGNER_URL: https://mpc-signer:8080
-      TEMPORAL_HOST: temporal:7233
-    volumes:
-      - /etc/tls/certs:/etc/tls/certs:ro
-      - /etc/tls/private:/etc/tls/private:ro
-    ports:
-      - "8081:8081"
-    networks:
-      - openfireblocks
-    depends_on:
-      postgres-primary:
-        condition: service_healthy
-      vault:
-        condition: service_healthy
-      temporal:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "curl", "-f", "https://localhost:8081/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
   mpc-signer:
     build:
       context: ../../services/mpc-signer
@@ -322,8 +292,6 @@ services:
     networks:
       - openfireblocks
     depends_on:
-      ceremony-orchestrator:
-        condition: service_healthy
       mpc-signer:
         condition: service_healthy
     healthcheck:

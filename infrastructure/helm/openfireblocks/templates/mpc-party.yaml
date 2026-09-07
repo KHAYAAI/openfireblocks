@@ -182,6 +182,58 @@ spec:
           resources:
             {{- toYaml $.Values.mpcParty.resources | nindent 12 }}
       {{- if $.Values.mpcParty.mtls.enabled }}
+      {{- if and $.Values.mpcParty.mtls.enabled $.Values.mpcParty.mtls.autoIssue.enabled }}
+        # Replaces the certificate at two thirds of its life, for as long as
+        # this pod lives.
+        #
+        # Without it, issuance is a single event at startup and the
+        # certificate's expiry becomes the pod's lifetime: every party's
+        # certificate lapses at roughly the same moment, the whole committee
+        # stops being able to talk at once, and the only recovery is a
+        # restart. Short-lived certificates are the right design only if
+        # something renews them.
+        #
+        # It writes to the same emptyDir the init container populated, and
+        # mpc-party notices the new material and starts presenting it
+        # without restarting or dropping a connection -- see
+        # services/mpc-party/certreload.go.
+        - name: vault-pki-renew
+          image: {{ include "ofb.image" (dict "root" $ "image" $.Values.mpcParty.mtls.autoIssue.image "tag" $.Values.mpcParty.mtls.autoIssue.tag) }}
+          imagePullPolicy: {{ $.Values.imagePullPolicy }}
+          securityContext:
+            {{- toYaml $.Values.containerSecurityContext | nindent 12 }}
+          env:
+            - name: VAULT_ADDR
+              value: {{ $.Values.mpcParty.mtls.autoIssue.vaultAddr | quote }}
+            - name: VAULT_K8S_ROLE
+              value: {{ $.Values.mpcParty.mtls.autoIssue.k8sRole | quote }}
+            # COMMON_NAME is the party's stable service identity;
+            # ALT_NAMES is how peers actually reach it. TLS verifies the
+            # name the client dialled, so without the in-cluster DNS name
+            # as a SAN every mutually authenticated connection fails
+            # hostname verification -- and the error reads like a broken
+            # certificate rather than a naming mismatch.
+            - name: COMMON_NAME
+              value: {{ printf "party-%d.internal" $partyID | quote }}
+            - name: ALT_NAMES
+              value: {{ printf "party-%d.%s.svc.cluster.local" $partyID $.Release.Namespace | quote }}
+            - name: VAULT_PKI_MOUNT
+              value: {{ $.Values.mpcParty.mtls.autoIssue.pkiMount | quote }}
+            - name: VAULT_PKI_ROLE
+              value: {{ $.Values.mpcParty.mtls.autoIssue.pkiRole | quote }}
+            - name: CERT_TTL
+              value: {{ $.Values.mpcParty.mtls.autoIssue.certTTL | quote }}
+            - name: CERT_OUT_DIR
+              value: /etc/openfireblocks/mtls
+            # Keeps going instead of exiting after the first issuance.
+            - name: RENEW
+              value: "true"
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+          volumeMounts:
+            - name: mtls-certs
+              mountPath: /etc/openfireblocks/mtls
+      {{- end }}
       volumes:
         - name: mtls-certs
           {{- if $.Values.mpcParty.mtls.autoIssue.enabled }}

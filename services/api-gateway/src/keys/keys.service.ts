@@ -165,7 +165,28 @@ export class KeysService {
   // consulted first and an unreachable policy service denies rather than
   // permits. See ThresholdSignRequestDto for what policy can and cannot
   // actually verify about a request to sign an opaque digest.
+  //
+  // Gated behind an explicit per-tenant capability, because policy here is
+  // weaker than it looks. The digest is opaque, so the to/value/chainId the
+  // policy engine evaluates are a *claim* by the caller: declare one
+  // transaction, submit the digest of another, and the approval that comes
+  // back is for a transaction nobody reviewed. signTransaction has no such
+  // gap and is the route a tenant gets by default.
+  //
+  // This route still exists because signing things that are not Ethereum
+  // transactions has no other path. Turning it on is a decision somebody
+  // makes on the record, not a default.
   async signWithKey(customer: Customer, keyId: string, req: ThresholdSignRequestDto) {
+    if (!customer.raw_digest_signing_enabled) {
+      throw new ForbiddenException(
+        'Signing a caller-supplied digest is not enabled for this account. ' +
+          'Use POST /keys/:keyId/transactions, where the transaction is built ' +
+          'and hashed by the service so policy governs exactly what is signed. ' +
+          'If you need to sign something that is not an Ethereum transaction, ' +
+          'raw digest signing can be enabled for this account explicitly.',
+      );
+    }
+
     const requestId = req.idempotencyKey ?? uuidv4();
 
     const key = await this.loadSignableKey(keyId, customer.customer_id);

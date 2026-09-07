@@ -2,8 +2,6 @@ package main
 
 import (
 	"crypto/tls"
-	"crypto/x509"
-	"fmt"
 	"os"
 )
 
@@ -30,63 +28,63 @@ const (
 	envMTLSCAFile   = "MTLS_CA_FILE"
 )
 
-// serverTLSConfigFromEnv returns (config, true, nil) if all three mTLS env
-// vars are set and load correctly, or (nil, false, nil) if mTLS simply
+// sharedReloader is the process's single view of its mTLS material.
+//
+// One reloader, not one per call site: the server and the outbound client
+// present the same identity, and two independently-polling loaders could
+// briefly disagree about which generation of the certificate that is.
+var sharedReloader *certReloader
+
+// mtlsFilesFromEnv returns the three paths, or ok=false if mTLS simply
 // isn't configured (not an error -- plain HTTP is a valid, if less secure,
 // configuration this platform still needs to support for local dev).
-func serverTLSConfigFromEnv() (*tls.Config, bool, error) {
-	certFile, keyFile, caFile := os.Getenv(envMTLSCertFile), os.Getenv(envMTLSKeyFile), os.Getenv(envMTLSCAFile)
+func mtlsFilesFromEnv() (certFile, keyFile, caFile string, ok bool) {
+	certFile, keyFile, caFile = os.Getenv(envMTLSCertFile), os.Getenv(envMTLSKeyFile), os.Getenv(envMTLSCAFile)
 	if certFile == "" || keyFile == "" || caFile == "" {
+		return "", "", "", false
+	}
+	return certFile, keyFile, caFile, true
+}
+
+// reloader lazily builds the shared reloader and starts its watch loop.
+func reloader() (*certReloader, bool, error) {
+	if sharedReloader != nil {
+		return sharedReloader, true, nil
+	}
+	certFile, keyFile, caFile, ok := mtlsFilesFromEnv()
+	if !ok {
 		return nil, false, nil
 	}
-
-	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+	r, err := newCertReloader(certFile, keyFile, caFile)
 	if err != nil {
-		return nil, false, fmt.Errorf("failed to load mTLS server cert/key: %w", err)
+		return nil, false, err
 	}
+	sharedReloader = r
+	go r.watch()
+	return r, true, nil
+}
 
-	caPEM, err := os.ReadFile(caFile)
-	if err != nil {
-		return nil, false, fmt.Errorf("failed to read mTLS CA file: %w", err)
+// serverTLSConfigFromEnv returns (config, true, nil) if all three mTLS env
+// vars are set and load correctly, or (nil, false, nil) if mTLS simply
+// isn't configured.
+//
+// The returned config follows certificate rotation: see certreload.go for
+// why loading the keypair exactly once turns the certificate's expiry into
+// the pod's lifetime.
+func serverTLSConfigFromEnv() (*tls.Config, bool, error) {
+	r, ok, err := reloader()
+	if err != nil || !ok {
+		return nil, false, err
 	}
-	caPool := x509.NewCertPool()
-	if !caPool.AppendCertsFromPEM(caPEM) {
-		return nil, false, fmt.Errorf("mTLS CA file %s contained no usable certificates", caFile)
-	}
-
-	return &tls.Config{
-		Certificates: []tls.Certificate{cert},
-		ClientCAs:    caPool,
-		ClientAuth:   tls.RequireAndVerifyClientCert,
-		MinVersion:   tls.VersionTLS13,
-	}, true, nil
+	return r.serverConfig(), true, nil
 }
 
 // clientTLSConfigFromEnv mirrors serverTLSConfigFromEnv for this party's
 // outbound connections to its peers (TSSPartyManager's relay client).
 func clientTLSConfigFromEnv() (*tls.Config, bool, error) {
-	certFile, keyFile, caFile := os.Getenv(envMTLSCertFile), os.Getenv(envMTLSKeyFile), os.Getenv(envMTLSCAFile)
-	if certFile == "" || keyFile == "" || caFile == "" {
-		return nil, false, nil
+	r, ok, err := reloader()
+	if err != nil || !ok {
+		return nil, false, err
 	}
-
-	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
-	if err != nil {
-		return nil, false, fmt.Errorf("failed to load mTLS client cert/key: %w", err)
-	}
-
-	caPEM, err := os.ReadFile(caFile)
-	if err != nil {
-		return nil, false, fmt.Errorf("failed to read mTLS CA file: %w", err)
-	}
-	caPool := x509.NewCertPool()
-	if !caPool.AppendCertsFromPEM(caPEM) {
-		return nil, false, fmt.Errorf("mTLS CA file %s contained no usable certificates", caFile)
-	}
-
-	return &tls.Config{
-		Certificates: []tls.Certificate{cert},
-		RootCAs:      caPool,
-		MinVersion:   tls.VersionTLS13,
-	}, true, nil
+	return r.clientConfig(), true, nil
 }
