@@ -69,19 +69,34 @@ type TSSPartyManager struct {
 
 	signMu   sync.Mutex
 	signings map[string]*tssSigningCeremony
+
+	// Filled in the background from process start so a ceremony does not
+	// pay for safe-prime generation on its critical path -- see
+	// preparams.go for why that mattered enough to be a correctness bug
+	// and not just a latency one.
+	preParams *preParamsPool
 }
 
 func NewTSSPartyManager(partyID int, client *http.Client) *TSSPartyManager {
 	if client == nil {
 		client = &http.Client{Timeout: 30 * time.Second}
 	}
+	pool := newPreParamsPool(preParamsPoolSize)
+	pool.start()
 	return &TSSPartyManager{
 		partyID:    partyID,
 		client:     client,
 		ceremonies: make(map[string]*tssKeygenCeremony),
 		signings:   make(map[string]*tssSigningCeremony),
+		preParams:  pool,
 	}
 }
+
+// preParamsPoolSize is how many pre-generated parameter sets to keep warm.
+// One covers the common case of a single ceremony at a time; the second
+// means a party that has just consumed one is not back on the slow path if
+// another ceremony arrives while the pool refills.
+const preParamsPoolSize = 2
 
 // deterministicPartyIDs builds the identical tss.SortedPartyIDs every
 // process in the ceremony must independently arrive at. peers is
@@ -162,7 +177,7 @@ func (m *TSSPartyManager) runKeygen(ceremonyID string, ceremony *tssKeygenCeremo
 	peerCtx := tsscommon.NewPeerContext(sorted)
 	params := tsscommon.NewParameters(tsscommon.S256(), peerCtx, self, len(sorted), threshold)
 
-	preParams, err := tsslib.GeneratePreParams(2 * time.Minute)
+	preParams, err := m.preParams.get()
 	if err != nil {
 		m.failCeremony(ceremonyID, fmt.Errorf("failed to generate pre-params: %w", err))
 		return

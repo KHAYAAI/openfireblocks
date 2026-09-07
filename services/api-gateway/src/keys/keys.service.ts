@@ -1,4 +1,9 @@
-import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  Logger,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { PostgresService } from '../database/postgres.service';
 import { KeysTemporalService } from './keys-temporal.service';
 import { CreateKeyRequest } from './dto/create-key.dto';
@@ -51,7 +56,22 @@ export class KeysService {
       created_at: now,
     };
 
-    await this.postgres.createKey(key);
+    try {
+      await this.postgres.createKey(key);
+    } catch (err) {
+      // 23505 = unique_violation. The only unique constraint reachable here
+      // is (customer_id, name), so this is a name collision with one of the
+      // customer's own live keys -- a client error, not a server one. It
+      // used to escape as a raw 500 carrying the Postgres constraint text.
+      // Migration 016 excludes failed keys from that uniqueness rule, so a
+      // retry after a failed provisioning no longer lands here at all.
+      if ((err as { code?: string }).code === '23505') {
+        throw new ConflictException(
+          `a key named ${JSON.stringify(req.name)} already exists`,
+        );
+      }
+      throw err;
+    }
 
     const workflowId = `provision-key-${keyId}`;
     await this.postgres.createCeremony({
@@ -93,6 +113,12 @@ export class KeysService {
       );
       await this.postgres
         .setCeremonyFailed(ceremonyId, customer.customer_id, (err as Error).message)
+        .catch(() => undefined);
+      // ...and the key itself, which otherwise sits at 'pending_dkg' with
+      // no workflow behind it -- reading as perpetually provisioning, and
+      // (before migration 016) permanently consuming its own name.
+      await this.postgres
+        .setKeyFailed(keyId, customer.customer_id)
         .catch(() => undefined);
       if (err instanceof ServiceUnavailableException) throw err;
       throw new ServiceUnavailableException('failed to start key provisioning');

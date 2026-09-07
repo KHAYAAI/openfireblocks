@@ -1,0 +1,102 @@
+package main
+
+import (
+	"log"
+	"sync"
+	"time"
+
+	tsslib "github.com/bnb-chain/tss-lib/v2/ecdsa/keygen"
+)
+
+// Pre-generated tss-lib pre-parameters.
+//
+// GeneratePreParams searches for safe primes. It is by far the most
+// expensive step in a DKG ceremony and its cost is highly variable -- it is
+// a randomised search, so the same machine can take five seconds on one
+// attempt and ninety on the next. Calling it on the ceremony's critical
+// path, as StartKeygen used to, makes every ceremony pay that variance
+// while its peers sit waiting.
+//
+// That is not merely slow, it was the reason DKG failed outright on a real
+// cluster. A party that has registered a ceremony but not yet built its
+// LocalParty answers relayed protocol messages with 503
+// (ErrCeremonyNotReady); peers retry for PeerReadyTimeout and then abort
+// the whole ceremony. With generation on the critical path under realistic
+// pod CPU limits, that budget was routinely exceeded and *every* ceremony
+// aborted. Locally, where three parties share an unthrottled host and
+// generation takes a few seconds, the race never lost -- which is exactly
+// why this only appeared once the services ran as separate pods.
+//
+// So generation moves off the critical path: a small pool is filled in the
+// background from process start, and a ceremony takes a ready-made set.
+// The pool is deliberately tiny -- each entry is cheap to hold but
+// expensive to make, and a party runs few concurrent ceremonies.
+type preParamsPool struct {
+	ch chan *tsslib.LocalPreParams
+
+	// Generation timeout per attempt. A failed attempt is retried rather
+	// than being fatal: it means the search did not converge in time, not
+	// that anything is wrong.
+	timeout time.Duration
+
+	startOnce sync.Once
+}
+
+// preParamsGenTimeout bounds one GeneratePreParams attempt.
+//
+// This MUST stay below PeerReadyTimeout (tss_handlers.go). The two are a
+// matched pair: it is the time a party may spend becoming ready to receive
+// messages, versus the time its peers will wait for it to become ready. The
+// original code had them inverted -- a party was allowed 2 minutes to
+// generate pre-params while its peers gave up after 60 seconds -- so a
+// party that took its allotted time was guaranteed to be abandoned. There
+// is a compile-time-adjacent check on this ordering in
+// TestPreParamsTimeoutIsBelowPeerReadyTimeout.
+const preParamsGenTimeout = 90 * time.Second
+
+func newPreParamsPool(size int) *preParamsPool {
+	if size < 1 {
+		size = 1
+	}
+	return &preParamsPool{
+		ch:      make(chan *tsslib.LocalPreParams, size),
+		timeout: preParamsGenTimeout,
+	}
+}
+
+// start begins filling the pool in the background. Safe to call more than
+// once; only the first call starts the filler.
+func (p *preParamsPool) start() {
+	p.startOnce.Do(func() { go p.fill() })
+}
+
+func (p *preParamsPool) fill() {
+	for {
+		// Blocks once the pool is full, so this goroutine burns CPU only
+		// while there is a slot to fill.
+		pre, err := tsslib.GeneratePreParams(p.timeout)
+		if err != nil {
+			log.Printf("pre-params generation attempt failed, retrying: %v", err)
+			continue
+		}
+		p.ch <- pre
+	}
+}
+
+// get returns a pre-generated set if one is ready, and otherwise generates
+// one inline, waiting up to timeout.
+//
+// The inline fallback exists so a ceremony that arrives before the pool has
+// filled -- the first ceremony after a pod starts, most likely -- still
+// runs rather than failing. It is the slow path, and the one the peer-side
+// retry budget has to cover.
+func (p *preParamsPool) get() (*tsslib.LocalPreParams, error) {
+	select {
+	case pre := <-p.ch:
+		return pre, nil
+	default:
+	}
+
+	log.Printf("pre-params pool empty, generating inline (this ceremony pays the full generation cost)")
+	return tsslib.GeneratePreParams(p.timeout)
+}

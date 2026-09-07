@@ -1,4 +1,4 @@
-import { ServiceUnavailableException } from '@nestjs/common';
+import { ConflictException, ServiceUnavailableException } from '@nestjs/common';
 import { KeysService } from './keys.service';
 import { PostgresService } from '../database/postgres.service';
 import { KeysTemporalService } from './keys-temporal.service';
@@ -27,11 +27,12 @@ describe('KeysService.createKey', () => {
     total_parties: 3,
   };
 
-  function build(temporalStart: jest.Mock) {
+  function build(temporalStart: jest.Mock, createKey?: jest.Mock) {
     const postgres = {
-      createKey: jest.fn().mockResolvedValue(undefined),
+      createKey: createKey ?? jest.fn().mockResolvedValue(undefined),
       createCeremony: jest.fn().mockResolvedValue(undefined),
       setCeremonyFailed: jest.fn().mockResolvedValue(undefined),
+      setKeyFailed: jest.fn().mockResolvedValue(undefined),
     } as unknown as PostgresService;
     const temporal = { start: temporalStart } as unknown as KeysTemporalService;
     return { service: new KeysService(postgres, temporal), postgres, temporal };
@@ -96,5 +97,45 @@ describe('KeysService.createKey', () => {
       'cust-1',
       expect.stringContaining('Temporal connection failed'),
     );
+  });
+
+  // Found on a real cluster: only the ceremony was marked failed. The
+  // key_pairs row stayed at 'pending_dkg' with no workflow behind it, so it
+  // read as perpetually provisioning and (before migration 016) its name
+  // was consumed forever.
+  it('also marks the key itself failed, not just the ceremony', async () => {
+    const start = jest
+      .fn()
+      .mockRejectedValue(new ServiceUnavailableException('Temporal connection failed: ECONNREFUSED'));
+    const { service, postgres } = build(start);
+
+    await expect(service.createKey(customer, req)).rejects.toBeInstanceOf(ServiceUnavailableException);
+
+    expect(postgres.setKeyFailed).toHaveBeenCalledWith(expect.any(String), 'cust-1');
+  });
+
+  // A duplicate key name is a client error. It used to escape as a raw 500
+  // carrying the Postgres constraint text.
+  it('reports a duplicate key name as 409, not a 500', async () => {
+    const duplicate = Object.assign(
+      new Error('duplicate key value violates unique constraint "key_pairs_customer_name_live_key"'),
+      { code: '23505' },
+    );
+    const start = jest.fn().mockResolvedValue({ workflowId: 'wf-1' });
+    const { service, temporal } = build(start, jest.fn().mockRejectedValue(duplicate));
+
+    await expect(service.createKey(customer, req)).rejects.toBeInstanceOf(ConflictException);
+    // and it must not have started a ceremony for a key it could not create
+    expect(temporal.start).not.toHaveBeenCalled();
+  });
+
+  // Any other database failure is still a server error -- the 23505 branch
+  // must not swallow unrelated problems.
+  it('does not convert non-unique-violation database errors into 409', async () => {
+    const other = Object.assign(new Error('connection terminated'), { code: '08006' });
+    const start = jest.fn().mockResolvedValue({ workflowId: 'wf-1' });
+    const { service } = build(start, jest.fn().mockRejectedValue(other));
+
+    await expect(service.createKey(customer, req)).rejects.toThrow('connection terminated');
   });
 });

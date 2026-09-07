@@ -28,15 +28,27 @@ type tssMessageEnvelope struct {
 // 4xx/5xx other than 503) is returned immediately. Shared by postTSSMessage
 // (keygen) and postTSSSignMessage (signing) -- only the envelope type and
 // URL path differ between them.
+// PeerReadyTimeout is how long a sender keeps retrying a peer that answers
+// 503 "registered but not yet ready".
+//
+// It MUST exceed preParamsGenTimeout (preparams.go): this is the time a
+// party's peers will wait for it to become ready, and that is the longest
+// it may take to become ready. Previously these were 60s and 120s
+// respectively -- inverted -- so a party that used its full allowance was
+// certain to be abandoned mid-ceremony. TestPreParamsTimeoutIsBelowPeerReadyTimeout
+// pins the ordering.
+const PeerReadyTimeout = 3 * time.Minute
+
+// retryInterval is how often to re-offer a message to a not-yet-ready peer.
+const retryInterval = 250 * time.Millisecond
+
 func postTSSEnvelope(client *http.Client, baseURL, path string, envelope interface{}) error {
 	body, err := json.Marshal(envelope)
 	if err != nil {
 		return fmt.Errorf("failed to marshal message envelope: %w", err)
 	}
 
-	const maxWait = 60 * time.Second
-	const retryInterval = 250 * time.Millisecond
-	deadline := time.Now().Add(maxWait)
+	deadline := time.Now().Add(PeerReadyTimeout)
 
 	for {
 		resp, err := client.Post(baseURL+path, "application/json", bytes.NewReader(body))

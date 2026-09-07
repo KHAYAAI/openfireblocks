@@ -1,0 +1,236 @@
+# Stateful dependencies for a local cluster bring-up.
+#
+# In production these live outside the chart -- RDS, a real Vault cluster,
+# Temporal Cloud -- which is why infrastructure/helm/openfireblocks only
+# takes their endpoints as .Values.external.*. This file stands up
+# throwaway equivalents so the chart can be exercised end to end on a kind
+# cluster.
+#
+# NOT FOR PRODUCTION. Vault runs in dev mode (in-memory, auto-unsealed,
+# a fixed root token), Postgres has no replica, and every credential here
+# is a well-known development string.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: openfireblocks
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: dev-dependency-credentials
+  namespace: openfireblocks
+stringData:
+  # The cluster bootstraps as `postgres`. `app` is deliberately NOT the
+  # bootstrap role: PostgreSQL refuses to let the bootstrap role give up
+  # SUPERUSER ("The bootstrap user must have the SUPERUSER attribute"), and
+  # a superuser bypasses row-level security unconditionally, so migration
+  # 011 could never enforce tenant isolation on such a cluster. It now
+  # raises rather than silently leaving RLS unenforced.
+  postgres-superuser-password: postgres-dev-password
+  app-password: app-dev-password
+  app-admin-password: app-admin-dev-password
+  vault-root-token: dev-root-token
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-data
+  namespace: openfireblocks
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 4Gi
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-initdb
+  namespace: openfireblocks
+data:
+  # Applied by the postgres image on first initialisation only.
+  00-roles.sql: |
+    -- Runs once as the bootstrap superuser (`postgres`), before any
+    -- migration, against POSTGRES_DB.
+    --
+    -- Both application roles are created here rather than by migration 011,
+    -- because by the time 011 runs it is executing as `app`, which is
+    -- deliberately not a superuser and therefore cannot grant BYPASSRLS.
+    -- 011 guards its own CREATE ROLE with IF NOT EXISTS, so this is
+    -- idempotent with respect to it.
+    DO $$
+    BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app') THEN
+        CREATE ROLE app LOGIN PASSWORD 'app-dev-password';
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app_admin') THEN
+        CREATE ROLE app_admin LOGIN PASSWORD 'app-admin-dev-password' BYPASSRLS;
+      END IF;
+    END
+    $$;
+
+    -- `app` must OWN the tables the migrations create. Migration 011 turns
+    -- on FORCE ROW LEVEL SECURITY (which binds the owner too) and grants
+    -- table privileges only to app_admin -- never to `app`. So if anything
+    -- other than `app` created the tables, `app` would end up with no
+    -- access to them at all. Owning schema public is what makes `app` the
+    -- owner of everything it subsequently creates; since PostgreSQL 15,
+    -- schema public no longer grants CREATE to PUBLIC by default.
+    ALTER DATABASE openfireblocks OWNER TO app;
+    ALTER SCHEMA public OWNER TO app;
+    GRANT ALL ON SCHEMA public TO app;
+    GRANT USAGE ON SCHEMA public TO app_admin;
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: openfireblocks
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: postgres }
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels: { app: postgres }
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-bookworm
+          env:
+            # No POSTGRES_USER: the bootstrap role stays `postgres`, so
+            # that `app` is demotable -- see 00-roles.sql above.
+            - name: POSTGRES_DB
+              value: openfireblocks
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: dev-dependency-credentials
+                  key: postgres-superuser-password
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          ports:
+            - { name: postgres, containerPort: 5432 }
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/postgresql/data }
+            - { name: initdb, mountPath: /docker-entrypoint-initdb.d }
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "postgres", "-d", "openfireblocks"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+      volumes:
+        - name: data
+          persistentVolumeClaim: { claimName: postgres-data }
+        - name: initdb
+          configMap: { name: postgres-initdb }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: openfireblocks
+spec:
+  selector: { app: postgres }
+  ports:
+    - { name: postgres, port: 5432, targetPort: postgres }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vault
+  namespace: openfireblocks
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: vault }
+  template:
+    metadata:
+      labels: { app: vault }
+    spec:
+      containers:
+        - name: vault
+          image: hashicorp/vault:1.17
+          args: ["server", "-dev", "-dev-listen-address=0.0.0.0:8200"]
+          env:
+            - name: VAULT_DEV_ROOT_TOKEN_ID
+              valueFrom:
+                secretKeyRef:
+                  name: dev-dependency-credentials
+                  key: vault-root-token
+          ports:
+            - { name: http, containerPort: 8200 }
+          readinessProbe:
+            httpGet: { path: /v1/sys/health, port: http }
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vault
+  namespace: openfireblocks
+spec:
+  selector: { app: vault }
+  ports:
+    - { name: http, port: 8200, targetPort: http }
+---
+# Temporal's auto-setup image creates its own schema in the Postgres above
+# on first boot, in databases separate from `openfireblocks`.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: temporal-frontend
+  namespace: openfireblocks
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: temporal-frontend }
+  template:
+    metadata:
+      labels: { app: temporal-frontend }
+    spec:
+      containers:
+        - name: temporal
+          image: temporalio/auto-setup:1.25.2
+          env:
+            - { name: DB, value: postgres12 }
+            - { name: DB_PORT, value: "5432" }
+            - { name: POSTGRES_SEEDS, value: postgres }
+            # Temporal creates and owns its own databases, separate from
+            # `openfireblocks`, so it connects as the superuser rather than
+            # as the RLS-restricted `app`.
+            - { name: POSTGRES_USER, value: postgres }
+            - name: POSTGRES_PWD
+              valueFrom:
+                secretKeyRef:
+                  name: dev-dependency-credentials
+                  key: postgres-superuser-password
+            - { name: DEFAULT_NAMESPACE, value: default }
+            - { name: DEFAULT_NAMESPACE_RETENTION, value: 24h }
+            - { name: SKIP_ADD_CUSTOM_SEARCH_ATTRIBUTES, value: "true" }
+          ports:
+            - { name: grpc, containerPort: 7233 }
+          readinessProbe:
+            tcpSocket: { port: grpc }
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            failureThreshold: 30
+          resources:
+            requests: { cpu: 200m, memory: 512Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: temporal-frontend
+  namespace: openfireblocks
+spec:
+  selector: { app: temporal-frontend }
+  ports:
+    - { name: grpc, port: 7233, targetPort: grpc }

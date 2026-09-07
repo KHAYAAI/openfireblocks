@@ -29,18 +29,67 @@
 --                 by habit -- anything customer-facing must go through
 --                 `app` with the session variable set.
 
+-- Demote `app`, but only when that is both necessary and possible.
+--
+-- PostgreSQL will not let the *bootstrap* role -- the one initdb created,
+-- always oid 10 -- give up SUPERUSER:
+--
+--   ERROR:  permission denied to alter role
+--   DETAIL: The bootstrap user must have the SUPERUSER attribute.
+--
+-- So if the database was provisioned with `app` as the bootstrap role
+-- (`POSTGRES_USER=app`, or `initdb -U app`), then `app` is permanently a
+-- superuser, superusers bypass row security unconditionally, and every
+-- policy below this line is decoration. The unguarded `ALTER ROLE app
+-- NOSUPERUSER` this replaces simply failed with the error above, so the
+-- migration could not complete at all in that configuration -- and the
+-- guard `IF EXISTS (... rolname = 'app')` it was wrapped in tested for
+-- entirely the wrong thing (whether the role exists, not whether it is a
+-- superuser), so it also ran a pointless ALTER on every re-application.
+--
+-- Raise here rather than skipping: a custody platform that reports
+-- "migrations applied" while leaving every tenant able to read every other
+-- tenant's rows is the worst available outcome.
+--
+-- Correct provisioning: bootstrap the cluster as some other role
+-- (`postgres`), then create `app` as an ordinary LOGIN role and give it
+-- ownership of schema public so that it owns the tables these migrations
+-- create -- see infrastructure/kind/dependencies.yaml.
 DO $$
 BEGIN
-  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app') THEN
-    ALTER ROLE app NOSUPERUSER;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app' AND rolsuper) THEN
+    RETURN; -- absent, or already non-superuser: nothing to do
   END IF;
+
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE oid = 10 AND rolname = 'app') THEN
+    RAISE EXCEPTION
+      'role "app" is this cluster''s bootstrap superuser and PostgreSQL will '
+      'not allow it to be demoted; superusers bypass row-level security '
+      'unconditionally, so the policies in this migration would never be '
+      'enforced. Reprovision with a different bootstrap role and create "app" '
+      'as an ordinary LOGIN role that owns schema public.';
+  END IF;
+
+  ALTER ROLE app NOSUPERUSER;
 END
 $$;
 
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app_admin') THEN
-    CREATE ROLE app_admin LOGIN PASSWORD 'dev-only' BYPASSRLS;
+    -- BYPASSRLS may only be granted by a superuser, and by this point in
+    -- the migration `app` deliberately is not one. So this branch can only
+    -- succeed when some superuser is running the migration; otherwise say
+    -- plainly that the role has to be provisioned alongside `app` rather
+    -- than failing with a bare "permission denied to create role".
+    BEGIN
+      CREATE ROLE app_admin LOGIN PASSWORD 'dev-only' BYPASSRLS;
+    EXCEPTION WHEN insufficient_privilege THEN
+      RAISE EXCEPTION
+        'role "app_admin" does not exist and the migrating role cannot create '
+        'it (BYPASSRLS requires superuser). Create it during provisioning, '
+        'alongside "app" -- see infrastructure/kind/dependencies.yaml.';
+    END;
   END IF;
   GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO app_admin;
   GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO app_admin;

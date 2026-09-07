@@ -196,6 +196,19 @@ export class PostgresService {
   // threw (e.g. Temporal unreachable) -- the ceremony row already exists
   // by that point, so this keeps it truthful instead of stuck 'initiated'
   // forever for a ceremony that never actually ran.
+  // Marks a key whose provisioning never started as terminally failed.
+  // Without this the row sits at 'pending_dkg' with no workflow behind it,
+  // reading as perpetually in-progress -- see migration 016.
+  async setKeyFailed(keyId: string, customerId: string) {
+    await this.withTenant(customerId, (client) =>
+      client.query(
+        `UPDATE key_pairs SET status = 'failed', updated_at = now()
+         WHERE key_id = $1 AND status = 'pending_dkg'`,
+        [keyId],
+      ),
+    );
+  }
+
   async setCeremonyFailed(ceremonyId: string, customerId: string, errorMessage: string) {
     await this.withTenant(customerId, (client) =>
       client.query(

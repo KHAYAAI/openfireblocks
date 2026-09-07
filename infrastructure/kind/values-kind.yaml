@@ -1,0 +1,86 @@
+# Chart overrides for a local kind cluster.
+#
+# Points .Values.external.* at the throwaway dependencies in
+# infrastructure/kind/dependencies.yaml, and narrows the deployment to the
+# services that make up the signing path -- the ones with an image that
+# scripts/build-images.sh actually produces.
+
+imagePullPolicy: IfNotPresent
+
+external:
+  databaseUrlSecret: openfireblocks-secrets
+  databaseAdminUrlSecret: openfireblocks-secrets
+  temporalHostPort: temporal-frontend:7233
+  temporalNamespace: default
+  # Empty: no chain is reachable from this cluster, and both the gateway
+  # and the worker treat an unset RPC as "cannot broadcast" rather than
+  # hanging. Chain-level behaviour is covered by the `live` build-tagged
+  # tests in services/temporal-worker/activities/chain_live_test.go, which
+  # run against a real geth node.
+  ethereumRpcSepolia: ""
+  requiredConfirmations: "6"
+  redisUrl: ""
+
+apiGateway:
+  enabled: true
+  replicas: 1
+  autoscaling:
+    enabled: false
+
+mpcParty:
+  enabled: true
+  partyCount: 3
+  vault:
+    # Key shares are sealed into the dev Vault rather than held only in
+    # process memory -- this is the path services/mpc-party/vault_seal.go
+    # takes when VAULT_ADDR is set, and leaving it empty would exercise the
+    # weaker in-memory fallback instead.
+    addr: http://vault:8200
+  mtls:
+    # Off for this bring-up. The mTLS path is proven separately against
+    # real Vault-PKI-issued certs; turning it on here would additionally
+    # require the Vault Kubernetes auth method to be configured, which is
+    # its own (still unexercised) piece of work -- see
+    # docs/security/AUDIT-READINESS.md section 3.
+    enabled: false
+
+mpcSigner:
+  enabled: true
+
+policyService:
+  enabled: true
+
+temporalWorker:
+  enabled: true
+  mtls:
+    enabled: false
+
+# Not built by scripts/build-images.sh and therefore not deployable here.
+# services/ceremony-orchestrator in particular is known-dead: it does not
+# compile, and its responsibilities are already covered by
+# temporal-worker's DKGCeremonyWorkflow.
+policyApi:
+  enabled: false
+settlement:
+  enabled: false
+billing:
+  enabled: false
+webhooks:
+  enabled: false
+marketplace:
+  enabled: false
+compliance:
+  enabled: false
+ceremonyOrchestrator:
+  enabled: false
+
+workos:
+  # Requires a real WORKOS_API_KEY. With this off the /auth/sso routes
+  # report enabled:false and fail closed with 503; local password + TOTP
+  # login is unaffected.
+  enabled: false
+
+ingress:
+  enabled: false
+serviceMonitor:
+  enabled: false
