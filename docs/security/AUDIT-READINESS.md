@@ -110,6 +110,8 @@ Offered so an auditor can skip re-deriving it — and to be explicit that
 | Database failover | A real `pg_basebackup` streaming standby promoted to writable primary in **252ms**, pre-failover data intact |
 | Key rotation and balance migration | Real Vault soft-delete of old shares; real threshold-signed sweep transaction whose recovered sender matches the retiring address |
 | Multi-chain address derivation | Bitcoin/Cosmos/Solana checked against each chain's specification computed independently in the tests |
+| The whole path on real Kubernetes | Authenticated `POST /keys` → Temporal → real 2-of-3 DKG across three separate pods → all three sealed distinct shares in Vault → key activated (26s warm, 101s cold) → a 2-of-3 threshold signature recovers to the DKG-derived address. Reproducible: `infrastructure/kind/up.sh`, then `smoke-test.sh` |
+| Tenant isolation enforced, not merely configured | On that cluster, with `app` demoted to non-superuser and owning the tables: tenant A sees 1 of 2 rows; a session with no tenant context sees 0 |
 
 ---
 
@@ -175,13 +177,19 @@ We would rather hand this over than have it found.
    public network conditions. **Bitcoin, Cosmos and Solana remain entirely
    unbroadcast** — their `BroadcastTransaction` returns "not implemented"
    outright.
-2. **Nothing has run on a real cluster.** Terraform validates and the
-   chart now passes `kubeconform` strict validation against real
-   Kubernetes 1.29 API schemas (all 29 objects, with every optional
-   feature enabled) — which proves the API server would *accept* the
-   manifests, not that the system runs. Neither has been applied. The
-   Kubernetes-auth path in `vault-pki-init` (as opposed to the token path)
-   has never executed.
+2. **The cluster deployment is single-node, and Terraform is still
+   unapplied.** The chart now *has* been applied: the whole customer path
+   ran on real Kubernetes 1.29.14 with containerd 2.0.2 — see
+   `docs/deployment/CLUSTER-DEPLOYMENT.md`, which also records the three
+   bugs that surfaced only by doing it, including one that made **every**
+   DKG ceremony fail under realistic pod CPU limits. But it ran on one
+   kubelet: three `mpc-party` pods on a single node are not three
+   independent failure domains, which is the entire security argument for
+   threshold signing. Nothing exercised multi-node scheduling, pod
+   anti-affinity, or node failure. Terraform still validates only and has
+   never been applied. The Kubernetes-auth path in `vault-pki-init` (as
+   opposed to the token path) has still never executed, and mTLS was
+   disabled for that deployment.
 3. **No production-scale load.** All timings are single-node local numbers
    and should not be read as capacity data.
 4. **Multi-chain signing is unexercised against real networks.** The
@@ -191,9 +199,17 @@ We would rather hand this over than have it found.
    `SIGN_MODE_DIRECT`.
 5. **Regional failover is one component of four.** Only Postgres promotes;
    Vault, api-gateway and Temporal report "not implemented" with the reason.
-6. **immudb audit anchoring is unexercised.** The integration is real SDK
+6. **A provisioned threshold key cannot be used through the API.**
+   `POST /sign` routes to `mpc-signer` — the separate single-key,
+   non-threshold path. `ThresholdSigningWorkflow` is reachable only by
+   starting it in Temporal directly. A customer can create a 2-of-3 key
+   through the public API and has no public API with which to sign with it.
+   A functional gap rather than a security one, but worth knowing when
+   considering Priority 1 question 5: the two signing paths are not merely
+   separate — only one of them is reachable from outside at all.
+7. **immudb audit anchoring is unexercised.** The integration is real SDK
    code but has not run against a live immudb instance.
-7. **HSM auto-unseal is unapplied.** The AWS KMS seal stanza and IAM are
+8. **HSM auto-unseal is unapplied.** The AWS KMS seal stanza and IAM are
    configured in Terraform; no Vault node has ever auto-unsealed via it.
 
 ---
