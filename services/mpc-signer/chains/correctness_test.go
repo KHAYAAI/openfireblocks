@@ -6,6 +6,7 @@ import (
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/hex"
+	"strings"
 	"testing"
 
 	"github.com/btcsuite/btcd/btcec"
@@ -449,4 +450,82 @@ func TestSolana_CompactU16(t *testing.T) {
 // block while still exercising the real script builder.
 func txscriptPayToAddr(addr btcutil.Address) ([]byte, error) {
 	return payToAddrScriptForTest(addr)
+}
+
+// Solana account indices and header counts are single bytes. A message with
+// more accounts than that cannot be encoded, and silently truncating would
+// produce a well-formed message addressing the WRONG accounts -- which would
+// then be signed. gosec flagged the unchecked int->byte conversions; these
+// tests pin the resulting refusals.
+func TestSolana_RefusesTooManyAccounts(t *testing.T) {
+	signer := NewSolanaSigner()
+	ctx := context.Background()
+
+	feePayer := base58.Encode(bytes.Repeat([]byte{1}, 32))
+	program := base58.Encode(bytes.Repeat([]byte{2}, 32))
+	blockhash := base58.Encode(bytes.Repeat([]byte{3}, 32))
+
+	// 300 distinct accounts: beyond what a single-byte index can address.
+	accounts := make([]SolanaAccountMeta, 0, 300)
+	for i := 0; i < 300; i++ {
+		key := make([]byte, 32)
+		key[0] = byte(i % 256)
+		key[1] = byte(i / 256)
+		key[2] = 0xAA // keep these distinct from the fee payer and program id
+		accounts = append(accounts, SolanaAccountMeta{Pubkey: base58.Encode(key)})
+	}
+
+	_, err := signer.BuildTransaction(ctx, &SolanaSignRequest{
+		FeePayer:        feePayer,
+		RecentBlockhash: blockhash,
+		Instructions:    []SolanaInstruction{{ProgramID: program, Accounts: accounts}},
+	})
+	if err == nil {
+		t.Fatal("expected >255 accounts to be refused rather than silently truncated into a message addressing the wrong accounts")
+	}
+	if !strings.Contains(err.Error(), "too many accounts") {
+		t.Errorf("expected an account-count refusal, got: %v", err)
+	}
+}
+
+// The boundary itself must still encode: 255 accounts is legal.
+func TestSolana_AcceptsMaximumAccounts(t *testing.T) {
+	signer := NewSolanaSigner()
+	ctx := context.Background()
+
+	feePayer := base58.Encode(bytes.Repeat([]byte{1}, 32))
+	program := base58.Encode(bytes.Repeat([]byte{2}, 32))
+	blockhash := base58.Encode(bytes.Repeat([]byte{3}, 32))
+
+	// 253 instruction accounts + fee payer + program id = 255 exactly.
+	accounts := make([]SolanaAccountMeta, 0, 253)
+	for i := 0; i < 253; i++ {
+		key := make([]byte, 32)
+		key[0] = byte(i)
+		key[2] = 0xBB
+		accounts = append(accounts, SolanaAccountMeta{Pubkey: base58.Encode(key)})
+	}
+
+	msg, err := signer.BuildTransaction(ctx, &SolanaSignRequest{
+		FeePayer:        feePayer,
+		RecentBlockhash: blockhash,
+		Instructions:    []SolanaInstruction{{ProgramID: program, Accounts: accounts}},
+	})
+	if err != nil {
+		t.Fatalf("255 accounts is within the encodable range and must be accepted: %v", err)
+	}
+	// compact-u16 encodes 255 as two bytes (0xff 0x01), after the 3 header bytes.
+	if msg[3] != 0xff || msg[4] != 0x01 {
+		t.Errorf("expected a compact-u16 account count of 255 (ff 01), got %x %x", msg[3], msg[4])
+	}
+}
+
+func TestSolana_CompactU16RejectsOutOfRange(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Error("writeCompactU16 must not silently wrap a value it cannot encode")
+		}
+	}()
+	var buf bytes.Buffer
+	writeCompactU16(&buf, 70000)
 }

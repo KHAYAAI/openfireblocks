@@ -211,6 +211,19 @@ func (s *SolanaSigner) BuildTransaction(ctx context.Context, txData interface{})
 	}
 	ordered := append(append(append(append([]string{}, writableSigners...), readonlySigners...), writableOthers...), readonlyOthers...)
 
+	// Every account reference in a legacy message is a single byte: the
+	// three header counts and each instruction's account indices. More than
+	// 255 accounts cannot be encoded, and silently truncating would produce
+	// a well-formed message that addresses the WRONG accounts -- which would
+	// then be signed. Refuse instead.
+	if len(ordered) > maxSolanaAccounts {
+		return nil, fmt.Errorf("too many accounts for a legacy Solana message: %d (maximum %d, since account indices are single bytes)",
+			len(ordered), maxSolanaAccounts)
+	}
+	if len(req.Instructions) > maxSolanaCompactU16 {
+		return nil, fmt.Errorf("too many instructions: %d (maximum %d)", len(req.Instructions), maxSolanaCompactU16)
+	}
+
 	indexOf := map[string]int{}
 	for i, key := range ordered {
 		indexOf[key] = i
@@ -241,6 +254,12 @@ func (s *SolanaSigner) BuildTransaction(ctx context.Context, txData interface{})
 		if err != nil {
 			return nil, fmt.Errorf("instruction %d has invalid hex data: %w", i, err)
 		}
+		if len(data) > maxSolanaCompactU16 {
+			return nil, fmt.Errorf("instruction %d data is %d bytes, which exceeds the %d-byte compact-u16 limit", i, len(data), maxSolanaCompactU16)
+		}
+		if len(instr.Accounts) > maxSolanaCompactU16 {
+			return nil, fmt.Errorf("instruction %d references %d accounts, which exceeds the %d limit", i, len(instr.Accounts), maxSolanaCompactU16)
+		}
 		writeCompactU16(&msg, len(data))
 		msg.Write(data)
 	}
@@ -254,9 +273,22 @@ func (s *SolanaSigner) BroadcastTransaction(ctx context.Context, signedTx []byte
 	return "", fmt.Errorf("broadcasting not implemented for Solana: no RPC endpoint is configured")
 }
 
+const (
+	// maxSolanaAccounts is the number of distinct accounts a legacy message
+	// can address: indices into the account table are single bytes.
+	maxSolanaAccounts = 255
+	// maxSolanaCompactU16 is the largest length a shortvec prefix can encode.
+	maxSolanaCompactU16 = 65535
+)
+
 // writeCompactU16 writes Solana's shortvec length prefix: 7 bits per byte,
-// high bit set while more bytes follow.
+// high bit set while more bytes follow. Callers must bound value to
+// maxSolanaCompactU16 first; this clamps rather than wrapping so a missed
+// check cannot silently encode a different length than intended.
 func writeCompactU16(buf *bytes.Buffer, value int) {
+	if value < 0 || value > maxSolanaCompactU16 {
+		panic(fmt.Sprintf("writeCompactU16: value %d out of range; callers must validate before encoding", value))
+	}
 	v := uint16(value)
 	for {
 		elem := byte(v & 0x7f)
