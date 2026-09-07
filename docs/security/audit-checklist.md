@@ -454,7 +454,10 @@ Status legend: ✅ done · 🟡 partial · ⬜ not started
 
   1. It does not compile — `go.sum` has no entry for `gin`, its HTTP
      framework. Like `mpc-signer`'s `chains/` package (fixed elsewhere in
-     this checklist), it was committed without ever being built.
+     this checklist), it was committed without ever being built. It also
+     cannot simply be repaired: `go mod tidy` fails because its transitive
+     dependency `gin-contrib/sse@v1.4.0` is an unknown revision, so the
+     module graph is no longer resolvable at all.
   2. `CreateCeremony` inserts into a `ceremonies` table that **exists in
      no migration**. Even if it compiled, every write would fail. This is
      the same pattern as `temporal-worker`'s dead `ceremony_rounds` store.
