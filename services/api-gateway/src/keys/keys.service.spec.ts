@@ -171,6 +171,19 @@ describe('KeysService.createKey', () => {
 // created by POST /keys: POST /sign goes to mpc-signer (the separate
 // single-key path) and ThresholdSigningWorkflow could only be started from
 // inside Temporal.
+// The signing paths probe each party's liveness endpoint before choosing a
+// committee. Default every party to healthy; individual tests narrow it.
+function mockPartyHealth(healthyIds: number[] | 'all' = 'all') {
+  global.fetch = jest.fn(async (url: string | URL | Request) => {
+    const id = Number(String(url).match(/party-(\d+)/)?.[1] ?? 0);
+    const up = healthyIds === 'all' || healthyIds.includes(id);
+    return { ok: up } as Response;
+  }) as unknown as typeof fetch;
+}
+
+beforeEach(() => mockPartyHealth('all'));
+afterEach(() => jest.restoreAllMocks());
+
 describe('KeysService.signWithKey', () => {
   const customer: Customer = {
     customer_id: 'cust-1',
@@ -256,6 +269,52 @@ describe('KeysService.signWithKey', () => {
     await expect(service.signWithKey(ungranted, 'key-1', signReq)).rejects.toThrow(
       /POST \/keys\/:keyId\/transactions/,
     );
+  });
+
+  // The bug this replaced: the committee was partyIds.slice(0, threshold),
+  // i.e. always parties 1 and 2. That turns a 2-of-3 key into a specific
+  // 2-of-2 -- lose party 1 and every signature fails even though party 3
+  // is healthy and holds a good share. Found by draining a node.
+  it('routes around a party that is down instead of failing', async () => {
+    mockPartyHealth([2, 3]); // party 1 is gone
+    const sign = jest
+      .fn()
+      .mockResolvedValue({ status: 'completed', signature: 'ff'.repeat(65) });
+    const { service } = build({ sign });
+
+    await service.signWithKey(customer, 'key-1', signReq);
+
+    expect(sign.mock.calls[0][0].partyIds).toEqual([2, 3]);
+  });
+
+  it('sends the endpoints of the parties it actually chose', async () => {
+    mockPartyHealth([2, 3]);
+    const sign = jest
+      .fn()
+      .mockResolvedValue({ status: 'completed', signature: 'ff'.repeat(65) });
+    const { service } = build({ sign });
+
+    await service.signWithKey(customer, 'key-1', signReq);
+
+    // Slicing the endpoint list off the front would have paired committee
+    // [2, 3] with party-1's and party-2's endpoints -- a mismatch that
+    // surfaces as a ceremony that hangs rather than an obvious error.
+    const endpoints: string[] = sign.mock.calls[0][0].partyEndpoints;
+    expect(endpoints.some((e) => e.includes('party-2'))).toBe(true);
+    expect(endpoints.some((e) => e.includes('party-3'))).toBe(true);
+    expect(endpoints.some((e) => e.includes('party-1'))).toBe(false);
+  });
+
+  it('refuses with 503 when too few parties are reachable to meet the threshold', async () => {
+    mockPartyHealth([3]); // only one of three
+    const sign = jest.fn();
+    const { service } = build({ sign });
+
+    await expect(service.signWithKey(customer, 'key-1', signReq)).rejects.toThrow(
+      /only 1 of 3 MPC parties are reachable/,
+    );
+    // No point starting a ceremony that cannot reach a quorum.
+    expect(sign).not.toHaveBeenCalled();
   });
 
   it('signs with threshold parties, not all of them', async () => {

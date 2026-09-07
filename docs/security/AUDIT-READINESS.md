@@ -37,12 +37,21 @@ parties, can produce a signature or reconstruct a private key.**
 
 Specific questions we want answered:
 
-1. **Committee subsetting.** A signing committee is a subset of the DKG
-   parties. `StartSigning` subsets `tsscommon.SortedPartyIDs` preserving
-   original order/index, because `LocalPartySaveData` is keyed by original
-   position. We believe re-sorting would silently produce invalid or wrong
-   results. Is the subsetting correct in all cases, including
-   non-contiguous committees?
+1. **Committee subsetting.** This was previously listed as an open
+   question, on the belief that `LocalPartySaveData` was keyed by original
+   position and that re-sorting a committee would produce invalid results.
+   **That belief was wrong and the code was broken**: tss-lib subsets the
+   save data itself and indexes it by committee position, so carrying
+   original DKG indices into a smaller committee panicked
+   (`PrepareForSigning: len(ks) <= i`) for every committee except `{1, 2}`.
+   It went unnoticed because the gateway always chose the first `threshold`
+   parties. Both are now fixed and `TestSigningWithEveryCommittee` covers
+   all three committees of a 2-of-3 key.
+
+   What we would still like checked: that the renumbering is correct for
+   larger and sparser committees (5-of-9, say), and that a committee
+   assembled in a different order by different parties cannot produce a
+   valid-looking signature for the wrong key rather than failing.
 2. **Message relay integrity.** Protocol messages are relayed over HTTP
    between independent processes. Is there any way a malicious or
    compromised party can influence another party's output beyond what the
@@ -121,6 +130,9 @@ Offered so an auditor can skip re-deriving it — and to be explicit that
 | Key rotation and balance migration | Real Vault soft-delete of old shares; real threshold-signed sweep transaction whose recovered sender matches the retiring address |
 | Multi-chain address derivation | Bitcoin/Cosmos/Solana checked against each chain's specification computed independently in the tests |
 | The whole path on real Kubernetes | Authenticated `POST /keys` → Temporal → real 2-of-3 DKG across three pods **on three separate nodes, over mTLS** → all three sealed distinct shares in Vault → key activated → a 2-of-3 threshold signature recovers to the DKG-derived address. Reproducible: `infrastructure/kind/up.sh`, then `smoke-test.sh` |
+| A 2-of-3 key survives losing a party | `infrastructure/kind/node-failure-drill.sh`: a worker node hosting a party the system had just chosen is cordoned and drained; the key still signs (975ms) with the remaining two, and the signature recovers to the DKG-derived address |
+| Any committee can sign, not just the first two | `TestSigningWithEveryCommittee`: one DKG, then signing with {1,2}, {1,3} and {2,3}, each recovering to the same address |
+| Certificates rotate without a restart | Real Vault PKI with a 20s TTL: three distinct serials, each replaced at two thirds of its life; plus a live TLS handshake showing the server presenting the new serial to a new connection without restarting |
 | A threshold-signed transaction is actually spendable | `infrastructure/kind/chain-test.sh`: bytes from `POST /keys/:keyId/transactions` handed to a real geth node, which accepted them, computed the same hash the service predicted, mined them successfully, moved the value, and attributes the transaction to the DKG-derived address |
 | Policy governs what is actually signed | `POST /keys/:keyId/transactions` on that cluster: the returned raw transaction was parsed back independently with `ethers`, and its sender is the DKG-derived address **and** its own `unsignedHash` is byte-identical to the digest the ceremony signed |
 | Per-pod mTLS via Vault Kubernetes auth | `vault-pki-init` authenticating with its pod's service-account token against a real Vault kubernetes auth backend, issuing a leaf with the service identity as CN and the in-cluster DNS name as a SAN, and the parties then completing a DKG over those certificates |
@@ -219,7 +231,7 @@ We would rather hand this over than have it found.
 5. **Regional failover is one component of four.** Only Postgres promotes;
    Vault, api-gateway and Temporal report "not implemented" with the reason.
 6. **Two signing routes with different guarantees, and the weaker one is
-   still exposed.** `POST /keys/:keyId/transactions` takes transaction
+   now opt-in.** `POST /keys/:keyId/transactions` takes transaction
    fields, builds and hashes the transaction itself, and signs that hash —
    so what policy evaluated and what got signed are provably the same
    transaction, and it refuses to return anything whose signature does not
@@ -228,10 +240,11 @@ We would rather hand this over than have it found.
    `POST /keys/:keyId/sign` still takes a caller-supplied digest. It is
    gated fail-closed by the same policy service, but a digest is opaque:
    **a caller who declares one transaction and submits the digest of
-   another gets a policy decision about the wrong transaction.** It exists
-   for signing things that are not Ethereum transactions. Worth an
-   auditor's opinion on whether it should be exposed at all, or gated
-   behind a per-tenant capability.
+   another gets a policy decision about the wrong transaction.** It is now
+   off unless a tenant is granted it explicitly (migration 017), so a new
+   tenant can only reach the strong route and enabling the weak one is a
+   decision on the record. Worth an auditor's opinion on whether it should
+   exist at all.
 
    Neither route constrains calldata semantics: policy evaluates
    `to`/`value`/`chainId`, so a transfer to a whitelisted address carrying

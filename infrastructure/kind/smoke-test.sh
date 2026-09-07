@@ -114,6 +114,14 @@ other=$("${CURL[@]}" -X POST "${API}/admin/customers" \
   -H 'Content-Type: application/json' -H "x-admin-key: ${ADMIN_KEY}" \
   -d "{\"email\":\"smoke-other-${suffix}@example.com\",\"name\":\"smoke-other-${suffix}\",\"tier\":\"pro\"}")
 other_key=$(echo "${other}" | jqp 'd["api_key"]')
+# Grant the second tenant the same capability as the first. Without this
+# the request is refused by the capability gate before the key is ever
+# looked up, and the check would pass while proving nothing about tenant
+# isolation -- a green test measuring the wrong thing.
+"${CURL[@]}" -o /dev/null -X PUT \
+  "${API}/admin/customers/$(echo "${other}" | jqp 'd["customer_id"]')/raw-digest-signing" \
+  -H 'Content-Type: application/json' -H "x-admin-key: ${ADMIN_KEY}" \
+  -d '{"enabled":true}'
 cross_code=$("${CURL[@]}" -o /dev/null -w '%{http_code}' -X POST "${API}/keys/${key_id}/sign" \
   -H 'Content-Type: application/json' -H "x-api-key: ${other_key}" \
   -d "{\"message\":\"${message}\",\"to\":\"0x1111111111111111111111111111111111111111\",\"value\":\"1000\",\"chainId\":11155111}")

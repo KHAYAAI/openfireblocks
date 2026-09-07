@@ -92,6 +92,8 @@ Measured:
 | Signed transaction via `POST /keys/:keyId/transactions` | **2.17s** |
 | DKG end to end, mTLS on, parties on three separate nodes | **118s** |
 | Threshold-signed transfer accepted and mined by geth | block 93, status success |
+| Same, propagated across a real p2p link to a separate signer | block 2644, status success |
+| Signing after a node hosting a committee member is drained | **975ms**, committee [2, 3] |
 | Migrations, fresh database | 16 applied |
 | Migrations, second run | 0 applied, 16 skipped |
 | Tenant isolation | tenant A sees 1 of 2 rows; no tenant context sees 0 |
@@ -224,19 +226,72 @@ so the budget has to cover the tail, not the median. The ordering invariant
 (`preParamsGenTimeout` < `PeerReadyTimeout`) still holds and is still
 pinned by a test.
 
-### 3.8 Also fixed along the way
+### 3.8 A 2-of-3 key that could not survive losing a party
 
-- **No migration ledger.** Applying migrations was all-or-nothing from an
-  empty database; a second run died on 001 with `relation "customers"
-  already exists`, which made adding a migration to a deployed environment
-  impossible. The Job now keeps `schema_migrations`, with each migration
-  and its ledger row committing in one transaction.
-- **No image could be built.** See the `build:` commit — the api-gateway
-  Dockerfile compiled Go for a TypeScript service, four Go services pinned
-  `golang:1.21` against `go 1.24` modules, `vault-pki-init` had no
-  Dockerfile at all despite the chart mounting it as an initContainer, and
-  every runtime stage placed its binary somewhere a uid-1000 pod could not
-  read it.
+Found by draining a node, which is the only way it *could* have been found.
+
+The gateway chose its signing committee as `partyIds.slice(0, threshold)` --
+always parties 1 and 2 for a 2-of-3 key. The comment above it said the point
+of a threshold "is that it tolerates absent parties". The code did the
+opposite: it turned a k-of-n key into a specific fixed k-of-k, so losing
+party 1 failed every signature while party 3 sat healthy holding a perfectly
+good share. The fault tolerance existed only in prose.
+
+The gateway now asks each party whether it is up -- over the plaintext
+liveness port added in 3.4, since the gateway holds no client certificate --
+and forms the committee from those that answer, refusing with 503 when fewer
+than `threshold` are reachable rather than starting a ceremony that cannot
+reach quorum.
+
+### 3.9 ...and the layer underneath could not sign with any other committee
+
+Fixing 3.8 immediately exposed a worse bug. The first committee that was not
+`[1, 2]` panicked inside tss-lib:
+
+    panic: PrepareForSigning: len(ks) <= i (2 <= 2)
+
+tss-lib subsets the DKG save data to the signing committee
+(`BuildLocalSaveDataSubset`) and then indexes that subset by the party's
+`PartyID.Index`. This code built the committee by filtering the DKG's sorted
+party ids, which preserved each party's *original* index -- so in a
+two-member committee, party 3 still carried index 2 and indexed past the end
+of a two-element array.
+
+The previous comment asserted the opposite: that indices were "baked into"
+the save data and must never be renumbered. They are not; tss-lib rebuilds
+them. The committee must keep the DKG's *ordering* (the save data is keyed by
+Shamir share id) while taking *fresh* indices 0..k-1. It now re-sorts copies
+of the party ids through `SortPartyIDs`, which assigns those indices --
+copies, because `SortPartyIDs` assigns `Index` in place and mutating the
+keygen ceremony's own ids would corrupt every later signing.
+
+This is exactly the question the audit-readiness document raised as open
+("is the subsetting correct in all cases, including non-contiguous
+committees?"). The answer was no. `TestSigningWithEveryCommittee` now runs
+one DKG and then signs with `{1,2}`, `{1,3}` and `{2,3}`, checking each
+signature recovers to the same address.
+
+### 3.10 A CA rotation that no running process would ever pick up
+
+The certificate reloader deliberately treated the CA as a snapshot, on the
+reasoning that roots are long-lived and a root rotation could afford a
+rolling restart. That was too convenient. When dev-mode Vault was evicted and
+regenerated its root, every request failed with `certificate signed by
+unknown authority` while the correct CA sat on disk, already written by the
+renewal sidecar -- an error that blames the peer for an entirely local
+problem. Both the leaf and the CA pool are now re-read per connection.
+
+### 3.11 The rest of the platform had never been wired to a database
+
+`policyApi`, `settlement`, `billing`, `webhooks` and `marketplace` all refuse
+to start without `DATABASE_TENANT_URL`, the RLS-scoped `app` role used for
+tenant queries -- and the chart only ever set `DATABASE_URL`, the BYPASSRLS
+admin role. Rendering the manifests never caught it because the manifests
+were valid; the services had simply never been run. They fail closed rather
+than falling back, which is why this surfaced as a crash loop instead of as
+silently disabled row-level security.
+
+### 3.12 Also fixed along the way
 
 ## 4. What is still not proven
 
@@ -260,24 +315,36 @@ Do not read section 2 as more than it is.
    `to`/`value`/`chainId`, not what a contract call does.
    `POST /sign` is a third thing entirely: it routes to `mpc-signer`, the
    single-key non-threshold service.
-3. **The chain is `geth --dev`, not a network.** A threshold-signed
-   transaction from this cluster is accepted and mined (see above), which
-   settles transaction encoding and node acceptance. It settles nothing
-   about mainnet: `geth --dev` is a single-signer instant-seal chain with
-   no consensus, no competing mempool, no reorgs and no fee market. Also,
-   `POST /keys/:keyId/transactions` returns the raw bytes and does not
-   broadcast them -- `chain-test.sh` does that step itself. Nonce
-   management is the caller's problem.
-4. **Nothing was drained or killed.** The parties are on separate nodes and
-   the constraint that puts them there is enforced, but no node was
-   cordoned, drained or failed to see whether a 2-of-3 committee really
-   keeps signing through it. The design says it should; that is an
-   argument, not evidence.
-5. **The certificate lifecycle is untested past issuance.** Certs are
-   issued per pod at startup with a 24h TTL and nothing renews them: a pod
-   older than its certificate has no path back to a valid one except
-   restarting. That is survivable given short-lived pods and is exactly the
-   kind of thing that bites at 3am on day two.
+3. **The chain is a private authority network, not a public one.**
+   `geth-poa.yaml` runs three nodes on Clique proof-of-authority, and
+   `chain-test.sh` broadcasts to a node that seals nothing -- so the
+   transaction really does have to cross a peer-to-peer link to a separate
+   signer to be mined (verified: block 2644). That covers propagation and
+   pending state, which `geth --dev` could not.
+
+   It still says nothing about mainnet. There is one authority, so there is
+   no competing block production, no reorg, and no fee market; two nodes
+   with no signing rights are not adversaries. Also,
+   `POST /keys/:keyId/transactions` returns raw bytes and does not
+   broadcast them -- `chain-test.sh` does that step itself, and nonce
+   management remains the caller's problem.
+
+4. **One node has been drained; nothing has been killed abruptly.**
+   `node-failure-drill.sh` cordons and drains the node hosting a party the
+   system had just chosen, and a 2-of-3 key still signs (975ms, committee
+   [2, 3], signature recovering to the same address). A drain is graceful,
+   though: pods are evicted in order and given time to shut down. A hard
+   node loss -- power off, kernel panic, network partition -- is not the
+   same event and has not been run. Nor has losing *two* nodes, which
+   should fail closed for a 2-of-3 key and is untested.
+5. **Vault is a single point of failure here, and the drill proves it.**
+   Draining the node that happens to host Vault destroys the PKI outright,
+   because `vault server -dev` keeps everything in memory. Every party then
+   fails to obtain a certificate, and the platform does not recover on its
+   own -- the drill re-bootstraps it explicitly and says so. That is a
+   property of the throwaway dev dependency rather than of the platform,
+   but it means nothing here has been shown to survive losing the node
+   Vault is on.
 6. **Dev-grade dependencies.** Vault in dev mode (in-memory,
    auto-unsealed, a root CA generated in place with no offline backup), one
    Postgres with no replica, well-known passwords. Nothing about HA,
@@ -286,12 +353,11 @@ Do not read section 2 as more than it is.
    and the pre-params contention in 3.7 is a direct demonstration that
    this system's behaviour under CPU pressure differs from its behaviour
    when idle. Do not read any of these numbers as capacity data.
-8. **The extra services are built but not deployed.** `policyApi`,
-   `settlement`, `billing`, `webhooks`, `marketplace` and `compliance` now
-   have working images, but are still disabled in `values-kind.yaml` and
-   have not been run. `ceremonyOrchestrator` has no image and does not
-   compile; its responsibilities are already covered by `temporal-worker`'s
-   `DKGCeremonyWorkflow`.
+8. **The extra services run, but nothing exercises them.** `policyApi`,
+   `settlement`, `billing`, `webhooks`, `marketplace` and `compliance` are
+   deployed and healthy -- which is how the missing `DATABASE_TENANT_URL`
+   in 3.11 was found -- but no test drives their endpoints. "Starts and
+   stays up" is a low bar. `ceremony-orchestrator` has been deleted.
 
 ## 5. Running it in a sandboxed environment
 

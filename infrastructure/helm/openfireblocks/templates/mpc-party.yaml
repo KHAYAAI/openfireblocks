@@ -260,5 +260,15 @@ spec:
     - name: http
       port: {{ $.Values.mpcParty.port }}
       targetPort: http
+    {{- if $.Values.mpcParty.mtls.enabled }}
+    # Liveness only, in plaintext. Exposed on the Service as well as to
+    # kubelet because the API gateway uses it to find out which parties are
+    # actually up before choosing a signing committee -- and the gateway
+    # holds no client certificate, so it cannot ask over the mTLS port.
+    # Nothing but GET /health is served here; see serveHealthPlaintext.
+    - name: health
+      port: {{ $.Values.mpcParty.healthPort }}
+      targetPort: health
+    {{- end }}
 {{- end }}
 {{- end }}

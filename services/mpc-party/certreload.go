@@ -1,10 +1,13 @@
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
 	"log"
+	"net"
+	"net/http"
 	"os"
 	"sync/atomic"
 	"time"
@@ -174,13 +177,41 @@ func (r *certReloader) serverConfig() *tls.Config {
 	}
 }
 
+// clientTransport builds a transport that re-reads *both* halves of the
+// mTLS material for every new connection.
+//
+// GetClientCertificate covers the leaf, but there is no client-side
+// equivalent for RootCAs: a config handed to http.Transport keeps the CA
+// pool it was built with, forever. The earlier reasoning here was that the
+// CA is long-lived and a root rotation could afford a rolling restart.
+// That was too convenient -- when the CA did change underneath a running
+// process, every request failed with "certificate signed by unknown
+// authority" while the correct CA sat on disk, already written. The error
+// blames the peer for an entirely local problem.
+//
+// Connections are pooled, so dialling per connection costs nothing.
+func (r *certReloader) clientTransport() *http.Transport {
+	return &http.Transport{
+		DialTLSContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			host, _, err := net.SplitHostPort(addr)
+			if err != nil {
+				return nil, err
+			}
+			b := r.current.Load()
+			return (&tls.Dialer{Config: &tls.Config{
+				ServerName:   host,
+				RootCAs:      b.caPool,
+				Certificates: []tls.Certificate{b.cert},
+				MinVersion:   tls.VersionTLS13,
+			}}).DialContext(ctx, network, addr)
+		},
+	}
+}
+
 // clientConfig builds the config for this party's outbound connections.
 //
-// GetClientCertificate is consulted per handshake, so the leaf this party
-// presents to its peers follows a rotation. RootCAs is a snapshot: there is
-// no client-side equivalent of GetConfigForClient, and the CA is the
-// long-lived half -- a root rotation is a planned event that can afford a
-// rolling restart, where a leaf expiring every day cannot.
+// Prefer clientTransport where an http.Client is being built: RootCAs here
+// is a snapshot.
 func (r *certReloader) clientConfig() *tls.Config {
 	base := r.current.Load()
 	return &tls.Config{

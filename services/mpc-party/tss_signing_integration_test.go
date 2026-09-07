@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -158,4 +159,147 @@ func TestRealMultiPartySigningOverHTTP(t *testing.T) {
 	}
 
 	t.Logf("SUCCESS: real threshold signature over real HTTP recovers to the DKG-derived address %s", recoveredAddress)
+}
+
+// TestSigningWithEveryCommittee proves a 2-of-3 key can actually be signed
+// with by *any* two of its three parties.
+//
+// That is the entire availability claim of threshold signing, and it was
+// false. The gateway always chose the first `threshold` parties by id, so
+// only the committee {1, 2} was ever exercised -- and only in that committee
+// do a party's DKG index and its committee index coincide. The first time a
+// different committee was tried, because party 1's node had been drained,
+// tss-lib panicked with "PrepareForSigning: len(ks) <= i": the committee
+// carried original DKG indices into a subset that no longer had that many
+// entries.
+//
+// One DKG, then every committee in turn, because the failure depends
+// entirely on *which* parties are chosen. Testing only {1, 2} is what let
+// this survive.
+func TestSigningWithEveryCommittee(t *testing.T) {
+	if testing.Short() {
+		t.Skip("real DKG + signing takes real time; skipped in -short")
+	}
+
+	const n = 3
+	const threshold = 1 // 2-of-3
+
+	managers := make(map[int]*TSSPartyManager, n)
+	peers := make(map[int]string, n)
+	for i := 1; i <= n; i++ {
+		// Generous, because safe-prime generation is CPU-bound and this
+		// test runs three parties at once: a peer that is mid-generation
+		// legitimately takes a while to answer, and a tight client timeout
+		// turns that into a spurious relay failure.
+		mgr := NewTSSPartyManager(i, &http.Client{Timeout: 90 * time.Second})
+		managers[i] = mgr
+		router := mux.NewRouter()
+		ps := &PartyServer{partyID: i, tssManager: mgr}
+		router.HandleFunc("/tss/keygen/message", ps.HandleTSSKeygenMessage).Methods(http.MethodPost)
+		router.HandleFunc("/tss/sign/message", ps.HandleTSSSignMessage).Methods(http.MethodPost)
+		server := httptest.NewServer(router)
+		peers[i] = server.URL
+		t.Cleanup(server.Close)
+	}
+
+	ceremonyID := "every-committee-keygen"
+	for i := 1; i <= n; i++ {
+		if err := managers[i].StartKeygen(ceremonyID, threshold, peers); err != nil {
+			t.Fatalf("party %d: StartKeygen failed: %v", i, err)
+		}
+	}
+
+	keygenResults := make(map[int]*KeygenStatusResult)
+	deadline := time.Now().Add(5 * time.Minute)
+	for len(keygenResults) < n && time.Now().Before(deadline) {
+		for i := 1; i <= n; i++ {
+			if _, done := keygenResults[i]; done {
+				continue
+			}
+			status, err := managers[i].GetStatus(ceremonyID)
+			if err != nil {
+				t.Fatalf("party %d: GetStatus failed: %v", i, err)
+			}
+			switch status.Status {
+			case ceremonyCompleted:
+				keygenResults[i] = status
+			case ceremonyFailed:
+				t.Fatalf("party %d: keygen failed: %s", i, status.Error)
+			}
+		}
+		if len(keygenResults) < n {
+			time.Sleep(500 * time.Millisecond)
+		}
+	}
+	if len(keygenResults) != n {
+		t.Fatalf("timed out waiting for keygen; got %d/%d parties", len(keygenResults), n)
+	}
+	sharedAddress := keygenResults[1].Address
+
+	// {1,2} is the committee that always worked. {1,3} and {2,3} are the
+	// ones that panicked: in each, at least one member's DKG index is
+	// larger than the committee it now belongs to.
+	for _, committee := range [][]int{{1, 2}, {1, 3}, {2, 3}} {
+		committee := committee
+		name := fmt.Sprintf("committee_%d_%d", committee[0], committee[1])
+		t.Run(name, func(t *testing.T) {
+			messageHash := sha256.Sum256([]byte("committee " + name))
+			signID := "sign-" + name
+
+			for _, partyID := range committee {
+				if err := managers[partyID].StartSigning(signID, ceremonyID, messageHash[:], committee); err != nil {
+					t.Fatalf("party %d: StartSigning failed: %v", partyID, err)
+				}
+			}
+
+			results := make(map[int]*SigningStatusResult)
+			deadline := time.Now().Add(3 * time.Minute)
+			for len(results) < len(committee) && time.Now().Before(deadline) {
+				for _, partyID := range committee {
+					if _, done := results[partyID]; done {
+						continue
+					}
+					status, err := managers[partyID].GetSigningStatus(signID)
+					if err != nil {
+						t.Fatalf("party %d: GetSigningStatus failed: %v", partyID, err)
+					}
+					switch status.Status {
+					case ceremonyCompleted:
+						results[partyID] = status
+					case ceremonyFailed:
+						t.Fatalf("party %d: signing failed with committee %v: %s", partyID, committee, status.Error)
+					}
+				}
+				if len(results) < len(committee) {
+					time.Sleep(250 * time.Millisecond)
+				}
+			}
+			if len(results) != len(committee) {
+				t.Fatalf("committee %v timed out; got %d/%d parties", committee, len(results), len(committee))
+			}
+
+			// The signature has to recover to the *same* address the DKG
+			// derived. A committee that produced a valid-looking signature
+			// for a different key would be far worse than one that failed.
+			sig := results[committee[0]].Signature
+			for _, partyID := range committee {
+				if results[partyID].Signature != sig {
+					t.Fatalf("committee %v did not converge on one signature", committee)
+				}
+			}
+			raw, err := hex.DecodeString(sig)
+			if err != nil {
+				t.Fatalf("signature is not hex: %v", err)
+			}
+			pub, err := crypto.SigToPub(messageHash[:], raw)
+			if err != nil {
+				t.Fatalf("committee %v produced an unrecoverable signature: %v", committee, err)
+			}
+			got := crypto.PubkeyToAddress(*pub).Hex()
+			if got != sharedAddress {
+				t.Fatalf("committee %v signed for %s, but the key is %s", committee, got, sharedAddress)
+			}
+			t.Logf("committee %v signed for %s", committee, got)
+		})
+	}
 }

@@ -54,7 +54,7 @@ func NewActivities(policyURL, mpcURL, ethRPC string, confirmations int64, databa
 	}
 
 	httpClient := &http.Client{Timeout: 15 * time.Second}
-	tlsConfig, mtlsEnabled, err := clientTLSConfigFromEnv()
+	mtlsTransport, mtlsEnabled, err := mtlsTransportFromEnv()
 	if err != nil {
 		// Cert files were specified but unusable -- fail loudly at
 		// startup rather than silently falling back to plaintext, the
@@ -62,7 +62,7 @@ func NewActivities(policyURL, mpcURL, ethRPC string, confirmations int64, databa
 		log.Fatalf("mTLS configuration error: %v", err)
 	}
 	if mtlsEnabled {
-		httpClient.Transport = &http.Transport{TLSClientConfig: tlsConfig}
+		httpClient.Transport = mtlsTransport
 	}
 
 	return &Activities{

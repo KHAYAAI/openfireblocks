@@ -21,15 +21,34 @@ import (
 // state machine, but relayed over real HTTP between independent processes
 // instead of in-process Go channels.
 //
-// A signing ceremony always references a completed keygen ceremony by ID
-// and reuses that ceremony's tsscommon.SortedPartyIDs verbatim (not
-// re-derived from a subset) -- each PartyID's .Index there is baked into
-// the LocalPartySaveData produced at DKG time (Ks, BigXj, etc. are keyed
-// by original position among ALL n DKG parties), so a signing committee
-// smaller than n must select a SUBSET of those exact objects, in their
-// original relative order, never a freshly re-sorted list of just the
-// committee -- re-sorting would silently reassign indices and produce a
-// cryptographically invalid (or, worse, silently wrong) result.
+// A signing ceremony references a completed keygen ceremony by ID and
+// builds its committee from that ceremony's parties. Two things have to be
+// true of that committee, and they pull in opposite directions:
+//
+//   - The *order* must match the DKG's, because the save data is keyed by
+//     Shamir share id. tss-lib's BuildLocalSaveDataSubset re-associates
+//     Ks/BigXj/PaillierPKs/NTildej/H1j/H2j by looking each committee
+//     member's key up in the original data, so the committee must contain
+//     exactly the DKG's PartyID keys, sorted the same way.
+//
+//   - The *indices* must be renumbered 0..len(committee)-1. tss-lib subsets
+//     the save data to the committee, then indexes it with this party's
+//     PartyID.Index. Carrying the original DKG index into a smaller
+//     committee therefore indexes past the end of the subset.
+//
+// This code previously did the first and not the second, on the reasoning
+// that indices were "baked into" the save data. They are not -- tss-lib
+// rebuilds them. Committees were always [1, 2] in practice, where the
+// original and committee indices happen to coincide, so it worked. The
+// first committee that did not start at party 1 (a committee of [2, 3],
+// chosen because party 1's node had been drained) panicked inside tss-lib
+// with "PrepareForSigning: len(ks) <= i".
+//
+// So: filter the DKG's sorted ids to the committee, then re-sort *copies*
+// through tsscommon.SortPartyIDs, which assigns fresh indices. Copies
+// because SortPartyIDs assigns Index in place, and mutating the keygen
+// ceremony's own PartyIDs would corrupt every later signing that reads
+// them.
 
 // tssSigningCeremony holds one in-flight or completed signing ceremony.
 type tssSigningCeremony struct {
@@ -92,17 +111,21 @@ func (m *TSSPartyManager) StartSigning(signID, keygenCeremonyID string, messageH
 		return fmt.Errorf("this party (%d) is not a member of the requested signing committee", m.partyID)
 	}
 
-	// Subset fullSortedIDs preserving original order/Index -- see the
-	// package doc comment above for why this must not be a fresh sort.
-	var committee tsscommon.SortedPartyIDs
+	// Select the committee out of the DKG's parties, as fresh PartyID
+	// values, then let tsscommon.SortPartyIDs assign committee-relative
+	// indices. See the package doc comment for why both halves matter and
+	// why these must be copies.
+	unsorted := make(tsscommon.UnSortedPartyIDs, 0, len(committeePartyIDs))
 	peers := make(map[int]string, len(committeePartyIDs))
 	for _, sortedID := range fullSortedIDs {
 		id := int(sortedID.KeyInt().Int64())
 		if wanted[id] {
-			committee = append(committee, sortedID)
+			unsorted = append(unsorted,
+				tsscommon.NewPartyID(sortedID.Id, sortedID.Moniker, sortedID.KeyInt()))
 			peers[id] = fullPeers[id]
 		}
 	}
+	committee := tsscommon.SortPartyIDs(unsorted)
 	if len(committee) != len(committeePartyIDs) {
 		return fmt.Errorf("one or more requested committee party IDs were not part of the original DKG ceremony %s", keygenCeremonyID)
 	}

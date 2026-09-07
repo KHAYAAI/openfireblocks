@@ -50,7 +50,7 @@ type DKGRoundCoordinator struct {
 // env vars unset (the default) falls back to plain HTTP, matching every
 // existing deployment and test.
 func NewDKGRoundCoordinator() (*DKGRoundCoordinator, error) {
-	tlsConfig, mtlsEnabled, err := clientTLSConfigFromEnv()
+	mtlsTransport, mtlsEnabled, err := mtlsTransportFromEnv()
 	if err != nil {
 		return nil, fmt.Errorf("mTLS configuration error: %w", err)
 	}
@@ -58,7 +58,7 @@ func NewDKGRoundCoordinator() (*DKGRoundCoordinator, error) {
 	httpClient := &http.Client{Timeout: 2 * time.Minute}
 	scheme := "http"
 	if mtlsEnabled {
-		httpClient.Transport = &http.Transport{TLSClientConfig: tlsConfig}
+		httpClient.Transport = mtlsTransport
 		scheme = "https"
 	}
 

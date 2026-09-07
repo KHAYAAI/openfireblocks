@@ -46,6 +46,18 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.external.databaseAdminUrlSecret }}
                   key: database-admin-url
+            # The RLS-scoped `app` role, for every query that belongs to one
+            # tenant. Distinct from DATABASE_URL above, which is the
+            # BYPASSRLS `app_admin` role for cross-tenant work: handing this
+            # service only the admin DSN would silently disable row-level
+            # security for its tenant-scoped queries. The service refuses to
+            # start without it rather than falling back -- which is how this
+            # missing wiring was found, by deploying it.
+            - name: DATABASE_TENANT_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.external.databaseUrlSecret }}
+                  key: database-url
             # Empty disables Stripe (services/billing/main.go's
             # NewStripeClient tolerates an empty key and fails closed on
             # actual billing calls rather than fabricating success).

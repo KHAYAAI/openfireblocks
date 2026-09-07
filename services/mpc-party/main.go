@@ -311,13 +311,13 @@ func main() {
 	ps := NewPartyServer(partyID)
 	ps.tss = NewTSSWrapper(partyID, 7, 3) // Default: 7 parties, threshold 3
 
-	relayTLSConfig, relayMTLSEnabled, err := clientTLSConfigFromEnv()
+	relayTransport, relayMTLSEnabled, err := mtlsTransportFromEnv()
 	if err != nil {
 		log.Fatalf("mTLS configuration error: %v", err)
 	}
 	relayClient := &http.Client{Timeout: 30 * time.Second}
 	if relayMTLSEnabled {
-		relayClient.Transport = &http.Transport{TLSClientConfig: relayTLSConfig}
+		relayClient.Transport = relayTransport
 	}
 	ps.tssManager = NewTSSPartyManager(partyID, relayClient)
 

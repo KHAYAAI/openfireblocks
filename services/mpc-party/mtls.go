@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/tls"
+	"net/http"
 	"os"
 )
 
@@ -87,4 +88,14 @@ func clientTLSConfigFromEnv() (*tls.Config, bool, error) {
 		return nil, false, err
 	}
 	return r.clientConfig(), true, nil
+}
+
+// mtlsTransportFromEnv returns a transport that re-reads both the leaf and
+// the CA from disk per connection -- see certReloader.clientTransport.
+func mtlsTransportFromEnv() (*http.Transport, bool, error) {
+	r, ok, err := reloader()
+	if err != nil || !ok {
+		return nil, false, err
+	}
+	return r.clientTransport(), true, nil
 }

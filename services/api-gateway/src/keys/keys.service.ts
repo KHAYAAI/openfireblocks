@@ -348,6 +348,46 @@ export class KeysService {
     }
   }
 
+  // Asks every party whether it is up, and returns the ids that answered,
+  // in id order.
+  //
+  // Over the plaintext liveness port, not the mTLS one: this service holds
+  // no client certificate, and the health endpoint deliberately serves
+  // nothing but GET /health (see services/mpc-party/main.go).
+  //
+  // Probed in parallel with a short timeout, because this sits directly in
+  // front of a signing request. A party that cannot answer a health check
+  // within a second is not one to hand a signing ceremony to; the timeout
+  // is the point, not an implementation detail.
+  private async healthyParties(partyIds: number[]): Promise<number[]> {
+    const template =
+      process.env.MPC_PARTY_HEALTH_TEMPLATE ?? 'http://party-{id}:7000/health';
+    const timeoutMs = Number(process.env.MPC_PARTY_HEALTH_TIMEOUT_MS ?? 1000);
+
+    const results = await Promise.all(
+      partyIds.map(async (id) => {
+        const url = template.replace('{id}', String(id));
+        try {
+          const res = await fetch(url, {
+            signal: AbortSignal.timeout(timeoutMs),
+          });
+          return res.ok ? id : null;
+        } catch {
+          return null;
+        }
+      }),
+    );
+    const up = results.filter((id): id is number => id !== null);
+    if (up.length < partyIds.length) {
+      const down = partyIds.filter((id) => !up.includes(id));
+      this.logger.warn(
+        `MPC parties not reachable: ${down.join(', ')}; ` +
+          `choosing a signing committee from ${up.join(', ')}`,
+      );
+    }
+    return up;
+  }
+
   // Resolves the key's ceremony, picks a threshold-sized committee, and
   // runs the signing workflow over `messageHash`.
   private async runSigningCeremony(
@@ -371,12 +411,29 @@ export class KeysService {
     }
 
     // threshold signers, not all total_parties: signing with the whole
-    // committee would make an n-of-n key out of a k-of-n one, and the point
-    // of the threshold is that it tolerates absent parties. The first
-    // threshold by id is a deterministic choice, not a load-balancing one.
+    // committee would make an n-of-n key out of a k-of-n one.
     const signerCount = Math.min(key.threshold, ceremony.total_parties);
     const { partyIds, partyEndpoints } = derivePartyEndpoints(ceremony.total_parties);
-    const parties = partyIds.slice(0, signerCount);
+
+    // Chosen from the parties that are actually up.
+    //
+    // This used to be partyIds.slice(0, signerCount) -- always parties 1
+    // and 2 for a 2-of-3 key. That reduces a k-of-n key to a specific
+    // k-of-k: lose party 1 and every signature fails, even though party 3
+    // is healthy and holds a perfectly good share. The whole availability
+    // argument for threshold signing is that it survives losing a party,
+    // and a fixed committee is exactly the thing that makes it not.
+    //
+    // Found by draining a node. See infrastructure/kind/node-failure-drill.sh.
+    const healthy = await this.healthyParties(partyIds);
+    if (healthy.length < signerCount) {
+      throw new ServiceUnavailableException(
+        `only ${healthy.length} of ${ceremony.total_parties} MPC parties are reachable; ` +
+          `${signerCount} are required to sign with this key`,
+      );
+    }
+    const parties = healthy.slice(0, signerCount);
+    const endpointOf = (id: number) => partyEndpoints[partyIds.indexOf(id)];
 
     this.logger.log(
       `threshold signing with key ${keyId} (ceremony ${ceremony.ceremony_id}, ` +
@@ -390,7 +447,10 @@ export class KeysService {
         ceremonyId: ceremony.ceremony_id,
         message: messageHash,
         partyIds: parties,
-        partyEndpoints: partyEndpoints.slice(0, signerCount),
+        // Indexed by the chosen ids, not sliced off the front: with a
+        // committee of [1, 3] the endpoints must be party-1's and
+        // party-3's, and slicing would have sent party-2's.
+        partyEndpoints: parties.map(endpointOf),
         chainId: key.blockchain,
       });
     } catch (err) {

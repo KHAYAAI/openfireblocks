@@ -102,6 +102,17 @@ spec:
             # against an mTLS party fails with "Client sent an HTTP request
             # to an HTTPS server"; the short name fails hostname
             # verification. Both are silent until a ceremony is attempted.
+            # Where the gateway asks each party whether it is up, so a
+            # signing committee is chosen from parties that actually
+            # answer. Plaintext and liveness-only: the gateway holds no
+            # client certificate and could not use the mTLS port even if
+            # it wanted to.
+            - name: MPC_PARTY_HEALTH_TEMPLATE
+              {{- if .Values.mpcParty.mtls.enabled }}
+              value: {{ printf "http://party-{id}.%s.svc.cluster.local:%d/health" .Release.Namespace (int .Values.mpcParty.healthPort) | quote }}
+              {{- else }}
+              value: {{ printf "http://party-{id}:%d/health" (int .Values.mpcParty.port) | quote }}
+              {{- end }}
             - name: MPC_PARTY_ENDPOINT_TEMPLATE
               {{- if .Values.mpcParty.mtls.enabled }}
               value: {{ printf "https://party-{id}.%s.svc.cluster.local:%d" .Release.Namespace (int .Values.mpcParty.port) | quote }}
