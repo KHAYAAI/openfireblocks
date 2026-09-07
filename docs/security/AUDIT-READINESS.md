@@ -121,6 +121,7 @@ Offered so an auditor can skip re-deriving it — and to be explicit that
 | Key rotation and balance migration | Real Vault soft-delete of old shares; real threshold-signed sweep transaction whose recovered sender matches the retiring address |
 | Multi-chain address derivation | Bitcoin/Cosmos/Solana checked against each chain's specification computed independently in the tests |
 | The whole path on real Kubernetes | Authenticated `POST /keys` → Temporal → real 2-of-3 DKG across three pods **on three separate nodes, over mTLS** → all three sealed distinct shares in Vault → key activated → a 2-of-3 threshold signature recovers to the DKG-derived address. Reproducible: `infrastructure/kind/up.sh`, then `smoke-test.sh` |
+| A threshold-signed transaction is actually spendable | `infrastructure/kind/chain-test.sh`: bytes from `POST /keys/:keyId/transactions` handed to a real geth node, which accepted them, computed the same hash the service predicted, mined them successfully, moved the value, and attributes the transaction to the DKG-derived address |
 | Policy governs what is actually signed | `POST /keys/:keyId/transactions` on that cluster: the returned raw transaction was parsed back independently with `ethers`, and its sender is the DKG-derived address **and** its own `unsignedHash` is byte-identical to the digest the ceremony signed |
 | Per-pod mTLS via Vault Kubernetes auth | `vault-pki-init` authenticating with its pod's service-account token against a real Vault kubernetes auth backend, issuing a leaf with the service identity as CN and the in-cluster DNS name as a SAN, and the parties then completing a DKG over those certificates |
 | Parties are actually spread | Enforced `requiredDuringScheduling` anti-affinity; the three party pods land on three distinct worker nodes, and the chart refuses to schedule them otherwise rather than silently co-locating key shares |
@@ -181,15 +182,16 @@ already reasoned about and challenge the reasoning where it is wrong.
 
 We would rather hand this over than have it found.
 
-1. **Ethereum transactions have now been broadcast and mined — against a
-   local dev node (geth --dev), not a public network.** A signed transfer
-   and a full balance-migration sweep were both accepted, mined and
-   confirmed, and the swept address ended at exactly 0 wei. This proves
-   the encoding, broadcast and confirmation path against a real node; it
-   proves nothing about mainnet economics, reorgs, mempool behaviour or
-   public network conditions. **Bitcoin, Cosmos and Solana remain entirely
-   unbroadcast** — their `BroadcastTransaction` returns "not implemented"
-   outright.
+1. **Ethereum transactions are broadcast and mined against development
+   nodes only.** A threshold-signed transfer built by the gateway is
+   accepted and mined by a real geth node running in the cluster, moves
+   value, and is attributed by the node to the DKG-derived address
+   (`infrastructure/kind/chain-test.sh`). That proves the encoding,
+   broadcast and confirmation path. It proves nothing about mainnet
+   economics, reorgs, mempool behaviour or public network conditions --
+   `geth --dev` is single-signer instant-seal with no consensus.
+   **Bitcoin, Cosmos and Solana remain entirely unbroadcast**: their
+   `BroadcastTransaction` returns "not implemented" outright.
 2. **The cluster deployment is four nodes on one host, and Terraform is
    still unapplied.** The chart has been applied and the whole customer
    path runs on real Kubernetes 1.29.14 with containerd 2.0.2, with the

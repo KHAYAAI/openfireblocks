@@ -62,6 +62,20 @@ back with `ethers` outside the service, and
 That second equality is the whole claim of the endpoint: what policy
 evaluated and what got signed are provably the same transaction.
 
+And finally, `infrastructure/kind/chain-test.sh` closes the loop against a
+real node (`infrastructure/kind/geth-dev.yaml`). Recovering a signature
+correctly is necessary and not sufficient: an encoding mistake -- a wrong
+EIP-155 `v`, a mis-serialised field, an off-by-one in what gets hashed --
+still yields a signature that recovers to the right address while being
+rejected by every node on the network. So the raw bytes are handed to geth:
+
+- the node **accepts** them, and computes the same transaction hash the
+  service predicted,
+- the transaction is **mined** with status success,
+- the recipient's balance actually changes, and
+- the node's own `eth_getTransactionByHash` attributes the transaction to
+  the DKG-derived address.
+
 Also checked, because a signing route is only as good as what it refuses:
 an over-limit request is denied 403 with the specific policy reason, a
 different tenant asking to sign with the same key gets 404 (row-level
@@ -77,6 +91,7 @@ Measured:
 | Threshold signature via `POST /keys/:keyId/sign` | **1.06s** |
 | Signed transaction via `POST /keys/:keyId/transactions` | **2.17s** |
 | DKG end to end, mTLS on, parties on three separate nodes | **118s** |
+| Threshold-signed transfer accepted and mined by geth | block 93, status success |
 | Migrations, fresh database | 16 applied |
 | Migrations, second run | 0 applied, 16 skipped |
 | Tenant isolation | tenant A sees 1 of 2 rows; no tenant context sees 0 |
@@ -245,9 +260,14 @@ Do not read section 2 as more than it is.
    `to`/`value`/`chainId`, not what a contract call does.
    `POST /sign` is a third thing entirely: it routes to `mpc-signer`, the
    single-key non-threshold service.
-3. **No chain.** `ethereumRpcSepolia` is empty in this deployment, so
-   nothing was broadcast from the cluster. Chain behaviour is covered
-   separately by the `live`-tagged tests against a real geth node.
+3. **The chain is `geth --dev`, not a network.** A threshold-signed
+   transaction from this cluster is accepted and mined (see above), which
+   settles transaction encoding and node acceptance. It settles nothing
+   about mainnet: `geth --dev` is a single-signer instant-seal chain with
+   no consensus, no competing mempool, no reorgs and no fee market. Also,
+   `POST /keys/:keyId/transactions` returns the raw bytes and does not
+   broadcast them -- `chain-test.sh` does that step itself. Nonce
+   management is the caller's problem.
 4. **Nothing was drained or killed.** The parties are on separate nodes and
    the constraint that puts them there is enforced, but no node was
    cordoned, drained or failed to see whether a 2-of-3 committee really

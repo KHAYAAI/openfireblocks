@@ -181,3 +181,7 @@ echo "  kubectl -n ${NS} port-forward svc/ofb-openfireblocks-api-gateway 3000:30
 echo
 echo "Then exercise the full path:"
 echo "  ./infrastructure/kind/smoke-test.sh"
+echo
+echo "To also prove a threshold-signed transaction is accepted by a real node:"
+echo "  kubectl apply -f ${HERE}/geth-dev.yaml"
+echo "  ./infrastructure/kind/chain-test.sh"
