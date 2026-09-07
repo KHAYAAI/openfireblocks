@@ -128,6 +128,16 @@ mpcParty:
   # production gives up the property the whole design exists for. "off"
   # removes the constraint entirely.
   spreadAcrossNodes: required # required | preferred | off
+  # Plaintext port carrying only GET /health, started when mtls.enabled.
+  #
+  # With mTLS on, the main port is HTTPS requiring a client certificate, and
+  # a Kubernetes httpGet probe speaks plaintext and presents none -- so
+  # every liveness probe fails the handshake and kubelet kills the
+  # container, forever. Probing over HTTPS does not help either: kubelet has
+  # no client certificate to offer, and requiring one is the whole point.
+  # This port exposes liveness only: no ceremony endpoints, no /info, no
+  # /metrics. See serveHealthPlaintext in services/mpc-party/main.go.
+  healthPort: 7001
   resources:
     requests: { cpu: 250m, memory: 256Mi }
     limits: { cpu: "1", memory: 512Mi }

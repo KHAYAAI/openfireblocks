@@ -37,7 +37,11 @@ type tssMessageEnvelope struct {
 // respectively -- inverted -- so a party that used its full allowance was
 // certain to be abandoned mid-ceremony. TestPreParamsTimeoutIsBelowPeerReadyTimeout
 // pins the ordering.
-const PeerReadyTimeout = 3 * time.Minute
+//
+// Raised alongside preParamsGenTimeout: a peer that is legitimately still
+// searching for safe primes has to remain worth waiting for, and giving up
+// on it aborts a ceremony that would otherwise have completed.
+const PeerReadyTimeout = 6 * time.Minute
 
 // retryInterval is how often to re-offer a message to a not-yet-ready peer.
 const retryInterval = 250 * time.Millisecond

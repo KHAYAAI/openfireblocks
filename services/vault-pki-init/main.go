@@ -57,6 +57,10 @@ func main() {
 	pkiMount := getenv("VAULT_PKI_MOUNT", "pki")
 	pkiRole := getenv("VAULT_PKI_ROLE", "internal-service")
 	ttl := getenv("CERT_TTL", "24h")
+	// Additional DNS SANs, comma-separated. Peers verify the name they
+	// dialled, which is the platform's DNS name for this pod, not the
+	// service identity in COMMON_NAME -- see issueCertificate.
+	altNames := os.Getenv("ALT_NAMES")
 
 	client := &http.Client{Timeout: 30 * time.Second}
 
@@ -74,7 +78,7 @@ func main() {
 		log.Printf("authenticated to Vault via kubernetes auth (role: %s)", k8sRole)
 	}
 
-	cert, err := issueCertificate(client, vaultAddr, token, pkiMount, pkiRole, commonName, ttl)
+	cert, err := issueCertificate(client, vaultAddr, token, pkiMount, pkiRole, commonName, altNames, ttl)
 	if err != nil {
 		log.Fatalf("failed to issue certificate: %v", err)
 	}
@@ -83,7 +87,12 @@ func main() {
 		log.Fatalf("failed to write certificate files: %v", err)
 	}
 
-	log.Printf("issued and wrote mTLS certificate for %s to %s (serial: %s, ttl: %s)", commonName, outDir, cert.SerialNumber, ttl)
+	sanNote := ""
+	if altNames != "" {
+		sanNote = " (SANs: " + altNames + ")"
+	}
+	log.Printf("issued and wrote mTLS certificate for %s%s to %s (serial: %s, ttl: %s)",
+		commonName, sanNote, outDir, cert.SerialNumber, ttl)
 }
 
 // vaultIssueResponse is the subset of Vault's PKI issue response this
@@ -106,11 +115,24 @@ type issuedCert struct {
 	SerialNumber string
 }
 
-func issueCertificate(client *http.Client, vaultAddr, token, mount, role, commonName, ttl string) (*issuedCert, error) {
-	body, err := json.Marshal(map[string]string{
+// issueCertificate requests a leaf from Vault's PKI engine.
+//
+// altNames is a comma-separated list of additional DNS SANs, and is not
+// cosmetic: the common name identifies the *service* (party-1.internal),
+// but peers reach it at whatever DNS name the platform gives it
+// (party-1.openfireblocks.svc.cluster.local). TLS verifies the name the
+// client dialled, so without SANs covering that name every mutually
+// authenticated connection fails hostname verification -- and the failure
+// looks like a certificate problem rather than a naming one.
+func issueCertificate(client *http.Client, vaultAddr, token, mount, role, commonName, altNames, ttl string) (*issuedCert, error) {
+	payload := map[string]string{
 		"common_name": commonName,
 		"ttl":         ttl,
-	})
+	}
+	if altNames != "" {
+		payload["alt_names"] = altNames
+	}
+	body, err := json.Marshal(payload)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}

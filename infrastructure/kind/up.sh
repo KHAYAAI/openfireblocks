@@ -48,12 +48,30 @@ need docker; need kind; need kubectl; need helm
 # --platform linux/amd64 rather than --all-platforms: a multi-arch image
 # pulled for this host only has this platform's blobs locally, and
 # --all-platforms fails on the missing ones.
+# The nodes that can actually run workloads.
+#
+# kind taints the control plane NoSchedule whenever the cluster has at
+# least one worker, so pushing images there costs a full copy of every
+# image for nothing -- and with three workers that was enough to run the
+# host out of disk mid-load. On a single-node cluster kind leaves the
+# control plane schedulable, so it is included there.
+schedulable_nodes() {
+  local nodes workers
+  nodes="$(kind get nodes --name "${CLUSTER}")"
+  workers="$(echo "${nodes}" | grep -- '-worker' || true)"
+  if [[ -n "${workers}" ]]; then
+    echo "${workers}"
+  else
+    echo "${nodes}"
+  fi
+}
+
 load_image() {
   local image="$1"
   local archive
   archive="$(mktemp)"
   docker save "${image}" -o "${archive}"
-  for node in $(kind get nodes --name "${CLUSTER}"); do
+  for node in $(schedulable_nodes); do
     docker exec -i "${node}" \
       ctr -n k8s.io images import --platform linux/amd64 - < "${archive}" >/dev/null
   done
@@ -76,7 +94,7 @@ if [[ -z "${SKIP_BUILD:-}" ]]; then
   "${ROOT}/scripts/build-images.sh"
 fi
 
-echo "==> loading images into the node"
+echo "==> loading images into the schedulable nodes"
 for svc in "${SERVICES[@]}"; do
   load_image "openfireblocks/${svc}:latest"
   echo "    openfireblocks/${svc}:latest"

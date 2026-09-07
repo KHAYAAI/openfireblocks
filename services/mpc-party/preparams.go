@@ -52,7 +52,15 @@ type preParamsPool struct {
 // party that took its allotted time was guaranteed to be abandoned. There
 // is a compile-time-adjacent check on this ordering in
 // TestPreParamsTimeoutIsBelowPeerReadyTimeout.
-const preParamsGenTimeout = 90 * time.Second
+//
+// Four minutes rather than ninety seconds, measured rather than guessed:
+// on a cluster where each party is capped at one CPU, ninety seconds was
+// not enough for the search to converge and ceremonies failed with
+// "timeout or error while generating the safe primes". Safe-prime search
+// is a randomised search with a heavy tail -- the same machine can take
+// five seconds on one attempt and several minutes on the next -- so the
+// budget has to cover the tail, not the median.
+const preParamsGenTimeout = 4 * time.Minute
 
 func newPreParamsPool(size int) *preParamsPool {
 	if size < 1 {

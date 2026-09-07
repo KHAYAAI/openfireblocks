@@ -93,10 +93,19 @@ func NewTSSPartyManager(partyID int, client *http.Client) *TSSPartyManager {
 }
 
 // preParamsPoolSize is how many pre-generated parameter sets to keep warm.
-// One covers the common case of a single ceremony at a time; the second
-// means a party that has just consumed one is not back on the slow path if
-// another ceremony arrives while the pool refills.
-const preParamsPoolSize = 2
+//
+// One, not two. The filler regenerates as soon as a slot frees, so a pool
+// of two means each party keeps two safe-prime searches running -- six
+// across a three-party committee -- and safe-prime generation is entirely
+// CPU-bound. Measured on a cluster where each party is capped at one CPU,
+// that background load was enough to starve the *inline* generation a new
+// ceremony depends on, and ceremonies failed outright. The deeper pool made
+// the cold path slower, not faster.
+//
+// One slot still covers the case it was meant to: a ceremony arriving while
+// the party is otherwise idle takes a ready-made set instead of paying for
+// generation on the critical path.
+const preParamsPoolSize = 1
 
 // deterministicPartyIDs builds the identical tss.SortedPartyIDs every
 // process in the ceremony must independently arrive at. peers is

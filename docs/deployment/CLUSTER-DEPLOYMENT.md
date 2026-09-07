@@ -12,10 +12,11 @@ Reproduce it with `infrastructure/kind/up.sh` followed by
 
 | | |
 |---|---|
-| Kubernetes | 1.29.14, single node (kind) |
+| Kubernetes | 1.29.14, four nodes (kind): one control plane, three workers |
 | Container runtime | containerd 2.0.2 |
 | Deployed by | `infrastructure/helm/openfireblocks` via `helm upgrade --install --wait` |
-| Workloads | api-gateway, 3 × mpc-party, mpc-signer ×3, policy-service ×2, temporal-worker ×2 |
+| Workloads | api-gateway, 3 × mpc-party (one per worker node), mpc-signer ×3, policy-service ×2, temporal-worker ×2 |
+| Internal transport | mTLS, certificates issued per pod at startup by Vault PKI via Kubernetes auth |
 | Dependencies | PostgreSQL 16, Vault 1.17 (dev mode), Temporal 1.25.2 — `infrastructure/kind/dependencies.yaml` |
 | Schema | all 16 migrations, applied by a Job as the `app` role |
 
@@ -49,6 +50,18 @@ Step 7 is the one that matters. Steps 1–6 can all report success while the
 pieces belong to different keys; recovering the signer from the signature
 is what ties them together.
 
+Separately, `POST /keys/:keyId/transactions` — where the gateway builds and
+hashes the transaction rather than accepting a digest — was verified the
+same way, and independently: the returned raw transaction bytes were parsed
+back with `ethers` outside the service, and
+
+- the sender recovered from them is the DKG-derived address, and
+- the transaction's own `unsignedHash` is byte-identical to the digest the
+  signing ceremony was asked to sign.
+
+That second equality is the whole claim of the endpoint: what policy
+evaluated and what got signed are provably the same transaction.
+
 Also checked, because a signing route is only as good as what it refuses:
 an over-limit request is denied 403 with the specific policy reason, a
 different tenant asking to sign with the same key gets 404 (row-level
@@ -62,6 +75,8 @@ Measured:
 | DKG end to end, cold pre-params pool | **101s** |
 | DKG end to end, warm pre-params pool | **26s** |
 | Threshold signature via `POST /keys/:keyId/sign` | **1.06s** |
+| Signed transaction via `POST /keys/:keyId/transactions` | **2.17s** |
+| DKG end to end, mTLS on, parties on three separate nodes | **118s** |
 | Migrations, fresh database | 16 applied |
 | Migrations, second run | 0 applied, 16 skipped |
 | Tenant isolation | tenant A sees 1 of 2 rows; no tenant context sees 0 |
@@ -128,7 +143,73 @@ exclude it, so the audit trail keeps the attempt while the name is
 released; `createKey` marks the key failed as well as the ceremony and maps
 `unique_violation` to 409.
 
-### 3.4 Also fixed along the way
+### 3.4 Turning mTLS on made every party pod permanently unrunnable
+
+Found by turning it on. The chart's liveness and readiness probes are plain
+`httpGet` against the party's main port. With mTLS that port is HTTPS with
+`RequireAndVerifyClientCert`, and kubelet speaks plaintext and presents no
+client certificate, so every probe failed the handshake (`client sent an
+HTTP request to an HTTPS server`), liveness killed the container, and the
+pods crash-looped forever.
+
+Probing over HTTPS would not have helped: kubelet has no client certificate
+to offer, and requiring one is the property worth keeping. So `mpc-party`
+now serves a separate plaintext listener carrying **only** `GET /health`
+(`serveHealthPlaintext`), and the chart points the probes at it when mTLS is
+on. No ceremony endpoint, no `/info`, no `/metrics` — it is not a way around
+mTLS for anything that matters.
+
+A security control that guarantees an outage does not get switched on, so
+this was load-bearing for mTLS being usable at all.
+
+### 3.5 With mTLS on, the orchestrator still dialled the parties over plain HTTP
+
+`MPC_PARTY_ENDPOINT_TEMPLATE` hardcoded `http://party-{id}:7000`. Every DKG
+ceremony failed with `unexpected status 400: Client sent an HTTP request to
+an HTTPS server`. The chart now emits `https://` when mTLS is enabled.
+
+That alone was not enough. The template also had to change to the fully
+qualified Service name, because certificates were being issued for
+`party-N.internal` — the service *identity* — while peers dial
+`party-N.<namespace>.svc.cluster.local`, and TLS verifies the name that was
+dialled. `vault-pki-init` had no way to request additional SANs at all, so
+it gained `ALT_NAMES`, and the chart now asks for the in-cluster DNS name as
+a SAN alongside the identity in the CN. Without it, hostname verification
+fails and the error reads like a broken certificate rather than a naming
+mismatch.
+
+### 3.6 A rolling update deadlocks under strict anti-affinity
+
+With `spreadAcrossNodes: required` and exactly one node per party, a
+`RollingUpdate` stands the replacement up before retiring the old pod — and
+there is nowhere to put it. The new pod stays `Pending` and the rollout
+never completes.
+
+The party Deployments are now `Recreate`. A party is a singleton with a
+fixed identity, not one of an interchangeable pool, so surging was never
+meaningful for it; and the brief gap while one restarts is precisely what
+the threshold exists to absorb — a 2-of-3 committee keeps signing with the
+other two.
+
+### 3.7 The pre-params pool starved the ceremonies it was meant to help
+
+The fix in 3.1 moved safe-prime generation into a background pool of two.
+The filler refills as soon as a slot frees, so each party kept two
+searches running — six across a three-party committee — and safe-prime
+generation is entirely CPU-bound. On a cluster where each party is capped
+at one CPU, that background load starved the *inline* generation a new
+ceremony depends on, and ceremonies began failing outright with `timeout or
+error while generating the safe primes`. The deeper pool made the cold path
+slower, not faster.
+
+Pool size is now one, and both timeouts were raised on measurement rather
+than guess: ninety seconds was not enough for the search to converge under
+a 1-CPU limit. Safe-prime search is a randomised search with a heavy tail,
+so the budget has to cover the tail, not the median. The ordering invariant
+(`preParamsGenTimeout` < `PeerReadyTimeout`) still holds and is still
+pinned by a test.
+
+### 3.8 Also fixed along the way
 
 - **No migration ledger.** Applying migrations was all-or-nothing from an
   empty database; a second run died on 001 with `relation "customers"
@@ -146,38 +227,50 @@ released; `createKey` marks the key failed as well as the ceremony and maps
 
 Do not read section 2 as more than it is.
 
-1. **Policy cannot verify what a signed digest actually commits to.**
-   `POST /keys/:keyId/sign` (added after this deployment surfaced that no
-   such route existed at all) is gated by the same fail-closed policy
-   evaluation as `POST /sign`, but it signs a digest the caller supplies.
-   A digest is opaque, so the declared `to`/`value`/`chainId` the policy
-   engine evaluates cannot be checked against what the digest really
-   commits to. A caller who lies gets a policy decision about a
-   transaction they are not signing. Policy over *verified* intent needs
-   the settlement path, where the gateway builds the transaction and
-   hashes it itself. `POST /sign` remains a separate thing entirely: it
-   routes to `mpc-signer`, the single-key non-threshold service.
-2. **Single node.** Everything ran on one kubelet. Nothing here exercises
-   scheduling across nodes, pod anti-affinity (the chart declares it for
-   api-gateway), rolling updates under load, or a node failure. Three
-   `mpc-party` pods on one node is not three independent failure domains,
-   which is the entire security argument for threshold signing.
+1. **Still one host.** Four nodes, three of them workers, each running one
+   MPC party — so the scheduling constraint is real, satisfied, and the
+   parties reach each other across node boundaries under mTLS rather than
+   over loopback. But they are all containers on one machine. This is not a
+   multi-machine deployment and the parties do not have independent failure
+   domains in any sense that would survive that machine dying.
+2. **One of the two signing routes still signs an opaque digest.**
+   `POST /keys/:keyId/transactions` builds and hashes the transaction
+   itself, so policy governs exactly what gets signed -- that is the route
+   to use, and it is verified below. `POST /keys/:keyId/sign` remains, and
+   it takes a caller-supplied digest: policy there can only evaluate what
+   the caller *claims* the digest commits to. It is useful for signing
+   things that are not Ethereum transactions, and it is the weaker of the
+   two; a deployment that does not need it should not expose it. Neither
+   route constrains calldata semantics -- policy evaluates
+   `to`/`value`/`chainId`, not what a contract call does.
+   `POST /sign` is a third thing entirely: it routes to `mpc-signer`, the
+   single-key non-threshold service.
 3. **No chain.** `ethereumRpcSepolia` is empty in this deployment, so
    nothing was broadcast from the cluster. Chain behaviour is covered
    separately by the `live`-tagged tests against a real geth node.
-4. **mTLS is off here.** `mpcParty.mtls.enabled: false`. Turning it on
-   additionally requires Vault's Kubernetes auth method to be configured,
-   which remains unexercised — `vault-pki-init`'s Kubernetes path has still
-   never run.
-5. **Dev-grade dependencies.** Vault in dev mode (in-memory,
-   auto-unsealed), one Postgres with no replica, well-known passwords.
-   Nothing about HA, auto-unseal, or failover was exercised by this.
-6. **No load.** All timings are single-node, single-request numbers.
-7. **The extra services are not deployed.** `policyApi`, `settlement`,
-   `billing`, `webhooks`, `marketplace`, `compliance` and
-   `ceremonyOrchestrator` are disabled in `values-kind.yaml` — they have no
-   images built. `ceremony-orchestrator` in particular does not compile and
-   its responsibilities are already covered by `temporal-worker`'s
+4. **Nothing was drained or killed.** The parties are on separate nodes and
+   the constraint that puts them there is enforced, but no node was
+   cordoned, drained or failed to see whether a 2-of-3 committee really
+   keeps signing through it. The design says it should; that is an
+   argument, not evidence.
+5. **The certificate lifecycle is untested past issuance.** Certs are
+   issued per pod at startup with a 24h TTL and nothing renews them: a pod
+   older than its certificate has no path back to a valid one except
+   restarting. That is survivable given short-lived pods and is exactly the
+   kind of thing that bites at 3am on day two.
+6. **Dev-grade dependencies.** Vault in dev mode (in-memory,
+   auto-unsealed, a root CA generated in place with no offline backup), one
+   Postgres with no replica, well-known passwords. Nothing about HA,
+   auto-unseal, or failover was exercised by this.
+7. **No load.** All timings are single-request numbers on a shared host,
+   and the pre-params contention in 3.7 is a direct demonstration that
+   this system's behaviour under CPU pressure differs from its behaviour
+   when idle. Do not read any of these numbers as capacity data.
+8. **The extra services are built but not deployed.** `policyApi`,
+   `settlement`, `billing`, `webhooks`, `marketplace` and `compliance` now
+   have working images, but are still disabled in `values-kind.yaml` and
+   have not been run. `ceremonyOrchestrator` has no image and does not
+   compile; its responsibilities are already covered by `temporal-worker`'s
    `DKGCeremonyWorkflow`.
 
 ## 5. Running it in a sandboxed environment

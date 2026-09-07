@@ -23,6 +23,18 @@ metadata:
     openfireblocks.com/party-id: {{ $partyID | quote }}
 spec:
   replicas: 1
+  # Recreate, not RollingUpdate.
+  #
+  # A rolling update stands the replacement up before retiring the old pod,
+  # and with spreadAcrossNodes=required and one node per party there is
+  # nowhere to put it: the new pod stays Pending forever and the rollout
+  # deadlocks. A party is a singleton with a fixed identity, not one of a
+  # pool, so surging was never meaningful for it anyway.
+  #
+  # The brief gap while one party restarts is exactly what the threshold
+  # exists to absorb -- a 2-of-3 committee keeps signing with the other two.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app.kubernetes.io/component: mpc-party
@@ -76,8 +88,16 @@ spec:
               value: {{ $.Values.mpcParty.mtls.autoIssue.vaultAddr | quote }}
             - name: VAULT_K8S_ROLE
               value: {{ $.Values.mpcParty.mtls.autoIssue.k8sRole | quote }}
+            # COMMON_NAME is the party's stable service identity;
+            # ALT_NAMES is how peers actually reach it. TLS verifies the
+            # name the client dialled, so without the in-cluster DNS name
+            # as a SAN every mutually authenticated connection fails
+            # hostname verification -- and the error reads like a broken
+            # certificate rather than a naming mismatch.
             - name: COMMON_NAME
               value: {{ printf "party-%d.internal" $partyID | quote }}
+            - name: ALT_NAMES
+              value: {{ printf "party-%d.%s.svc.cluster.local" $partyID $.Release.Namespace | quote }}
             - name: VAULT_PKI_MOUNT
               value: {{ $.Values.mpcParty.mtls.autoIssue.pkiMount | quote }}
             - name: VAULT_PKI_ROLE
@@ -99,6 +119,10 @@ spec:
           ports:
             - name: http
               containerPort: {{ $.Values.mpcParty.port }}
+            {{- if $.Values.mpcParty.mtls.enabled }}
+            - name: health
+              containerPort: {{ $.Values.mpcParty.healthPort }}
+            {{- end }}
           env:
             # Makes each service refuse to fall back to local development
             # credentials if its DSN/config env var is missing, instead of
@@ -135,6 +159,10 @@ spec:
               value: /etc/openfireblocks/mtls/tls.key
             - name: MTLS_CA_FILE
               value: /etc/openfireblocks/mtls/ca.crt
+            # Probes cannot complete an mTLS handshake -- see the doc
+            # comment on .Values.mpcParty.healthPort.
+            - name: HEALTH_PORT
+              value: {{ $.Values.mpcParty.healthPort | quote }}
             {{- end }}
           {{- if $.Values.mpcParty.mtls.enabled }}
           volumeMounts:
@@ -142,12 +170,13 @@ spec:
               mountPath: /etc/openfireblocks/mtls
               readOnly: true
           {{- end }}
+          {{- $probePort := ternary "health" "http" $.Values.mpcParty.mtls.enabled }}
           livenessProbe:
-            httpGet: { path: /health, port: http }
+            httpGet: { path: /health, port: {{ $probePort }} }
             initialDelaySeconds: 3
             periodSeconds: 10
           readinessProbe:
-            httpGet: { path: /health, port: http }
+            httpGet: { path: /health, port: {{ $probePort }} }
             initialDelaySeconds: 2
             periodSeconds: 5
           resources:

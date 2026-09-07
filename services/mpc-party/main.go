@@ -378,6 +378,26 @@ func main() {
 		log.Fatalf("mTLS configuration error: %v", err)
 	}
 	if mtlsEnabled {
+		// A separate plaintext listener carrying ONLY /health.
+		//
+		// Without it, turning mTLS on makes this pod permanently
+		// unrunnable. The main port becomes HTTPS with
+		// RequireAndVerifyClientCert, and a Kubernetes httpGet probe
+		// speaks plaintext HTTP and presents no client certificate, so
+		// every liveness probe fails the handshake ("client sent an HTTP
+		// request to an HTTPS server") and kubelet kills the container --
+		// forever. A security control that guarantees an outage does not
+		// get switched on.
+		//
+		// Probing over HTTPS instead would not help: kubelet has no client
+		// certificate to present, and RequireAndVerifyClientCert is the
+		// property worth keeping.
+		//
+		// This listener exposes liveness only -- no ceremony endpoints, no
+		// key material, no /info, no /metrics -- so it is not a way around
+		// mTLS for anything that matters.
+		go serveHealthPlaintext(ps, partyID)
+
 		srv.TLSConfig = tlsConfig
 		log.Printf("MPC party %d listening on %s (mTLS: client certs required)", partyID, addr)
 		log.Fatal(srv.ListenAndServeTLS("", "")) // certs already loaded into TLSConfig
@@ -386,4 +406,40 @@ func main() {
 	log.Printf("MPC party %d listening on %s (mTLS disabled: %s/%s/%s not all set)",
 		partyID, addr, envMTLSCertFile, envMTLSKeyFile, envMTLSCAFile)
 	log.Fatal(srv.ListenAndServe())
+}
+
+// envHealthPort names the plaintext health-only listener's port. Empty
+// disables it; it is only started when mTLS is on, since without mTLS the
+// main port already serves /health in plaintext.
+const envHealthPort = "HEALTH_PORT"
+
+// serveHealthPlaintext runs a listener whose only route is GET /health.
+//
+// See the call site for why this exists. Deliberately minimal: a separate
+// mux rather than the main router, so no ceremony or introspection endpoint
+// can ever be reachable without a client certificate by accident.
+func serveHealthPlaintext(ps *PartyServer, partyID int) {
+	port := getenv(envHealthPort, "")
+	if port == "" {
+		return
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		ps.HandleHealth(w, r)
+	})
+
+	srv := &http.Server{
+		Addr:              ":" + port,
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+	log.Printf("MPC party %d serving plaintext /health on :%s (probes only)", partyID, port)
+	if err := srv.ListenAndServe(); err != nil {
+		log.Printf("plaintext health listener stopped: %v", err)
+	}
 }

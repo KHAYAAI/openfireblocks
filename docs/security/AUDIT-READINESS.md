@@ -86,16 +86,21 @@ keys, or transactions.**
 - Policy enforcement, which is fail-closed and gates every signing request
   — `services/policy-service`, and `CheckPolicy` in temporal-worker.
   Note that `ThresholdSigningWorkflow` itself performs no policy check:
-  the gate lives in the API layer (`KeysService.signWithKey`), so anything
-  that can start that workflow in Temporal directly bypasses policy
-  entirely. Whether that boundary is in the right place is worth an
-  opinion.
+  the gate lives in the API layer (`KeysService.enforcePolicy`, shared by
+  both signing routes), so anything that can start that workflow in
+  Temporal directly bypasses policy entirely. Whether that boundary is in
+  the right place is worth an opinion.
 
 ### Priority 4 — Penetration test (separate engagement)
 
-Standard external assessment of the deployed API surface. Note that at time
-of writing **there is no deployed environment to test** — this must follow
-the go-live runbook. Scope it against staging, not production.
+Standard external assessment of the deployed API surface. There is now a
+reproducible full-stack deployment to point one at — `infrastructure/kind/up.sh`
+stands up the whole platform on Kubernetes in one command — but it is a
+throwaway local cluster with dev-grade dependencies, not a staging
+environment: Vault runs in dev mode, credentials are well-known strings,
+and nothing is exposed beyond a port-forward. A real engagement still needs
+a real staging environment per the go-live runbook. Scope it against
+staging, not production.
 
 ---
 
@@ -108,14 +113,17 @@ Offered so an auditor can skip re-deriving it — and to be explicit that
 |---|---|
 | DKG produces a real, usable threshold key | Real 2-of-3 DKG across three independent OS processes; signature recovers to the derived address (`crypto.SigToPub`) |
 | The full customer path works | `POST /keys` → real Temporal workflow → real DKG → `key_pairs` activated with a real address, then signing with that key. ~24s. `services/api-gateway/src/keys/keys.provisioning.live.spec.ts` |
-| mTLS on internal links | Real Vault-PKI-issued certs; valid cert accepted, absent cert rejected at the TLS layer. 4 of ~11 links covered |
-| Automated cert issuance | `services/vault-pki-init` against a real Vault PKI mount, real handshake with the issued certs |
+| mTLS on internal links | Real Vault-PKI-issued certs; valid cert accepted, absent cert rejected at the TLS layer. Now also running in-cluster for the party↔party and worker↔party links, which are the ones carrying protocol messages |
+| Automated cert issuance | `services/vault-pki-init` against a real Vault PKI mount, real handshake with the issued certs; both the token path and (now) the Kubernetes-auth path |
 | Tenant isolation | Real Postgres: cross-tenant reads return zero rows; `app` confirmed to lack BYPASSRLS |
 | Backup and restore | Real `pg_dump`/`pg_restore` + Vault KV export, restored into an isolated database, row counts and a canary secret verified |
 | Database failover | A real `pg_basebackup` streaming standby promoted to writable primary in **252ms**, pre-failover data intact |
 | Key rotation and balance migration | Real Vault soft-delete of old shares; real threshold-signed sweep transaction whose recovered sender matches the retiring address |
 | Multi-chain address derivation | Bitcoin/Cosmos/Solana checked against each chain's specification computed independently in the tests |
-| The whole path on real Kubernetes | Authenticated `POST /keys` → Temporal → real 2-of-3 DKG across three separate pods → all three sealed distinct shares in Vault → key activated (26s warm, 101s cold) → a 2-of-3 threshold signature recovers to the DKG-derived address. Reproducible: `infrastructure/kind/up.sh`, then `smoke-test.sh` |
+| The whole path on real Kubernetes | Authenticated `POST /keys` → Temporal → real 2-of-3 DKG across three pods **on three separate nodes, over mTLS** → all three sealed distinct shares in Vault → key activated → a 2-of-3 threshold signature recovers to the DKG-derived address. Reproducible: `infrastructure/kind/up.sh`, then `smoke-test.sh` |
+| Policy governs what is actually signed | `POST /keys/:keyId/transactions` on that cluster: the returned raw transaction was parsed back independently with `ethers`, and its sender is the DKG-derived address **and** its own `unsignedHash` is byte-identical to the digest the ceremony signed |
+| Per-pod mTLS via Vault Kubernetes auth | `vault-pki-init` authenticating with its pod's service-account token against a real Vault kubernetes auth backend, issuing a leaf with the service identity as CN and the in-cluster DNS name as a SAN, and the parties then completing a DKG over those certificates |
+| Parties are actually spread | Enforced `requiredDuringScheduling` anti-affinity; the three party pods land on three distinct worker nodes, and the chart refuses to schedule them otherwise rather than silently co-locating key shares |
 | Tenant isolation enforced, not merely configured | On that cluster, with `app` demoted to non-superuser and owning the tables: tenant A sees 1 of 2 rows; a session with no tenant context sees 0 |
 
 ---
@@ -182,19 +190,23 @@ We would rather hand this over than have it found.
    public network conditions. **Bitcoin, Cosmos and Solana remain entirely
    unbroadcast** — their `BroadcastTransaction` returns "not implemented"
    outright.
-2. **The cluster deployment is single-node, and Terraform is still
-   unapplied.** The chart now *has* been applied: the whole customer path
-   ran on real Kubernetes 1.29.14 with containerd 2.0.2 — see
-   `docs/deployment/CLUSTER-DEPLOYMENT.md`, which also records the three
-   bugs that surfaced only by doing it, including one that made **every**
-   DKG ceremony fail under realistic pod CPU limits. But it ran on one
-   kubelet: three `mpc-party` pods on a single node are not three
-   independent failure domains, which is the entire security argument for
-   threshold signing. Nothing exercised multi-node scheduling, pod
-   anti-affinity, or node failure. Terraform still validates only and has
-   never been applied. The Kubernetes-auth path in `vault-pki-init` (as
-   opposed to the token path) has still never executed, and mTLS was
-   disabled for that deployment.
+2. **The cluster deployment is four nodes on one host, and Terraform is
+   still unapplied.** The chart has been applied and the whole customer
+   path runs on real Kubernetes 1.29.14 with containerd 2.0.2, with the
+   three MPC parties on three separate worker nodes under enforced
+   anti-affinity, communicating over mTLS with certificates each pod
+   obtains from Vault PKI at startup via Kubernetes auth. See
+   `docs/deployment/CLUSTER-DEPLOYMENT.md`, which records the eight bugs
+   that surfaced only by doing this — including one that made **every** DKG
+   ceremony fail under realistic pod CPU limits, and one where enabling
+   mTLS made every party pod permanently unrunnable.
+
+   What that is not: the four nodes are containers on a single machine, so
+   the parties do not have independent failure domains in any sense that
+   survives that machine dying. No node was drained or killed to confirm a
+   2-of-3 committee keeps signing through it. Certificate *renewal* is
+   untested — issuance works, nothing rotates a 24h cert. Terraform still
+   validates only and has never been applied.
 3. **No production-scale load.** All timings are single-node local numbers
    and should not be read as capacity data.
 4. **Multi-chain signing is unexercised against real networks.** The
@@ -204,18 +216,25 @@ We would rather hand this over than have it found.
    `SIGN_MODE_DIRECT`.
 5. **Regional failover is one component of four.** Only Postgres promotes;
    Vault, api-gateway and Temporal report "not implemented" with the reason.
-6. **Policy cannot verify what a signed digest commits to.**
-   `POST /keys/:keyId/sign` is the route that signs with a threshold key
-   (it did not exist until running the system on a cluster showed that no
-   such route did). It is gated fail-closed by the policy service, but it
-   signs a caller-supplied digest, and a digest is opaque: the declared
-   `to`/`value`/`chainId` that policy evaluates cannot be checked against
-   what the digest actually commits to. **A caller who declares one
-   transaction and signs the digest of another gets a policy decision
-   about the wrong transaction.** This is the single most valuable thing
-   for an auditor to attack in the authorization layer. Constraining it
-   properly means the gateway building and hashing the transaction itself
-   (the settlement path), rather than accepting a digest.
+6. **Two signing routes with different guarantees, and the weaker one is
+   still exposed.** `POST /keys/:keyId/transactions` takes transaction
+   fields, builds and hashes the transaction itself, and signs that hash —
+   so what policy evaluated and what got signed are provably the same
+   transaction, and it refuses to return anything whose signature does not
+   recover to the key's own address. That is the strong route.
+
+   `POST /keys/:keyId/sign` still takes a caller-supplied digest. It is
+   gated fail-closed by the same policy service, but a digest is opaque:
+   **a caller who declares one transaction and submits the digest of
+   another gets a policy decision about the wrong transaction.** It exists
+   for signing things that are not Ethereum transactions. Worth an
+   auditor's opinion on whether it should be exposed at all, or gated
+   behind a per-tenant capability.
+
+   Neither route constrains calldata semantics: policy evaluates
+   `to`/`value`/`chainId`, so a transfer to a whitelisted address carrying
+   a call to something else is within policy as written. Constraining that
+   means decoding calldata against an ABI allowlist.
 7. **immudb audit anchoring is unexercised.** The integration is real SDK
    code but has not run against a live immudb instance.
 8. **HSM auto-unseal is unapplied.** The AWS KMS seal stanza and IAM are

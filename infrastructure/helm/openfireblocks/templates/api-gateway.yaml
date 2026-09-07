@@ -94,8 +94,20 @@ spec:
             # {id} is replaced 1..total_parties. Matches
             # templates/mpc-party.yaml's per-party Service naming
             # (party-<N>) and .Values.mpcParty.port.
+            #
+            # With mTLS on this must be https, and must use the fully
+            # qualified Service name: the parties present certificates whose
+            # SANs are party-<N>.<namespace>.svc.cluster.local, and TLS
+            # verifies the name the client dialled. A plain http:// template
+            # against an mTLS party fails with "Client sent an HTTP request
+            # to an HTTPS server"; the short name fails hostname
+            # verification. Both are silent until a ceremony is attempted.
             - name: MPC_PARTY_ENDPOINT_TEMPLATE
+              {{- if .Values.mpcParty.mtls.enabled }}
+              value: {{ printf "https://party-{id}.%s.svc.cluster.local:%d" .Release.Namespace (int .Values.mpcParty.port) | quote }}
+              {{- else }}
               value: {{ printf "http://party-{id}:%d" (int .Values.mpcParty.port) | quote }}
+              {{- end }}
             {{- if .Values.workos.enabled }}
             # Enterprise SSO via WorkOS AuthKit
             # (services/api-gateway/src/identity/workos-sso.service.ts).
