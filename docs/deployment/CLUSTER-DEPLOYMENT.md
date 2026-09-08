@@ -346,10 +346,16 @@ Do not read section 2 as more than it is.
    Kubernetes auth and was issued a certificate. Uncordoning brings the
    third replica back as a follower.
 
-   Postgres has had no equivalent treatment: one replica, one node-pinned
-   volume, and draining its node takes the platform down. `services/backup`
-   has a `pg_basebackup` standby and a measured promotion (252ms), but
-   nothing runs a standby in this cluster by default.
+   Postgres now runs a **streaming standby** on a different node
+   (`postgres-standby`), verified by `postgres-failover-drill.sh`: the
+   primary sees a connected walsender in `streaming` state, a row written on
+   the primary is readable from the standby in ~170ms, and `pg_promote()`
+   takes it out of recovery in ~480ms with the pre-promotion data intact.
+
+   That is a warm replica, not high availability. Nothing elects a leader,
+   so a primary failure needs a deliberate promotion and a repoint; the
+   platform does not fail over on its own. What it buys is a recovery
+   measured in seconds instead of a restore from backup.
 6. **Dev-grade dependencies.** Vault in dev mode (in-memory,
    auto-unsealed, a root CA generated in place with no offline backup), one
    Postgres with no replica, well-known passwords. Nothing about HA,

@@ -80,6 +80,29 @@ data:
     ALTER SCHEMA public OWNER TO app;
     GRANT ALL ON SCHEMA public TO app;
     GRANT USAGE ON SCHEMA public TO app_admin;
+
+    -- The role the standby streams with. REPLICATION and LOGIN only: it can
+    -- read the write-ahead log and nothing else, so a compromised standby
+    -- cannot read or change application data through this account.
+    DO $$
+    BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'replicator') THEN
+        CREATE ROLE replicator WITH REPLICATION LOGIN PASSWORD 'replicator-dev-password';
+      END IF;
+    END
+    $$;
+  # Executed by the postgres entrypoint after initdb, on first init only.
+  #
+  # pg_hba.conf cannot be edited through SQL -- there is no ALTER SYSTEM for
+  # it -- so the rule that lets the standby connect has to be appended to the
+  # file itself. initdb writes a pg_hba with `host replication all` entries
+  # for localhost only, which is exactly the case a standby on another node
+  # is not.
+  01-replication-hba.sh: |
+    #!/bin/bash
+    set -e
+    echo "host replication replicator all scram-sha-256" >> "${PGDATA}/pg_hba.conf"
+    echo "added a replication rule for the standby"
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -136,6 +159,136 @@ metadata:
   namespace: openfireblocks
 spec:
   selector: { app: postgres }
+  ports:
+    - { name: postgres, port: 5432, targetPort: postgres }
+---
+# A streaming replica of the primary, on a different node.
+#
+# Postgres was the platform's last single point of failure: one pod, one
+# node-pinned volume, and draining that node took everything down with it --
+# the same shape of problem Vault had before it became a Raft cluster.
+#
+# This is deliberately *not* an HA cluster with automatic failover. There is
+# no leader election here, so a primary failure needs a deliberate promotion
+# (infrastructure/kind/postgres-failover-drill.sh, and the promotion logic in
+# services/backup). Calling that "high availability" would be a lie. What it
+# is, is a warm replica holding a continuously up-to-date copy, so recovery
+# is a promotion measured in seconds rather than a restore measured in
+# however long a restore takes.
+#
+# Production runs Patroni, a managed Postgres, or Spilo -- something that
+# does leader election properly. This is the honest middle: real streaming
+# replication, real promotion, no pretence of automation.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-standby-data
+  namespace: openfireblocks
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 4Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres-standby
+  namespace: openfireblocks
+spec:
+  replicas: 1
+  strategy:
+    # A base backup is a full copy of the primary; two running at once would
+    # double the disk and the load for no benefit.
+    type: Recreate
+  selector:
+    matchLabels: { app: postgres-standby }
+  template:
+    metadata:
+      labels: { app: postgres-standby }
+    spec:
+      # A replica on the same node as its primary protects against nothing.
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchExpressions:
+                  - key: app
+                    operator: In
+                    values: [postgres, postgres-standby]
+              topologyKey: kubernetes.io/hostname
+      initContainers:
+        # Takes the base backup, unless this volume already holds one.
+        #
+        # Idempotence matters: this pod restarts for all the ordinary
+        # reasons, and re-cloning the primary each time would throw away a
+        # replica that was already caught up and hammer the primary with a
+        # full copy. PG_VERSION is the marker that the directory is already
+        # populated.
+        - name: basebackup
+          image: postgres:16-bookworm
+          env:
+            - { name: PGDATA, value: /var/lib/postgresql/data/pgdata }
+            - { name: PGPASSWORD, value: replicator-dev-password }
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              set -euo pipefail
+              if [ -s "${PGDATA}/PG_VERSION" ]; then
+                echo "data directory already populated; letting recovery catch up"
+                exit 0
+              fi
+              echo "waiting for the primary"
+              until pg_isready -h postgres -U postgres -d openfireblocks; do sleep 2; done
+
+              mkdir -p "${PGDATA}"
+              rm -rf "${PGDATA:?}"/*
+              # -R writes standby.signal and primary_conninfo, which is what
+              # makes this a streaming replica rather than an independent
+              # database that has quietly forked from the primary.
+              # -Xs streams WAL during the copy, so the backup is consistent
+              # without WAL archiving being configured.
+              pg_basebackup -h postgres -U replicator -D "${PGDATA}" -Fp -Xs -R -P
+              chmod 0700 "${PGDATA}"
+              echo "base backup complete"
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/postgresql/data }
+      containers:
+        - name: postgres
+          image: postgres:16-bookworm
+          env:
+            - { name: PGDATA, value: /var/lib/postgresql/data/pgdata }
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: dev-dependency-credentials
+                  key: postgres-superuser-password
+          ports:
+            - { name: postgres, containerPort: 5432 }
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "postgres", "-d", "openfireblocks"]
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/postgresql/data }
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: postgres-standby-data
+---
+# Read-only endpoint. Nothing routes here by default: it exists so a
+# promotion drill, a reporting query, or an operator can reach the replica
+# without going through the primary.
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-standby
+  namespace: openfireblocks
+spec:
+  selector: { app: postgres-standby }
   ports:
     - { name: postgres, port: 5432, targetPort: postgres }
 ---
