@@ -109,6 +109,21 @@ echo "==> billing"
 check "usage for an unknown subscription" "404" \
   "$(call ofb-openfireblocks-billing 8085 GET '/v1/usage?subscription_id=00000000-0000-0000-0000-000000000000')"
 
+# The routes that turn platform activity into money. Their behaviour is
+# proven properly by billing-drill.sh; these checks exist so a deployment
+# that breaks them is caught by the cheap test rather than the slow one.
+check "measure usage for an unknown subscription" "404" \
+  "$(call ofb-openfireblocks-billing 8085 POST '/v1/usage/measure?subscription_id=00000000-0000-0000-0000-000000000000')"
+check "generate an invoice for an unknown subscription" "404" \
+  "$(call ofb-openfireblocks-billing 8085 POST '/v1/invoices/generate?subscription_id=00000000-0000-0000-0000-000000000000')"
+check "list invoices for an unknown customer" "200" \
+  "$(call ofb-openfireblocks-billing 8085 GET '/v1/invoices?customer_id=00000000-0000-0000-0000-000000000000')"
+# 503 rather than 500: this cluster has no payment processor configured,
+# which is a deployment that is not finished, not a fault.
+check "charging with no payment processor is unavailable" "503 404" \
+  "$(call ofb-openfireblocks-billing 8085 POST /v1/invoices/charge \
+    '{"invoice_id":"00000000-0000-0000-0000-000000000000","customer_id":"00000000-0000-0000-0000-000000000000","stripe_customer_id":"cus_x"}')"
+
 echo "==> webhooks"
 check "list deliveries for an unknown webhook" "404" \
   "$(call ofb-openfireblocks-webhooks 8086 GET '/v1/deliveries?webhook_id=00000000-0000-0000-0000-000000000000')"

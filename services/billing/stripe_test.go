@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -215,8 +216,14 @@ func TestUnconfiguredClientFailsClearlyRatherThanFabricating(t *testing.T) {
 	if err == nil {
 		t.Fatal("charging with no Stripe key appeared to succeed")
 	}
-	if !strings.Contains(err.Error(), "not configured") {
-		t.Errorf("error does not say Stripe is unconfigured: %v", err)
+	if !strings.Contains(err.Error(), "no payment processor is configured") {
+		t.Errorf("error does not say why it cannot charge: %v", err)
+	}
+	// Classified as a missing dependency, not a server fault: the request
+	// was fine and the deployment is unfinished, so this answers 503 and
+	// an operator sees configuration rather than a crash.
+	if !errors.Is(err, ErrUnavailable) {
+		t.Error("an unconfigured payment processor is reported as a server error")
 	}
 }
 

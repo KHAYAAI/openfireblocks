@@ -23,6 +23,12 @@ func main() {
 	})
 	mux.HandleFunc("/v1/subscribe", svc.HandleSubscribe)
 	mux.HandleFunc("/v1/usage", svc.HandleGetUsage)
+	// The chain that turns platform activity into collected money:
+	// measure what was used, raise an invoice for it, charge it.
+	mux.HandleFunc("/v1/usage/measure", svc.HandleMeasureUsage)
+	mux.HandleFunc("/v1/invoices/generate", svc.HandleGenerateInvoice)
+	mux.HandleFunc("/v1/invoices", svc.HandleListInvoices)
+	mux.HandleFunc("/v1/invoices/charge", svc.HandleChargeInvoice)
 
 	port := os.Getenv("PORT")
 	if port == "" {

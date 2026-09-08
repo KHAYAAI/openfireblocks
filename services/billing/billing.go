@@ -20,17 +20,22 @@ type BillingService struct {
 
 // Plan represents a subscription plan.
 type Plan struct {
-	PlanID       string    `json:"plan_id"`
-	Name         string    `json:"name"`
-	Description  string    `json:"description"`
-	Price        int       `json:"price"` // in cents
-	Currency     string    `json:"currency"`
-	BillingCycle string    `json:"billing_cycle"` // monthly, yearly
-	SigningLimit int       `json:"signing_limit"`
-	KeyLimit     int       `json:"key_limit"`
-	SupportLevel string    `json:"support_level"` // basic, standard, premium
-	Features     []string  `json:"features"`
-	CreatedAt    time.Time `json:"created_at"`
+	PlanID       string   `json:"plan_id"`
+	Name         string   `json:"name"`
+	Description  string   `json:"description"`
+	Price        int      `json:"price"` // in cents
+	Currency     string   `json:"currency"`
+	BillingCycle string   `json:"billing_cycle"` // monthly, yearly
+	SigningLimit int      `json:"signing_limit"`
+	KeyLimit     int      `json:"key_limit"`
+	SupportLevel string   `json:"support_level"` // basic, standard, premium
+	Features     []string `json:"features"`
+	// What a customer pays for going past the limits above. Zero means no
+	// overage charge, which is what plans sold before these existed agreed
+	// to -- see migration 020.
+	OverageSigningCents int       `json:"overage_signing_cents"`
+	OverageKeyCents     int       `json:"overage_key_cents"`
+	CreatedAt           time.Time `json:"created_at"`
 }
 
 // Subscription represents an active subscription.
@@ -60,7 +65,13 @@ type Invoice struct {
 	DueDate        time.Time  `json:"due_date"`
 	PaidAt         *time.Time `json:"paid_at,omitempty"`
 	LineItems      []LineItem `json:"line_items"`
-	CreatedAt      time.Time  `json:"created_at"`
+	// The billing period this invoice covers. Together with the
+	// subscription it is what makes generating an invoice safe to repeat:
+	// a unique index on the pair means a schedule that fires twice cannot
+	// bill the same month twice.
+	PeriodStart *time.Time `json:"period_start,omitempty"`
+	PeriodEnd   *time.Time `json:"period_end,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
 }
 
 // LineItem represents a single line in an invoice.
@@ -119,8 +130,10 @@ func (b *BillingService) CreatePlan(ctx context.Context, plan *Plan) error {
 
 // Subscribe creates a new subscription for a customer.
 func (b *BillingService) Subscribe(ctx context.Context, customerID, planID string) (*Subscription, error) {
-	plan, err := b.db.GetPlan(ctx, planID)
-	if err != nil {
+	// The plan is read rather than used, so that subscribing to a plan
+	// that does not exist fails here instead of producing a subscription
+	// whose first invoice cannot be generated a month later.
+	if _, err := b.db.GetPlan(ctx, planID); err != nil {
 		return nil, fmt.Errorf("plan not found: %w", err)
 	}
 
@@ -142,29 +155,24 @@ func (b *BillingService) Subscribe(ctx context.Context, customerID, planID strin
 		return nil, fmt.Errorf("failed to create subscription: %w", err)
 	}
 
-	// Charge for subscription (if not on trial)
-	invoice := &Invoice{
-		InvoiceID:      uuid.New().String(),
-		SubscriptionID: subscription.SubscriptionID,
-		CustomerID:     customerID,
-		Amount:         plan.Price,
-		Currency:       plan.Currency,
-		Status:         "unpaid",
-		DueDate:        time.Now().Add(30 * 24 * time.Hour),
-		LineItems: []LineItem{
-			{
-				Description: plan.Name,
-				Quantity:    1,
-				UnitPrice:   plan.Price,
-				Amount:      plan.Price,
-			},
-		},
-		CreatedAt: time.Now(),
-	}
-
-	if err := b.db.CreateInvoice(ctx, invoice); err != nil {
-		log.Printf("Failed to create invoice: %v", err)
-	}
+	// No invoice here.
+	//
+	// Subscribing used to raise one immediately for the plan's base price,
+	// which double-billed every customer the moment usage-based invoicing
+	// existed: they were charged the base rate on signing up and the base
+	// rate again on the period invoice that also carried their overage.
+	// The bug was invisible while nothing generated period invoices.
+	//
+	// Billing is in arrears, which is the only coherent choice once
+	// overage exists -- you cannot bill in advance for usage that has not
+	// happened. GenerateInvoice raises exactly one invoice per
+	// subscription per period, at the end of it, when the usage is known.
+	// The unique index on (subscription_id, period_start) enforces the
+	// "exactly one" part.
+	//
+	// It also used to swallow a failed insert with a log line, so a
+	// customer could end up subscribed with no invoice and nothing to
+	// notice it.
 
 	log.Printf("Created subscription: %s for customer %s (plan: %s)",
 		subscription.SubscriptionID, customerID, planID)

@@ -4,11 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
+	"time"
 
-	_ "github.com/lib/pq"
+	"github.com/lib/pq"
 )
 
 // PostgresDB holds two connections at two different privilege levels,
@@ -103,9 +105,9 @@ func (p *PostgresDB) CreatePlan(ctx context.Context, plan *Plan) error {
 		return fmt.Errorf("failed to marshal features: %w", err)
 	}
 	_, err = p.admin.ExecContext(ctx, `
-		INSERT INTO plans (plan_id, name, description, price_cents, currency, billing_cycle, signing_limit, key_limit, support_level, features, created_at)
-		VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-	`, plan.PlanID, plan.Name, plan.Description, plan.Price, plan.Currency, plan.BillingCycle, plan.SigningLimit, plan.KeyLimit, plan.SupportLevel, features, plan.CreatedAt)
+		INSERT INTO plans (plan_id, name, description, price_cents, currency, billing_cycle, signing_limit, key_limit, support_level, features, overage_signing_cents, overage_key_cents, created_at)
+		VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+	`, plan.PlanID, plan.Name, plan.Description, plan.Price, plan.Currency, plan.BillingCycle, plan.SigningLimit, plan.KeyLimit, plan.SupportLevel, features, plan.OverageSigningCents, plan.OverageKeyCents, plan.CreatedAt)
 	if err != nil {
 		return fmt.Errorf("failed to insert plan: %w", err)
 	}
@@ -116,10 +118,10 @@ func (p *PostgresDB) GetPlan(ctx context.Context, planID string) (*Plan, error) 
 	var plan Plan
 	var featuresRaw []byte
 	row := p.admin.QueryRowContext(ctx, `
-		SELECT plan_id, name, COALESCE(description, ''), price_cents, currency, billing_cycle, signing_limit, key_limit, support_level, features, created_at
+		SELECT plan_id, name, COALESCE(description, ''), price_cents, currency, billing_cycle, signing_limit, key_limit, support_level, features, overage_signing_cents, overage_key_cents, created_at
 		FROM plans WHERE plan_id = $1::uuid
 	`, planID)
-	if err := row.Scan(&plan.PlanID, &plan.Name, &plan.Description, &plan.Price, &plan.Currency, &plan.BillingCycle, &plan.SigningLimit, &plan.KeyLimit, &plan.SupportLevel, &featuresRaw, &plan.CreatedAt); err != nil {
+	if err := row.Scan(&plan.PlanID, &plan.Name, &plan.Description, &plan.Price, &plan.Currency, &plan.BillingCycle, &plan.SigningLimit, &plan.KeyLimit, &plan.SupportLevel, &featuresRaw, &plan.OverageSigningCents, &plan.OverageKeyCents, &plan.CreatedAt); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("plan %s: %w", planID, ErrNotFound)
 		}
@@ -232,9 +234,9 @@ func (p *PostgresDB) CreateInvoice(ctx context.Context, inv *Invoice) error {
 	}
 	return p.withTenant(ctx, inv.CustomerID, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `
-			INSERT INTO invoices (invoice_id, subscription_id, customer_id, amount_cents, currency, status, due_date, paid_at, line_items, created_at)
-			VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7, $8, $9, $10)
-		`, inv.InvoiceID, inv.SubscriptionID, inv.CustomerID, inv.Amount, inv.Currency, inv.Status, inv.DueDate, inv.PaidAt, lineItems, inv.CreatedAt)
+			INSERT INTO invoices (invoice_id, subscription_id, customer_id, amount_cents, currency, status, due_date, paid_at, line_items, period_start, period_end, created_at)
+			VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+		`, inv.InvoiceID, inv.SubscriptionID, inv.CustomerID, inv.Amount, inv.Currency, inv.Status, inv.DueDate, inv.PaidAt, lineItems, inv.PeriodStart, inv.PeriodEnd, inv.CreatedAt)
 		if err != nil {
 			return fmt.Errorf("failed to insert invoice: %w", err)
 		}
@@ -343,6 +345,72 @@ func isProductionEnv() bool {
 		case "production", "prod":
 			return true
 		}
+	}
+	return false
+}
+
+// GetInvoiceForPeriod returns the invoice already raised for a billing
+// period, or nil.
+//
+// The lookup that makes invoice generation safe to repeat. Scoped by
+// subscription and period start, which is exactly the pair the unique
+// index covers, so this and the constraint can never disagree about what
+// counts as a duplicate.
+func (p *PostgresDB) GetInvoiceForPeriod(ctx context.Context, subscriptionID string, periodStart time.Time) (*Invoice, error) {
+	customerID, err := p.resolveCustomerIDForSubscription(ctx, subscriptionID)
+	if err != nil {
+		return nil, err
+	}
+
+	var inv *Invoice
+	err = p.withTenant(ctx, customerID, func(tx *sql.Tx) error {
+		var found Invoice
+		var lineItems []byte
+		row := tx.QueryRowContext(ctx, `
+			SELECT invoice_id, subscription_id, customer_id, amount_cents, currency, status,
+			       due_date, paid_at, line_items, period_start, period_end, created_at
+			  FROM invoices
+			 WHERE subscription_id = $1::uuid AND period_start = $2`,
+			subscriptionID, periodStart)
+		if err := row.Scan(&found.InvoiceID, &found.SubscriptionID, &found.CustomerID,
+			&found.Amount, &found.Currency, &found.Status, &found.DueDate, &found.PaidAt,
+			&lineItems, &found.PeriodStart, &found.PeriodEnd, &found.CreatedAt); err != nil {
+			if err == sql.ErrNoRows {
+				return nil
+			}
+			return fmt.Errorf("failed to query the period's invoice: %w", err)
+		}
+		if err := json.Unmarshal(lineItems, &found.LineItems); err != nil {
+			return fmt.Errorf("failed to unmarshal line items: %w", err)
+		}
+		inv = &found
+		return nil
+	})
+	return inv, err
+}
+
+// MarkInvoicePaid records a collected payment.
+func (p *PostgresDB) MarkInvoicePaid(ctx context.Context, invoiceID, customerID string, paidAt time.Time) error {
+	return p.withTenant(ctx, customerID, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `
+			UPDATE invoices SET status = 'paid', paid_at = $3
+			 WHERE invoice_id = $1::uuid AND customer_id = $2::uuid`,
+			invoiceID, customerID, paidAt)
+		if err != nil {
+			return fmt.Errorf("failed to mark the invoice paid: %w", err)
+		}
+		return nil
+	})
+}
+
+// isUniqueViolation reports whether err is Postgres error 23505.
+//
+// Checked by code rather than by matching the message, which is localised
+// and carries the constraint name -- both of which change.
+func isUniqueViolation(err error) bool {
+	var pqErr *pq.Error
+	if errors.As(err, &pqErr) {
+		return pqErr.Code == "23505"
 	}
 	return false
 }

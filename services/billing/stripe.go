@@ -218,10 +218,15 @@ func (b *BillingService) ChargeInvoice(ctx context.Context, invoice *Invoice, st
 		return nil, fmt.Errorf("no invoice given")
 	}
 	if invoice.Status == "paid" {
-		return nil, fmt.Errorf("invoice %s is already paid", invoice.InvoiceID)
+		return nil, fmt.Errorf("%w: invoice %s is already paid", ErrInvalidInput, invoice.InvoiceID)
 	}
 	if !b.stripe.Configured() {
-		return nil, fmt.Errorf("stripe is not configured; cannot collect payment for invoice %s", invoice.InvoiceID)
+		// Unavailable rather than a server error: the request is fine and
+		// the deployment is not finished. Reported as 503 so an operator
+		// sees a missing dependency instead of a crash, and so a caller
+		// knows retrying after configuration will work.
+		return nil, fmt.Errorf("%w: no payment processor is configured, so invoice %s cannot be charged",
+			ErrUnavailable, invoice.InvoiceID)
 	}
 
 	return b.stripe.CreatePaymentIntent(ctx, invoice.Amount, invoice.Currency, stripeCustomerID,

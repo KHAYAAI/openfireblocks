@@ -29,6 +29,12 @@ var (
 	ErrNotFound = errors.New("not found")
 	// ErrInvalidInput means the request was malformed.
 	ErrInvalidInput = errors.New("invalid input")
+	// ErrUnavailable means a dependency this service needs is missing or
+	// unreachable -- nothing is wrong with the request and retrying later
+	// may work. Payments are the case that matters: "no payment processor
+	// is configured" answered as a 500 reads as a crash, when it is a
+	// deployment that was never finished.
+	ErrUnavailable = errors.New("unavailable")
 )
 
 // uuidPattern is deliberately strict. Postgres rejects a malformed uuid with
@@ -58,6 +64,9 @@ func writeError(w http.ResponseWriter, context string, err error) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 	case errors.Is(err, ErrNotFound):
 		http.Error(w, context+": not found", http.StatusNotFound)
+	case errors.Is(err, ErrUnavailable):
+		log.Printf("%s: %v", context, err)
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 	default:
 		log.Printf("%s: %v", context, err)
 		http.Error(w, context+": internal error", http.StatusInternalServerError)
