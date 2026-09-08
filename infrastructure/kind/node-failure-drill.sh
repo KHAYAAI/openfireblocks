@@ -130,28 +130,30 @@ done
 echo "    party-${VICTIM} is gone; $(kubectl -n "${NS}" get pod -l app.kubernetes.io/component=mpc-party \
   --field-selector=status.phase=Running -o name | wc -l) of 3 parties remain"
 
-# Vault is the other casualty of an eviction here, and this step is a
-# statement about the dev environment rather than about the platform.
+# Vault must come back with its PKI intact.
 #
-# The kind cluster runs `vault server -dev`, whose storage is in memory. If
-# the drained node happened to host Vault, the PKI mount, its root CA and
-# the Kubernetes auth backend all cease to exist, and every party then fails
-# to obtain a certificate -- not because losing a party is fatal, but
-# because the throwaway secrets backend cannot survive being moved. A real
-# deployment runs Vault with persistent storage and HA and would not need
-# this.
+# It used to run `vault server -dev`, whose storage is in memory, so draining
+# the node it happened to be on destroyed the PKI mount, its root CA and the
+# Kubernetes auth backend outright -- every party then failed to obtain a
+# certificate, and the drill had to re-bootstrap Vault to measure anything at
+# all. It now runs on a PersistentVolumeClaim with an unseal sidecar, so a
+# reschedule should be survivable.
 #
-# Repaired explicitly, and loudly, so the drill measures what it claims to
-# measure instead of failing for an unrelated reason.
-if ! kubectl -n "${NS}" exec deploy/vault -- sh -c \
-     'VAULT_ADDR=http://127.0.0.1:8200 VAULT_TOKEN=dev-root-token vault secrets list 2>/dev/null | grep -q pki'; then
-  echo "    NOTE: dev-mode Vault was evicted and lost its in-memory PKI; re-bootstrapping"
-  kubectl -n "${NS}" delete job vault-pki-bootstrap --ignore-not-found --wait=true >/dev/null 2>&1
-  kubectl apply -f "$(dirname "${BASH_SOURCE[0]}")/vault-pki-bootstrap.yaml" >/dev/null
-  kubectl -n "${NS}" wait --for=condition=complete job/vault-pki-bootstrap --timeout=240s >/dev/null
-  kubectl -n "${NS}" delete pod -l app.kubernetes.io/component=mpc-party \
-    --force --grace-period=0 >/dev/null 2>&1 || true
-fi
+# Checked rather than assumed: this is the assertion that the persistence
+# actually works, and it fails the drill rather than silently repairing
+# itself the way the earlier workaround did.
+echo "==> confirming Vault came back with its PKI"
+vault_has_pki() {
+  kubectl -n "${NS}" exec statefulset/vault -c vault -- sh -c \
+    'VAULT_ADDR=http://127.0.0.1:8200 VAULT_TOKEN='"${VAULT_TOKEN:-dev-root-token}"' \
+     vault secrets list 2>/dev/null | grep -q pki' 2>/dev/null
+}
+for _ in $(seq 1 60); do
+  vault_has_pki && break
+  sleep 5
+done
+vault_has_pki || fail "Vault lost its PKI across the drain -- persistent storage is not doing its job"
+echo "    PKI intact"
 
 # The surviving parties must be back to serving before signing means
 # anything -- a certificate reissue restarts them.

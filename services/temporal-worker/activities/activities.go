@@ -38,7 +38,7 @@ type Activities struct {
 // other calls) presents a client certificate when
 // MTLS_CERT_FILE/MTLS_KEY_FILE/MTLS_CA_FILE are all set -- the same
 // opt-in convention as clientTLSConfigFromEnv's other caller,
-// NewDKGRoundCoordinator (mtls.go). Policy evaluation gates every signing
+// clientTLSConfigFromEnv (mtls.go). Policy evaluation gates every signing
 // request, so it's a high-value link for authenticated, encrypted
 // transport rather than plaintext HTTP; presenting a client cert to
 // endpoints that don't ask for one (blockchain RPC, external services)
@@ -58,7 +58,7 @@ func NewActivities(policyURL, mpcURL, ethRPC string, confirmations int64, databa
 	if err != nil {
 		// Cert files were specified but unusable -- fail loudly at
 		// startup rather than silently falling back to plaintext, the
-		// same standard NewDKGRoundCoordinator holds itself to.
+		// same standard the real ceremony path holds itself to.
 		log.Fatalf("mTLS configuration error: %v", err)
 	}
 	if mtlsEnabled {

@@ -6,9 +6,9 @@ import (
 	"os"
 )
 
-// Mutual TLS for mpc-party's server side (temporal-worker's
-// DKGRoundCoordinator calling the legacy round-relay endpoints, and any
-// peer party calling into /tss/keygen/*) and client side (this party's own
+// Mutual TLS for mpc-party's server side (temporal-worker driving
+// ceremonies, and peer parties calling into /tss/keygen/* and /tss/sign/*)
+// and client side (this party's own
 // TSSPartyManager relaying tss-lib protocol messages out to peer parties --
 // see tss_party.go). This is the actual key-generation-ceremony transport
 // -- round data and, eventually, key shares cross it -- so it's the

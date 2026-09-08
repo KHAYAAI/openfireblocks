@@ -37,32 +37,6 @@ type DKGRoundResult struct {
 	Error            string         `json:"error,omitempty"`
 }
 
-// RegisterPartiesRequest is passed to RegisterParties activity.
-type RegisterPartiesRequest struct {
-	CeremonyID     string
-	PartyIDs       []int
-	PartyEndpoints []string
-}
-
-// RegisterPartiesResult is returned by RegisterParties activity.
-type RegisterPartiesResult struct {
-	RegisteredCount int
-	Error           string
-}
-
-// SealKeySharesRequest is passed to SealKeyShares activity.
-type SealKeySharesRequest struct {
-	CeremonyID string
-	PartyIDs   []int
-	CustomerID string
-}
-
-// SealKeySharesResult is returned by SealKeyShares activity.
-type SealKeySharesResult struct {
-	SealedCount int
-	Error       string
-}
-
 // ThresholdSigningRequest is the workflow input for threshold signing.
 type ThresholdSigningRequest struct {
 	CeremonyID     string   `json:"ceremonyId"`     // the keygen ceremony that produced the key to sign with
@@ -78,17 +52,4 @@ type ThresholdSigningResult struct {
 	SignedTx  string `json:"signedTx,omitempty"`
 	Status    string `json:"status"` // completed | failed
 	Error     string `json:"error,omitempty"`
-}
-
-// RequestSignaturesRequest is passed to RequestSignatures activity.
-type RequestSignaturesRequest struct {
-	CeremonyID string
-	Message    string
-	PartyIDs   []int
-}
-
-// RequestSignaturesResult is returned by RequestSignatures activity.
-type RequestSignaturesResult struct {
-	Signature string
-	Error     string
 }

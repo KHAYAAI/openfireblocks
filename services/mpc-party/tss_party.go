@@ -18,8 +18,7 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 )
 
-// Real, network-driven threshold-ECDSA DKG, replacing tss_wrapper.go's
-// TSSWrapper placeholder (see that file's doc comment). This drives an
+// Real, network-driven threshold-ECDSA DKG. This drives an
 // actual bnb-chain/tss-lib keygen.LocalParty exactly the way
 // services/mpc-signer/tss/tss.go's already-verified Keygen does -- same
 // library, same protocol, same message-driven state machine -- but
@@ -408,6 +407,20 @@ type KeygenStatusResult struct {
 	PublicKey  string         `json:"public_key,omitempty"`
 	Address    string         `json:"address,omitempty"`
 	Sealed     bool           `json:"sealed"`
+}
+
+// CeremonyCounts reports how many keygen and signing ceremonies this party
+// is tracking. Used by /info for operator visibility; it deliberately
+// exposes counts rather than ceremony ids or any state derived from key
+// material.
+func (m *TSSPartyManager) CeremonyCounts() (keygens, signings int) {
+	m.mu.Lock()
+	keygens = len(m.ceremonies)
+	m.mu.Unlock()
+	m.signMu.Lock()
+	signings = len(m.signings)
+	m.signMu.Unlock()
+	return keygens, signings
 }
 
 func (m *TSSPartyManager) GetStatus(ceremonyID string) (*KeygenStatusResult, error) {

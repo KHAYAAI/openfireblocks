@@ -309,37 +309,6 @@ func (b *BillingService) HandleGetUsage(w http.ResponseWriter, r *http.Request) 
 	json.NewEncoder(w).Encode(metrics)
 }
 
-// StripeClient represents a Stripe integration client.
-type StripeClient struct {
-	apiKey string
-	client *http.Client
-}
-
-// NewStripeClient creates a new Stripe client.
-func NewStripeClient(apiKey string) *StripeClient {
-	return &StripeClient{
-		apiKey: apiKey,
-		client: &http.Client{Timeout: 10 * time.Second},
-	}
-}
-
-// CreatePaymentIntent creates a Stripe payment intent.
-//
-// Used to generate a locally-random string shaped like a Stripe object ID
-// ("pi_" + hex) and return it as if Stripe had been called -- Stripe has
-// never heard of that ID. Anything that stored or displayed it (an invoice
-// record, a support ticket, a reconciliation report) would show what looks
-// like a real payment reference for a payment that was never actually
-// initiated. Fails explicitly instead: implementing the real call needs a
-// Stripe secret key and hitting api.stripe.com, neither available to
-// verify against here, so a fabricated response is worse than an error.
-func (s *StripeClient) CreatePaymentIntent(amount int, currency string) (string, error) {
-	if s.apiKey == "" {
-		return "", fmt.Errorf("stripe not configured: no API key set")
-	}
-	return "", fmt.Errorf("StripeClient.CreatePaymentIntent is not implemented: no call to the Stripe API is wired up")
-}
-
 // MetricsStore is an in-memory store for metrics.
 type MetricsStore struct {
 	metrics map[string]*UsageMetrics

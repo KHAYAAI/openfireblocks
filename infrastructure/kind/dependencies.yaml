@@ -139,12 +139,54 @@ spec:
   ports:
     - { name: postgres, port: 5432, targetPort: postgres }
 ---
+# Vault with storage that survives the pod moving.
+#
+# This was `vault server -dev`, whose storage is in memory. Draining the node
+# it happened to be on destroyed the PKI mount, its root CA and the
+# Kubernetes auth backend outright: every party then failed to obtain a
+# certificate, and the platform could not recover without a human
+# re-bootstrapping it. The node-failure drill hit exactly that and had to
+# repair it explicitly to measure anything.
+#
+# A StatefulSet with a PersistentVolumeClaim and the file storage backend
+# instead, so the data outlives the pod. That turns Vault from "loses
+# everything when rescheduled" into "comes back sealed and is unsealed by
+# the sidecar below".
+#
+# STILL NOT PRODUCTION. One replica, file storage rather than Raft, a
+# single unseal share, and that share kept on the same volume as the data it
+# protects -- see the unseal sidecar for why that is acceptable here and
+# nowhere else. A real deployment runs an HA Raft cluster with KMS or HSM
+# auto-unseal; infrastructure/terraform/modules/vault-pki is where that
+# lives.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vault-config
+  namespace: openfireblocks
+data:
+  vault.hcl: |
+    ui = false
+    disable_mlock = true
+
+    storage "file" {
+      path = "/vault/data"
+    }
+
+    listener "tcp" {
+      address     = "0.0.0.0:8200"
+      tls_disable = true
+    }
+
+    api_addr = "http://vault:8200"
+---
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: vault
   namespace: openfireblocks
 spec:
+  serviceName: vault
   replicas: 1
   selector:
     matchLabels: { app: vault }
@@ -159,21 +201,117 @@ spec:
       containers:
         - name: vault
           image: hashicorp/vault:1.17
-          args: ["server", "-dev", "-dev-listen-address=0.0.0.0:8200"]
+          args: ["server", "-config=/vault/config/vault.hcl"]
           env:
-            - name: VAULT_DEV_ROOT_TOKEN_ID
-              valueFrom:
-                secretKeyRef:
-                  name: dev-dependency-credentials
-                  key: vault-root-token
+            - { name: VAULT_ADDR, value: "http://127.0.0.1:8200" }
           ports:
             - { name: http, containerPort: 8200 }
+          # standbyok and sealedcode: a sealed Vault answers /sys/health with
+          # 501 by default, so the default probe would mark the pod unready
+          # forever and the unseal sidecar would never get a chance to run.
           readinessProbe:
-            httpGet: { path: /v1/sys/health, port: http }
+            httpGet:
+              path: /v1/sys/health?standbyok=true&sealedcode=204&uninitcode=204
+              port: http
             initialDelaySeconds: 3
             periodSeconds: 5
           resources:
             requests: { cpu: 50m, memory: 128Mi }
+          volumeMounts:
+            - { name: config, mountPath: /vault/config }
+            - { name: data, mountPath: /vault/data }
+
+        # Initialises Vault on first boot and unseals it on every boot.
+        #
+        # Persistent storage means Vault comes back with its data but sealed,
+        # and a sealed Vault is indistinguishable from a destroyed one as far
+        # as the rest of the platform is concerned -- every request fails. So
+        # something has to unseal it, and it has to keep doing so after each
+        # restart rather than once at install time.
+        #
+        # The unseal key lives on the same volume as the data. That is
+        # exactly the thing you must not do in production, and it is
+        # deliberate here: this cluster's threat model is "a laptop running
+        # kind", the alternative is dev mode which loses everything, and the
+        # honest fix -- KMS or HSM auto-unseal, where the key never exists on
+        # disk -- needs a cloud KMS this environment does not have. Anyone
+        # copying this file into a real deployment must replace this with a
+        # seal stanza.
+        #
+        # It also re-creates the well-known dev token after a fresh init, so
+        # the bootstrap job and services that read `vault-root-token` from
+        # the dependency Secret keep working without being handed a new token
+        # on every reinstall.
+        - name: unseal
+          image: hashicorp/vault:1.17
+          env:
+            - { name: VAULT_ADDR, value: "http://127.0.0.1:8200" }
+            - name: DEV_ROOT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: dev-dependency-credentials
+                  key: vault-root-token
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              INIT_FILE=/vault/data/cluster-init.json
+
+              # Wait for the API to answer at all. `vault status` exits 2
+              # when sealed and 1 when uninitialised, so a plain check would
+              # loop forever; this only waits for a reachable listener.
+              until vault status >/dev/null 2>&1 || [ $? -ne 1 ] ; do sleep 2; done
+              until wget -q -O- "${VAULT_ADDR}/v1/sys/seal-status" >/dev/null 2>&1; do sleep 2; done
+
+              initialized() {
+                wget -q -O- "${VAULT_ADDR}/v1/sys/seal-status" | grep -q '"initialized":true'
+              }
+              sealed() {
+                wget -q -O- "${VAULT_ADDR}/v1/sys/seal-status" | grep -q '"sealed":true'
+              }
+
+              if ! initialized; then
+                echo "initialising Vault"
+                vault operator init -key-shares=1 -key-threshold=1 -format=json > "${INIT_FILE}"
+                chmod 600 "${INIT_FILE}"
+              fi
+
+              # tr collapses the pretty-printed JSON so a single sed can pull
+              # each field out without jq, which this image does not carry.
+              FLAT=$(tr -d '\n ' < "${INIT_FILE}")
+              UNSEAL_KEY=$(echo "${FLAT}" | sed -n 's/.*"unseal_keys_b64":\["\([^"]*\)".*/\1/p')
+              ROOT_TOKEN=$(echo "${FLAT}" | sed -n 's/.*"root_token":"\([^"]*\)".*/\1/p')
+              [ -n "${UNSEAL_KEY}" ] || { echo "could not read the unseal key"; exit 1; }
+
+              while true; do
+                if sealed; then
+                  echo "vault is sealed; unsealing"
+                  vault operator unseal "${UNSEAL_KEY}" >/dev/null
+                  # Recreate the well-known token every time we unseal a
+                  # freshly-initialised cluster. Creating it when it already
+                  # exists is an error, which is fine to ignore.
+                  VAULT_TOKEN="${ROOT_TOKEN}" vault token create \
+                    -id="${DEV_ROOT_TOKEN}" -policy=root -orphan -ttl=0 \
+                    >/dev/null 2>&1 || true
+                  echo "vault unsealed"
+                fi
+                sleep 5
+              done
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+          volumeMounts:
+            - { name: data, mountPath: /vault/data }
+      volumes:
+        - name: config
+          configMap: { name: vault-config }
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi
 ---
 apiVersion: v1
 kind: Service

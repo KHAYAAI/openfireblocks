@@ -192,9 +192,10 @@ func (p *PostgresDB) CreateWebhookDelivery(ctx context.Context, d *WebhookDelive
 	return p.withTenant(ctx, customerID, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `
 			INSERT INTO webhook_deliveries (delivery_id, webhook_id, event_id, event_type, attempt, status_code,
-			                                  response_time_ms, success, error_message, next_retry_at, created_at)
-			VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7, $8, $9, $10, $11)
-		`, d.DeliveryID, d.WebhookID, d.EventID, d.EventType, d.Attempt, d.StatusCode, d.ResponseTime, d.Success, d.ErrorMessage, d.NextRetryAt, d.CreatedAt)
+			                                  response_time_ms, success, error_message, next_retry_at, created_at,
+			                                  payload)
+			VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+		`, d.DeliveryID, d.WebhookID, d.EventID, d.EventType, d.Attempt, d.StatusCode, d.ResponseTime, d.Success, d.ErrorMessage, d.NextRetryAt, d.CreatedAt, string(d.Payload))
 		if err != nil {
 			return fmt.Errorf("failed to insert webhook delivery: %w", err)
 		}
@@ -209,15 +210,15 @@ func (p *PostgresDB) GetWebhookDelivery(ctx context.Context, deliveryID string) 
 	}
 
 	var d WebhookDelivery
-	var errMsg sql.NullString
+	var errMsg, payload sql.NullString
 	err = p.withTenant(ctx, customerID, func(tx *sql.Tx) error {
 		row := tx.QueryRowContext(ctx, `
 			SELECT delivery_id, webhook_id, event_id, event_type, attempt, status_code, response_time_ms,
-			       success, error_message, next_retry_at, created_at
+			       success, error_message, next_retry_at, created_at, payload
 			FROM webhook_deliveries WHERE delivery_id = $1::uuid
 		`, deliveryID)
 		return row.Scan(&d.DeliveryID, &d.WebhookID, &d.EventID, &d.EventType, &d.Attempt, &d.StatusCode, &d.ResponseTime,
-			&d.Success, &errMsg, &d.NextRetryAt, &d.CreatedAt)
+			&d.Success, &errMsg, &d.NextRetryAt, &d.CreatedAt, &payload)
 	})
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("delivery %s not found", deliveryID)
@@ -226,7 +227,51 @@ func (p *PostgresDB) GetWebhookDelivery(ctx context.Context, deliveryID string) 
 		return nil, fmt.Errorf("failed to query webhook delivery: %w", err)
 	}
 	d.ErrorMessage = errMsg.String
+	if payload.Valid {
+		d.Payload = []byte(payload.String)
+	}
 	return &d, nil
+}
+
+// GetDeliveriesDueForRetry returns failed deliveries whose backoff has
+// elapsed, oldest first.
+//
+// Runs as app_admin, without a tenant context, because a retry sweeper works
+// across all customers by definition -- the same deliberate exception
+// temporal-worker relies on. Every row it hands back is acted on through the
+// tenant-scoped path, so the sweep is the only cross-tenant step.
+func (p *PostgresDB) GetDeliveriesDueForRetry(ctx context.Context, limit int) ([]*WebhookDelivery, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	rows, err := p.admin.QueryContext(ctx, `
+		SELECT delivery_id, webhook_id, event_id, event_type, attempt, status_code, response_time_ms,
+		       success, error_message, next_retry_at, created_at, payload
+		FROM webhook_deliveries
+		WHERE success = FALSE AND next_retry_at IS NOT NULL AND next_retry_at <= NOW()
+		ORDER BY next_retry_at
+		LIMIT $1
+	`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query deliveries due for retry: %w", err)
+	}
+	defer rows.Close()
+
+	var out []*WebhookDelivery
+	for rows.Next() {
+		var d WebhookDelivery
+		var errMsg, payload sql.NullString
+		if err := rows.Scan(&d.DeliveryID, &d.WebhookID, &d.EventID, &d.EventType, &d.Attempt,
+			&d.StatusCode, &d.ResponseTime, &d.Success, &errMsg, &d.NextRetryAt, &d.CreatedAt, &payload); err != nil {
+			return nil, fmt.Errorf("failed to scan delivery: %w", err)
+		}
+		d.ErrorMessage = errMsg.String
+		if payload.Valid {
+			d.Payload = []byte(payload.String)
+		}
+		out = append(out, &d)
+	}
+	return out, rows.Err()
 }
 
 func (p *PostgresDB) GetWebhookDeliveries(ctx context.Context, webhookID string, limit int) ([]*WebhookDelivery, error) {

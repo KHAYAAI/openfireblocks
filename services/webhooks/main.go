@@ -22,6 +22,7 @@ func main() {
 	})
 	mux.HandleFunc("/v1/events", svc.HandlePublishEvent)
 	mux.HandleFunc("/v1/deliveries", svc.HandleGetDeliveries)
+	mux.HandleFunc("/v1/deliveries/retry", svc.HandleRetryDelivery)
 
 	port := os.Getenv("PORT")
 	if port == "" {
