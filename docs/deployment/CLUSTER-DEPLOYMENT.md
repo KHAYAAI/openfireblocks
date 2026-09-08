@@ -337,14 +337,20 @@ Do not read section 2 as more than it is.
    node loss -- power off, kernel panic, network partition -- is not the
    same event and has not been run. Nor has losing *two* nodes, which
    should fail closed for a 2-of-3 key and is untested.
-5. **Vault is a single point of failure here, and the drill proves it.**
-   Draining the node that happens to host Vault destroys the PKI outright,
-   because `vault server -dev` keeps everything in memory. Every party then
-   fails to obtain a certificate, and the platform does not recover on its
-   own -- the drill re-bootstraps it explicitly and says so. That is a
-   property of the throwaway dev dependency rather than of the platform,
-   but it means nothing here has been shown to survive losing the node
-   Vault is on.
+5. **Vault survives its pod dying, not its node.** It now runs on a
+   PersistentVolumeClaim instead of in memory, and the PKI demonstrably
+   survives the pod being force-deleted. It does **not** survive the node
+   going away: kind's `local-path` provisioner makes volumes node-pinned
+   (`kubectl get pv -o jsonpath='{...spec.nodeAffinity...}'` shows the
+   node), so the data is physically on one machine and the pod cannot be
+   scheduled elsewhere. Draining Vault's node leaves it permanently
+   Pending and takes the platform with it. The same is true of Postgres.
+
+   No manifest fixes this on a single-host cluster. The real answer is a
+   three-replica Vault Raft cluster, one per node, each with its own
+   volume, so losing a node leaves quorum -- a production architecture
+   change, not a config tweak. The drill therefore drains a node that
+   pins no volume, and says so, rather than pretending the property holds.
 6. **Dev-grade dependencies.** Vault in dev mode (in-memory,
    auto-unsealed, a root CA generated in place with no offline backup), one
    Postgres with no replica, well-known passwords. Nothing about HA,

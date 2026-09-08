@@ -201,7 +201,16 @@ spec:
       containers:
         - name: vault
           image: hashicorp/vault:1.17
-          args: ["server", "-config=/vault/config/vault.hcl"]
+          # "server" only, with no -config.
+          #
+          # The image's entrypoint already rewrites `server` into
+          # `vault server -config=/vault/config ...`. Passing -config again
+          # makes Vault read the same file twice -- once via the directory
+          # and once directly -- so it sees two identical listener stanzas
+          # and collides with itself on bind. The error it prints for that is
+          # "address already in use", which sends you looking for another
+          # process that does not exist.
+          args: ["server"]
           env:
             - { name: VAULT_ADDR, value: "http://127.0.0.1:8200" }
           ports:

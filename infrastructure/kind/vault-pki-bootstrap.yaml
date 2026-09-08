@@ -16,6 +16,30 @@ metadata:
   name: vault
   namespace: openfireblocks
 ---
+# A long-lived token for Vault's own TokenReview calls.
+#
+# The bootstrap job used to hand Vault its *own pod's* projected
+# service-account token as token_reviewer_jwt. Projected tokens are bound to
+# the pod that requested them and expire with it, so once the job finished
+# and its pod was collected, Vault's reviewer credential became invalid and
+# every kubernetes-auth login started failing with "permission denied" --
+# which reads like a policy problem and is actually an expired credential.
+#
+# Dev mode hid this completely: Vault lost its state so often that the auth
+# backend was always freshly configured. It only became visible once Vault
+# had storage that outlived the bootstrap.
+#
+# A Secret of type kubernetes.io/service-account-token is the legacy,
+# non-expiring form, which is exactly what a long-running reviewer needs.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: vault-auth-reviewer
+  namespace: openfireblocks
+  annotations:
+    kubernetes.io/service-account.name: vault
+type: kubernetes.io/service-account-token
+---
 # Vault validates a pod's service-account token by calling the Kubernetes
 # TokenReview API, which requires system:auth-delegator. Without this the
 # auth method is configured but every login fails with "permission denied",
@@ -54,11 +78,31 @@ spec:
                 secretKeyRef:
                   name: dev-dependency-credentials
                   key: vault-root-token
+          volumeMounts:
+            - name: reviewer
+              mountPath: /reviewer
+              readOnly: true
           command: ["/bin/sh", "-c"]
           args:
             - |
               set -eu
               until vault status >/dev/null 2>&1; do sleep 2; done
+
+              # --- KV v2 for sealed key shares ---------------------------
+              # services/mpc-party/vault_seal.go writes each party's share to
+              # secret/openfireblocks/mpc-party/<party>/<ceremony>.
+              #
+              # `vault server -dev` mounts a KV v2 engine at secret/
+              # automatically; a real server does not. That difference was
+              # invisible for as long as this cluster ran in dev mode, and
+              # surfaced the moment it did not: DKG completed, then sealing
+              # failed with 'no handler for route "secret/data/..."' and the
+              # whole ceremony was marked failed. Anything deploying Vault
+              # for real has to create this mount -- it is not optional
+              # infrastructure, it is where the key shares live.
+              if ! vault secrets list -format=json | grep -q '"secret/"'; then
+                vault secrets enable -path=secret -version=2 kv
+              fi
 
               # --- PKI engine -------------------------------------------
               # Mount path matches .Values.mpcParty.mtls.autoIssue.pkiMount.
@@ -109,12 +153,13 @@ spec:
               if ! vault auth list -format=json | grep -q '"kubernetes/"'; then
                 vault auth enable kubernetes
               fi
-              # token_reviewer_jwt is this Job's own service-account token;
-              # its SA carries system:auth-delegator (above), which is what
-              # lets Vault call TokenReview on behalf of logging-in pods.
+              # token_reviewer_jwt comes from the vault-auth-reviewer Secret
+              # rather than this pod's projected token -- see that Secret for
+              # why. Its SA carries system:auth-delegator (above), which is
+              # what lets Vault call TokenReview for logging-in pods.
               vault write auth/kubernetes/config \
                 kubernetes_host="https://$KUBERNETES_SERVICE_HOST:$KUBERNETES_SERVICE_PORT" \
-                token_reviewer_jwt=@/var/run/secrets/kubernetes.io/serviceaccount/token \
+                token_reviewer_jwt=@/reviewer/token \
                 kubernetes_ca_cert=@/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
 
               # Bound to the chart's service account in this namespace
@@ -128,3 +173,7 @@ spec:
                 ttl=1h
 
               echo "VAULT PKI BOOTSTRAP COMPLETE"
+      volumes:
+        - name: reviewer
+          secret:
+            secretName: vault-auth-reviewer
