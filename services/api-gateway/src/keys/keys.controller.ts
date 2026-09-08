@@ -17,6 +17,7 @@ import { CurrentCustomer } from '../auth/current-customer.decorator';
 import { Customer } from '../customers/customer.service';
 import { ThresholdSignRequestDto } from './dto/threshold-sign.dto';
 import { SignTransactionDto } from './dto/sign-transaction.dto';
+import { BitcoinTransactionDto } from './dto/bitcoin-transaction.dto';
 
 @Controller('keys')
 @UseGuards(ApiKeyGuard)
@@ -85,6 +86,34 @@ export class KeysController {
     @Body() req: SignTransactionDto,
   ) {
     return this.keysService.signTransaction(customer, keyId, req);
+  }
+
+  // Where to deposit so this key can spend it.
+  @Get(':keyId/addresses')
+  async getDepositAddresses(
+    @CurrentCustomer() customer: Customer,
+    @Param('keyId') keyId: string,
+  ) {
+    return this.keysService.getDepositAddresses(customer, keyId);
+  }
+
+  // Send Bitcoin from a threshold key.
+  //
+  // Separate from :keyId/transactions rather than a branch inside it
+  // because the two chains need genuinely different inputs. Ethereum wants
+  // a nonce, a gas limit and a fee, because an account model expects the
+  // caller to know the account's state. Bitcoin has no such state to know:
+  // which coins to spend and what fee to pay are the platform's job, and a
+  // single endpoint taking the union of both would be mostly fields that
+  // must not be set.
+  @Post(':keyId/bitcoin-transactions')
+  @HttpCode(HttpStatus.OK)
+  async sendBitcoin(
+    @CurrentCustomer() customer: Customer,
+    @Param('keyId') keyId: string,
+    @Body() req: BitcoinTransactionDto,
+  ) {
+    return this.keysService.sendBitcoin(customer, keyId, req);
   }
 
   @Get()

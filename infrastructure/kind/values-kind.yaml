@@ -19,6 +19,11 @@ external:
   # run against a real geth node.
   ethereumRpcSepolia: ""
   requiredConfirmations: "6"
+  # This cluster's bitcoind runs in regtest -- see bitcoind-regtest.yaml.
+  # The value decides how a key's public key becomes an address, so
+  # leaving it at the mainnet default would derive addresses this node has
+  # never heard of and report every balance as zero.
+  bitcoinNetwork: regtest
   redisUrl: ""
 
 apiGateway:
@@ -55,6 +60,13 @@ mpcParty:
 
 mpcSigner:
   enabled: true
+  bitcoin:
+    # bitcoind-regtest.yaml. Credentials match its -rpcuser/-rpcpassword;
+    # the password comes from the openfireblocks-secrets secret up.sh
+    # creates, so it is not in the manifest.
+    rpcUrl: http://bitcoind:18443
+    rpcUser: ofb
+    rpcPasswordSecret: openfireblocks-secrets
 
 policyService:
   enabled: true

@@ -14,6 +14,12 @@ import { Customer } from '../customers/customer.service';
 import { PolicyService } from '../policies/policy.service';
 import { ThresholdSignRequestDto } from './dto/threshold-sign.dto';
 import { SignTransactionDto } from './dto/sign-transaction.dto';
+import { BitcoinTransactionDto } from './dto/bitcoin-transaction.dto';
+import {
+  BitcoinSignerClient,
+  SignerError,
+  splitSignature,
+} from './bitcoin-signer-client';
 import {
   BuiltTx,
   SignedTx,
@@ -42,6 +48,8 @@ function derivePartyEndpoints(totalParties: number): {
 @Injectable()
 export class KeysService {
   private readonly logger = new Logger(KeysService.name);
+
+  private readonly bitcoin = new BitcoinSignerClient();
 
   constructor(
     private readonly postgres: PostgresService,
@@ -300,6 +308,198 @@ export class KeysService {
       threshold: key.threshold,
       total_parties: signed.totalParties,
     };
+  }
+
+  // Where to send money so this key can spend it.
+  //
+  // A custody platform that cannot answer this is not usable: a customer
+  // has to be able to fund a key before they can move anything out of it.
+  // For Bitcoin the answer is two addresses, not one -- the same key is
+  // payable at a segwit and a legacy address, and both are spendable, so
+  // publishing only one would leave the platform unable to explain a
+  // deposit made to the other.
+  async getDepositAddresses(customer: Customer, keyId: string) {
+    const key = await this.postgres.getKey(keyId, customer.customer_id);
+    if (!key) {
+      throw new NotFoundException(`no key ${keyId}`);
+    }
+    if (!key.public_key) {
+      throw new ConflictException(
+        `key ${keyId} is ${key.status}; its addresses cannot be derived until its DKG ceremony completes`,
+      );
+    }
+
+    if (key.blockchain !== 'bitcoin') {
+      // Ethereum and every EVM chain share one address, already recorded
+      // when the ceremony finished.
+      return {
+        key_id: keyId,
+        blockchain: key.blockchain,
+        addresses: { preferred: key.address },
+      };
+    }
+
+    const network = process.env.BITCOIN_NETWORK ?? 'mainnet';
+    let derived;
+    try {
+      derived = await this.bitcoin.addresses(key.public_key, network);
+    } catch (err) {
+      throw this.translateSignerError(err, 'deriving the key\'s Bitcoin addresses');
+    }
+    return {
+      key_id: keyId,
+      blockchain: 'bitcoin',
+      network,
+      addresses: {
+        preferred: derived.preferred,
+        segwit: derived.segwit,
+        legacy: derived.legacy,
+      },
+    };
+  }
+
+  // Sends Bitcoin from a threshold key.
+  //
+  // The Bitcoin equivalent of signTransaction, and it exists for the same
+  // reason: until it did, the only way to spend Bitcoin was POST
+  // :keyId/sign, where the customer computes their own sighash and the
+  // platform signs a digest it cannot inspect. That route is gated per
+  // tenant precisely because a digest is opaque to policy -- so Bitcoin was
+  // either unavailable or governed by a policy decision about whatever the
+  // caller claimed the digest meant.
+  //
+  // Here the platform selects the coins, computes the fee, builds the
+  // transaction and hashes it. The destination and amount policy evaluates
+  // are the destination and amount that end up in the bytes.
+  //
+  // One ceremony per input. That is unavoidable: each input is a separate
+  // signature over a separate digest, and a threshold signature cannot be
+  // batched. It is also why coin selection minimises the input count.
+  async sendBitcoin(customer: Customer, keyId: string, req: BitcoinTransactionDto) {
+    const requestId = req.idempotencyKey ?? uuidv4();
+
+    const key = await this.loadSignableKey(keyId, customer.customer_id);
+    if (key.blockchain !== 'bitcoin') {
+      throw new BadRequestException(
+        `key ${keyId} is a ${key.blockchain} key; this route spends Bitcoin`,
+      );
+    }
+    if (!key.public_key) {
+      throw new ConflictException(
+        `key ${keyId} has no public key recorded, so its Bitcoin addresses cannot be derived`,
+      );
+    }
+
+    const amount = Number(req.amount);
+    if (!Number.isSafeInteger(amount)) {
+      throw new BadRequestException('amount is too large to be a number of satoshis');
+    }
+
+    // Policy first, before any node work: a spend that policy refuses
+    // should not cost a UTXO scan. chainId 0 because Bitcoin has no chain
+    // id -- the field is EVM-shaped and the policy engine treats it as an
+    // opaque discriminator.
+    await this.enforcePolicy(customer, requestId, {
+      to: req.destination,
+      value: req.amount,
+      chainId: 0,
+      country: req.country,
+    });
+
+    const network = process.env.BITCOIN_NETWORK ?? 'mainnet';
+
+    let prepared;
+    try {
+      prepared = await this.bitcoin.prepare({
+        network,
+        pubkey_hex: key.public_key,
+        destination: req.destination,
+        amount,
+        fee_rate: req.feeRate,
+        confirmation_target: req.confirmationTarget,
+        change_address: req.changeAddress,
+        min_confirmations: req.minConfirmations,
+      });
+    } catch (err) {
+      throw this.translateSignerError(err, 'preparing the Bitcoin transaction');
+    }
+
+    this.logger.log(
+      `key ${keyId}: spending ${prepared.selection.selected.length} input(s) ` +
+        `totalling ${prepared.selection.total_in} sats, fee ${prepared.selection.fee} ` +
+        `at ${prepared.selection.fee_rate} sat/vB`,
+    );
+
+    // Sequential rather than parallel. The parties run one ceremony at a
+    // time, so firing several at once would queue them anyway while making
+    // a partial failure much harder to reason about.
+    const signatures: Array<{ r: string; s: string }> = [];
+    const parties: number[][] = [];
+    for (const [index, sighash] of prepared.plan.sighashes.entries()) {
+      // A distinct request id per input: they are separate ceremonies, and
+      // sharing an idempotency key across them would make the second one
+      // return the first one's signature -- which would be a valid
+      // signature over the wrong digest.
+      const signed = await this.runSigningCeremony(
+        key,
+        keyId,
+        customer.customer_id,
+        `${requestId}:input-${index}`,
+        sighash,
+      );
+      signatures.push(splitSignature(signed.signature));
+      parties.push(signed.parties);
+    }
+
+    let finalized;
+    try {
+      finalized = await this.bitcoin.finalize({
+        plan: prepared.plan,
+        signatures,
+        pubkey_hex: key.public_key,
+        broadcast: req.broadcast ?? true,
+      });
+    } catch (err) {
+      throw this.translateSignerError(err, 'assembling the Bitcoin transaction');
+    }
+
+    return {
+      request_id: requestId,
+      key_id: keyId,
+      network,
+      from: prepared.addresses,
+      to: req.destination,
+      amount: String(prepared.selection.amount),
+      fee: String(prepared.selection.fee),
+      fee_rate: prepared.selection.fee_rate,
+      change: String(prepared.selection.change),
+      change_dropped_to_fee: prepared.selection.change_dropped_to_fee,
+      virtual_size: prepared.selection.virtual_size,
+      inputs: prepared.selection.selected.length,
+      balance_before: String(prepared.balance),
+      txid: finalized.txid,
+      raw_transaction: finalized.raw_tx_hex,
+      broadcast: finalized.broadcast,
+      parties: parties[0] ?? [],
+      threshold: key.threshold,
+    };
+  }
+
+  // Maps a signer failure onto the right HTTP status.
+  //
+  // Worth doing carefully: "you do not have enough Bitcoin" and "the node
+  // is unreachable" are both failures to send money, and only one of them
+  // is the customer's to fix. Collapsing them into a 500 makes every
+  // insufficient balance look like an outage.
+  private translateSignerError(err: unknown, context: string): Error {
+    if (!(err instanceof SignerError)) {
+      return err as Error;
+    }
+    this.logger.error(`${context} failed (${err.status}): ${err.message}`);
+    if (err.status === 400) {
+      return new BadRequestException(err.message);
+    }
+    return new ServiceUnavailableException(`${context} failed: ${err.message}`);
   }
 
   // Loads a key the customer owns and that is in a state where signing is

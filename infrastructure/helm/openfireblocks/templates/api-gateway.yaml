@@ -72,6 +72,12 @@ spec:
                   key: jwt-secret
             - name: MPC_SIGNER_URL
               value: http://{{ include "ofb.fullname" . }}-mpc-signer:{{ .Values.mpcSigner.port }}
+            # Which Bitcoin network this deployment's keys live on. It
+            # decides how a public key is turned into an address, so a
+            # wrong value here does not fail -- it derives addresses on
+            # the wrong network and reports a balance of zero.
+            - name: BITCOIN_NETWORK
+              value: {{ .Values.external.bitcoinNetwork | quote }}
             - name: POLICY_SERVICE_URL
               value: http://{{ include "ofb.fullname" . }}-policy-service:{{ .Values.policyService.port }}
             - name: ETHEREUM_RPC_SEPOLIA

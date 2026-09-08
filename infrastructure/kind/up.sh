@@ -146,6 +146,7 @@ kubectl -n "${NS}" create secret generic openfireblocks-secrets \
   --from-literal=admin-api-key='dev-admin-api-key' \
   --from-literal=jwt-secret='dev-jwt-secret-not-for-production' \
   --from-literal=vault-token='dev-root-token' \
+  --from-literal=bitcoin-rpc-password='ofb-regtest' \
   --dry-run=client -o yaml | kubectl apply -f -
 
 echo "==> configuring Vault PKI + kubernetes auth"

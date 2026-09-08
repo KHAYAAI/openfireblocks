@@ -125,6 +125,19 @@ func PlanBitcoinTransaction(req *BitcoinSigningRequest) (*BitcoinSigningPlan, er
 		if err != nil {
 			return nil, fmt.Errorf("output %d: %w", i, err)
 		}
+		// Dust: an output too small to be worth the fee of spending it
+		// later. The network refuses to relay these outright, so building
+		// one produces a transaction that is well-formed, correctly
+		// signed, and rejected -- which is the worst place to find out,
+		// because by then a threshold ceremony has already run for every
+		// input. Refusing here costs nothing and fails with the number the
+		// caller needs.
+		if threshold := dustThreshold(script); out.Amount < threshold {
+			return nil, fmt.Errorf(
+				"output %d sends %d sats to %s, below the %d sat dust threshold for that address type; "+
+					"the network will not relay it",
+				i, out.Amount, out.Address, threshold)
+		}
 		tx.AddTxOut(wire.NewTxOut(out.Amount, script))
 		totalOut += out.Amount
 	}

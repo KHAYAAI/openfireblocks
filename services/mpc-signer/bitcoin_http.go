@@ -73,6 +73,37 @@ type bitcoinFinalizeResponse struct {
 	BroadcastID string `json:"broadcast_txid,omitempty"`
 }
 
+// handleBitcoinAddresses derives the addresses a key can be paid at.
+//
+// A custody platform that cannot tell a customer where to deposit is not
+// usable, and this is the only place that should answer the question:
+// address derivation has to agree with spending about how a public key is
+// serialised, and they agree reliably only if one implementation decides.
+func (s *server) handleBitcoinAddresses(w http.ResponseWriter, r *http.Request) {
+	pubKey := r.URL.Query().Get("pubkey")
+	network := r.URL.Query().Get("network")
+	if pubKey == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"error": "pubkey is required"})
+		return
+	}
+	segwit, legacy, err := chains.BitcoinAddressesForPubKey(pubKey, network)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"network": network,
+		// Both, because both are real: money paid to either is spendable by
+		// this key, and a platform that published only one would be unable
+		// to explain a deposit made to the other.
+		"segwit": segwit,
+		"legacy": legacy,
+		// Which one to hand out by default. Segwit costs less to spend,
+		// and the platform pays that cost on the customer's behalf.
+		"preferred": segwit,
+	})
+}
+
 // handleBitcoinPrepare selects coins and returns the digests to sign.
 func (s *server) handleBitcoinPrepare(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()

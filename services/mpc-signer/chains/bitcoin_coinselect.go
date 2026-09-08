@@ -178,6 +178,16 @@ func SelectCoins(req *CoinSelectionRequest) (*CoinSelection, error) {
 		return spendable[i].Vout < spendable[j].Vout
 	})
 
+	// Checked before any coin is considered: an amount below dust cannot
+	// produce a relayable transaction however the coins are chosen, and
+	// saying so here is much clearer than an insufficient-funds error or a
+	// rejection from the node.
+	if destDust := dustThreshold(destScript); req.Amount < destDust {
+		return nil, fmt.Errorf(
+			"amount of %d sats is below the %d sat dust threshold for %s; the network will not relay it",
+			req.Amount, destDust, req.Destination)
+	}
+
 	changeDust := dustThreshold(changeScript)
 
 	var selected []UTXO

@@ -24,6 +24,10 @@ external:
   temporalNamespace: default
   ethereumRpcSepolia: "" # set to enable broadcasting
   requiredConfirmations: "6"
+  # Decides how a threshold key's public key becomes a Bitcoin address.
+  # mainnet by default because a wrong value does not fail loudly -- it
+  # produces addresses for another network and reports a zero balance.
+  bitcoinNetwork: mainnet
   redisUrl: "" # e.g. redis://redis-master:6379 — empty disables velocity limiting
 
 # Static admin token for customer provisioning (replace with Keycloak in prod).
@@ -60,6 +64,12 @@ mpcSigner:
   vault:
     addr: "" # e.g. http://vault.vault:8200 — empty disables Vault sourcing
     tokenSecret: openfireblocks-secrets # secret holding key "vault-token"
+  bitcoin:
+    # Empty means no node: address derivation and assembly still work, and
+    # the routes that need to see the chain answer 503 instead of guessing.
+    rpcUrl: "" # e.g. http://bitcoind:18443
+    rpcUser: ""
+    rpcPasswordSecret: openfireblocks-secrets # secret holding key "bitcoin-rpc-password"
 
 policyService:
   enabled: true

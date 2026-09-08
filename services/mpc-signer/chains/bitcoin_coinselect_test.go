@@ -393,3 +393,86 @@ func TestSelectionRejectsAnAddressFromAnotherNetwork(t *testing.T) {
 		t.Fatal("accepted a mainnet destination on regtest")
 	}
 }
+
+// A dust output is refused before a single coin is chosen.
+//
+// Found by the API drill, which asked to send 1 satoshi. The platform
+// planned it, ran a threshold ceremony for every input, assembled a
+// perfectly valid transaction, and only then had Bitcoin Core refuse it as
+// dust -- an expensive way to discover a mistake that costs nothing to
+// catch, and one the caller saw as a 503.
+func TestASpendBelowDustIsRefusedBeforeAnyWork(t *testing.T) {
+	key := mustKey(t)
+	_, script := p2wpkhFor(t, key)
+	segwitDest, _ := p2wpkhFor(t, mustKey(t))
+	legacyDest, _ := p2pkhFor(t, mustKey(t))
+	change, _ := p2wpkhFor(t, key)
+
+	// The threshold depends on the destination's type: a legacy output
+	// costs more to spend later, so more is required to make it worth
+	// creating.
+	cases := []struct {
+		name   string
+		dest   btcutil.Address
+		amount int64
+	}{
+		{"one satoshi", segwitDest, 1},
+		{"just below the segwit threshold", segwitDest, p2wpkhDust - 1},
+		{"below the legacy threshold", legacyDest, p2pkhDust - 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := SelectCoins(&CoinSelectionRequest{
+				Network:       "regtest",
+				UTXOs:         []UTXO{utxo(txidN(1), 0, 500_000, script)},
+				Destination:   tc.dest.EncodeAddress(),
+				Amount:        tc.amount,
+				FeeRate:       5,
+				ChangeAddress: change.EncodeAddress(),
+			})
+			if err == nil {
+				t.Fatalf("selected a spend of %d sats, which the network will not relay", tc.amount)
+			}
+			if !strings.Contains(err.Error(), "dust") {
+				t.Errorf("the error does not say the amount is dust: %v", err)
+			}
+		})
+	}
+
+	// And the threshold itself is spendable, so the check is not off by one.
+	if _, err := SelectCoins(&CoinSelectionRequest{
+		Network:       "regtest",
+		UTXOs:         []UTXO{utxo(txidN(1), 0, 500_000, script)},
+		Destination:   segwitDest.EncodeAddress(),
+		Amount:        p2wpkhDust,
+		FeeRate:       5,
+		ChangeAddress: change.EncodeAddress(),
+	}); err != nil {
+		t.Errorf("refused a spend of exactly the dust threshold: %v", err)
+	}
+}
+
+// The same guard one level down, for a caller that builds its own inputs
+// and outputs rather than going through selection.
+func TestPlanRefusesADustOutput(t *testing.T) {
+	key := mustKey(t)
+	_, script := p2wpkhFor(t, key)
+	dest, _ := p2wpkhFor(t, mustKey(t))
+
+	_, err := PlanBitcoinTransaction(&BitcoinSigningRequest{
+		Network: "regtest",
+		Inputs: []BitcoinInput{{
+			Txid:   txidN(1),
+			Vout:   0,
+			Amount: 100_000,
+			Script: script,
+		}},
+		Outputs: []BitcoinOutput{{Address: dest.EncodeAddress(), Amount: 100}},
+	})
+	if err == nil {
+		t.Fatal("planned a transaction with a dust output")
+	}
+	if !strings.Contains(err.Error(), "dust") {
+		t.Errorf("the error does not say the output is dust: %v", err)
+	}
+}
