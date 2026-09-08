@@ -5,12 +5,15 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
 	"time"
 
@@ -97,23 +100,66 @@ type ComplianceCheckEvent struct {
 	CreatedAt  string `json:"created_at"`
 }
 
-// NewWebhookService creates a new webhook service
+// NewWebhookService creates a new webhook service.
+//
+// WEBHOOK_CA_FILE names a PEM bundle of certificate authorities to trust
+// *in addition to* the system roots. Endpoints are required to be HTTPS,
+// and a customer whose receiver sits behind their own corporate or
+// internal CA would otherwise be undeliverable -- every attempt failing
+// verification, with nothing they can do about it.
+//
+// Added to the system pool rather than replacing it, so trusting one
+// private CA does not quietly stop trusting the public web. There is
+// deliberately no option to skip verification: an unverified TLS
+// connection carrying what a customer signed and for how much is worse
+// than no delivery at all.
 func NewWebhookService(db *PostgresDB) *WebhookService {
-	return &WebhookService{
-		db: db,
-		httpClient: &http.Client{
-			Timeout: 15 * time.Second,
-		},
+	client := &http.Client{Timeout: 15 * time.Second}
+
+	if path := os.Getenv("WEBHOOK_CA_FILE"); path != "" {
+		pem, err := os.ReadFile(path)
+		if err != nil {
+			// Fatal on purpose. Starting with the configured trust roots
+			// silently missing means every delivery to an endpoint behind
+			// that CA fails verification, and it would look like the
+			// customer's certificate is bad rather than ours is unloaded.
+			log.Fatalf("WEBHOOK_CA_FILE=%s could not be read: %v", path, err)
+		}
+		pool, err := x509.SystemCertPool()
+		if err != nil || pool == nil {
+			pool = x509.NewCertPool()
+		}
+		if !pool.AppendCertsFromPEM(pem) {
+			log.Fatalf("WEBHOOK_CA_FILE=%s contains no usable certificates", path)
+		}
+		client.Transport = &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool}}
+		log.Printf("trusting additional webhook CAs from %s", path)
 	}
+
+	return &WebhookService{db: db, httpClient: client}
 }
 
 // PublishEvent publishes an event to all registered webhooks
 func (s *WebhookService) PublishEvent(ctx context.Context, event *WebhookEvent) error {
+	// An event with no id cannot be correlated with its deliveries, and a
+	// caller that generates one per retry would fan out duplicates that
+	// look like distinct events. Filled in here when absent so there is
+	// one place that decides.
+	if event.EventID == "" {
+		event.EventID = uuid.New().String()
+	}
+	if event.Timestamp.IsZero() {
+		event.Timestamp = time.Now()
+	}
+
 	// Get all active webhooks for this customer
 	webhooks, err := s.db.GetWebhooksByCustomer(ctx, event.CustomerID)
 	if err != nil {
-		log.Printf("Failed to get webhooks: %v", err)
-		return nil
+		// Returned rather than logged and swallowed. Swallowing it made a
+		// database failure indistinguishable from a customer with no
+		// webhooks registered, so an event that reached nobody was
+		// reported as delivered.
+		return fmt.Errorf("looking up webhooks for customer %s: %w", event.CustomerID, err)
 	}
 
 	if len(webhooks) == 0 {

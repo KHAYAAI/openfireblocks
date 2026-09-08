@@ -80,6 +80,12 @@ spec:
               value: {{ .Values.external.bitcoinNetwork | quote }}
             - name: POLICY_SERVICE_URL
               value: http://{{ include "ofb.fullname" . }}-policy-service:{{ .Values.policyService.port }}
+            # Where to announce that something happened. Unset means the
+            # platform still signs and still broadcasts; it just cannot tell
+            # anybody, which is what a deployment without the webhooks
+            # service should do rather than failing every request.
+            - name: WEBHOOKS_URL
+              value: http://{{ include "ofb.fullname" . }}-webhooks:{{ .Values.webhooks.port }}
             - name: ETHEREUM_RPC_SEPOLIA
               value: {{ .Values.external.ethereumRpcSepolia | quote }}
             - name: REDIS_URL

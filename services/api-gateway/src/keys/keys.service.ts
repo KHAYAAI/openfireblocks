@@ -20,6 +20,7 @@ import {
   SignerError,
   splitSignature,
 } from './bitcoin-signer-client';
+import { WebhookEmitter } from '../webhooks/webhooks.service';
 import {
   BuiltTx,
   SignedTx,
@@ -55,7 +56,25 @@ export class KeysService {
     private readonly postgres: PostgresService,
     private readonly temporal: KeysTemporalService,
     private readonly policy: PolicyService,
+    // Optional so the many tests that construct this service directly do
+    // not each have to stub a notifier they are not testing. A missing
+    // emitter means no announcements, which is the same as a deployment
+    // without the webhooks service.
+    private readonly webhooks?: WebhookEmitter,
   ) {}
+
+  // Announce, without ever letting the announcement affect the work.
+  //
+  // Deliberately not awaited by callers: the signature exists and the
+  // money has moved by the time this runs, and a customer's notification
+  // endpoint being slow must not extend or fail their request.
+  private announce(
+    customerId: string,
+    eventType: Parameters<WebhookEmitter['emit']>[1],
+    data: Record<string, unknown>,
+  ): void {
+    void this.webhooks?.emit(customerId, eventType, data);
+  }
 
   async createKey(customer: Customer, req: CreateKeyRequest) {
     const keyId = uuidv4();
@@ -145,6 +164,14 @@ export class KeysService {
       if (err instanceof ServiceUnavailableException) throw err;
       throw new ServiceUnavailableException('failed to start key provisioning');
     }
+
+    this.announce(customer.customer_id, 'key.created', {
+      key_id: keyId,
+      ceremony_id: ceremonyId,
+      blockchain: req.blockchain,
+      threshold: req.threshold,
+      total_parties: req.total_parties,
+    });
 
     return {
       id: keyId,
@@ -463,6 +490,18 @@ export class KeysService {
       throw this.translateSignerError(err, 'assembling the Bitcoin transaction');
     }
 
+    if (finalized.broadcast) {
+      this.announce(customer.customer_id, 'transaction.broadcast', {
+        key_id: keyId,
+        blockchain: 'bitcoin',
+        network,
+        txid: finalized.txid,
+        to: req.destination,
+        amount: String(prepared.selection.amount),
+        fee: String(prepared.selection.fee),
+      });
+    }
+
     return {
       request_id: requestId,
       key_id: keyId,
@@ -770,6 +809,18 @@ export class KeysService {
           `signed with key ${keyId} but could not record request ${requestId}: ${err.message}`,
         ),
       );
+
+    // Emitted here rather than in each route, for the same reason the
+    // audit row is written here: three routes produce signatures and a
+    // fourth will, and one of them would eventually forget.
+    this.announce(customerId, 'signature.created', {
+      key_id: keyId,
+      request_id: rowId,
+      idempotency_key: requestId,
+      message: messageHash,
+      parties,
+      threshold: key.threshold,
+    });
 
     return {
       signature: result.signature,

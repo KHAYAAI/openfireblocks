@@ -20,6 +20,9 @@ func main() {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"status":"ok","service":"webhooks"}`))
 	})
+	// Registering an endpoint. The delivery machinery below has always
+	// been complete and always operated on webhooks nothing could create.
+	mux.HandleFunc("/v1/webhooks", svc.HandleRegisterWebhook)
 	mux.HandleFunc("/v1/events", svc.HandlePublishEvent)
 	mux.HandleFunc("/v1/deliveries", svc.HandleGetDeliveries)
 	mux.HandleFunc("/v1/deliveries/retry", svc.HandleRetryDelivery)

@@ -213,6 +213,11 @@ webhooks:
   tag: latest
   replicas: 2
   port: 8086
+  # A secret holding ca.crt: certificate authorities to trust for customer
+  # webhook endpoints, on top of the public roots. Empty means public roots
+  # only, which is right for endpoints on the open internet and wrong for a
+  # customer whose receiver is behind their own CA.
+  trustedCASecret: ""
   resources:
     requests: { cpu: 100m, memory: 128Mi }
     limits: { cpu: 500m, memory: 256Mi }

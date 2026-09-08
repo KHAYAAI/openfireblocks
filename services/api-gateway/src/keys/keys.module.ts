@@ -4,6 +4,7 @@ import { KeysService } from './keys.service';
 import { KeysTemporalService } from './keys-temporal.service';
 import { CustomersModule } from '../customers/customers.module';
 import { PolicyModule } from '../policies/policy.module';
+import { WebhookEmitter } from '../webhooks/webhooks.service';
 
 // Threshold key lifecycle: creation (kicks off a real DKG ceremony via
 // KeysTemporalService -> ProvisionKeyWorkflow), listing, share-distribution
@@ -17,6 +18,6 @@ import { PolicyModule } from '../policies/policy.module';
 @Module({
   imports: [CustomersModule, PolicyModule],
   controllers: [KeysController],
-  providers: [KeysService, KeysTemporalService],
+  providers: [KeysService, KeysTemporalService, WebhookEmitter],
 })
 export class KeysModule {}
