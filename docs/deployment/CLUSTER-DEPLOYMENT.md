@@ -92,6 +92,7 @@ Measured:
 | Signed transaction via `POST /keys/:keyId/transactions` | **2.17s** |
 | DKG end to end, mTLS on, parties on three separate nodes | **118s** |
 | Threshold-signed transfer accepted and mined by geth | block 93, status success |
+| Threshold-signed **Bitcoin** transfer accepted and mined by Bitcoin Core | 1 confirmation, 49,990,000 sats moved |
 | Same, propagated across a real p2p link to a separate signer | block 2644, status success |
 | Signing after a node hosting a committee member is drained | **975ms**, committee [2, 3] |
 | Migrations, fresh database | 16 applied |

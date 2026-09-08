@@ -123,6 +123,7 @@ Offered so an auditor can skip re-deriving it — and to be explicit that
 | DKG produces a real, usable threshold key | Real 2-of-3 DKG across three independent OS processes; signature recovers to the derived address (`crypto.SigToPub`) |
 | The full customer path works | `POST /keys` → real Temporal workflow → real DKG → `key_pairs` activated with a real address, then signing with that key. ~24s. `services/api-gateway/src/keys/keys.provisioning.live.spec.ts` |
 | mTLS on internal links | Real Vault-PKI-issued certs; valid cert accepted, absent cert rejected at the TLS layer. Now also running in-cluster for the party↔party and worker↔party links, which are the ones carrying protocol messages |
+| Bitcoin threshold signing works end to end | `infrastructure/kind/bitcoin-drill.sh`: an address derived from a 2-of-3 DKG key, funded on regtest, spent by a transaction whose sighash was signed by the committee and assembled into a signature script -- accepted by Bitcoin Core and mined. The assembly is additionally checked against btcd's script interpreter in unit tests |
 | Postgres has a verified warm standby | `infrastructure/kind/postgres-failover-drill.sh`: real streaming replication (walsender in `streaming` state, ~170ms round trip for a canary row), `pg_promote()` out of recovery in ~480ms, the promoted node accepts writes -- which a standby refuses -- and the pre-promotion data survived |
 | Vault survives losing a node | Three-replica Raft cluster, one per worker. The node hosting the Raft leader was drained: quorum held, leadership moved, and a party pod scheduled after the drain obtained a fresh certificate through Kubernetes auth |
 | A signing path with no cryptography behind it | Removed. `mpc-party` served `/round/*` and `/sign` backed by a stand-in documented as "not cryptographically secure"; no workflow used them, but they were reachable by anything that could reach a party. Deleted, with a test pinning them as 404 |
@@ -205,8 +206,17 @@ We would rather hand this over than have it found.
    broadcast and confirmation path. It proves nothing about mainnet
    economics, reorgs, mempool behaviour or public network conditions --
    `geth --dev` is single-signer instant-seal with no consensus.
-   **Bitcoin, Cosmos and Solana remain entirely unbroadcast**: their
-   `BroadcastTransaction` returns "not implemented" outright.
+   **Bitcoin now works end to end**: `services/mpc-signer/chains`
+   plans a transaction, exposes the sighash for the committee to sign, and
+   assembles the result into a signature script that Bitcoin Core accepts
+   and mines (`infrastructure/kind/bitcoin-drill.sh`). Legacy P2PKH only --
+   segwit and multi-input change handling are not implemented, and neither
+   is fee estimation.
+
+   **Cosmos and Solana remain unbroadcast**: their `BroadcastTransaction`
+   returns "not implemented" outright, and Solana in particular is Ed25519
+   rather than secp256k1, so it needs a different threshold scheme, not just
+   different packaging.
 2. **The cluster deployment is four nodes on one host, and Terraform is
    still unapplied.** The chart has been applied and the whole customer
    path runs on real Kubernetes 1.29.14 with containerd 2.0.2, with the

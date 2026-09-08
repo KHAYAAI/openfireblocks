@@ -1,0 +1,61 @@
+# A Bitcoin node, so the threshold-signing path for Bitcoin can be tested
+# against something that will actually reject a bad transaction.
+#
+# The unit tests in services/mpc-signer/chains run btcd's script interpreter
+# over the assembled transaction, which catches the whole class of "signed
+# the wrong digest" and "malformed signature script" mistakes. What they
+# cannot catch is a disagreement between our understanding of the rules and
+# Bitcoin Core's -- policy limits, standardness, encoding details that btcd
+# is more permissive about. Only Core accepting the bytes settles that.
+#
+# regtest rather than testnet: instant, deterministic block production, no
+# faucet, no waiting, and coins that are worthless by construction.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bitcoind
+  namespace: openfireblocks
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: bitcoind }
+  template:
+    metadata:
+      labels: { app: bitcoind }
+    spec:
+      containers:
+        - name: bitcoind
+          image: bitcoin-core:24
+          args:
+            - -regtest
+            - -server
+            - -rpcbind=0.0.0.0
+            - -rpcallowip=0.0.0.0/0
+            - -rpcuser=ofb
+            - -rpcpassword=ofb-regtest
+            - -fallbackfee=0.0002
+            - -txindex=1
+            # Accept transactions paying less than the default relay fee.
+            # regtest blocks are free; a test should fail on a bad signature,
+            # not on a fee policy that has nothing to do with what is being
+            # tested.
+            - -minrelaytxfee=0.00000001
+            - -printtoconsole
+          ports:
+            - { name: rpc, containerPort: 18443 }
+          readinessProbe:
+            tcpSocket: { port: rpc }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bitcoind
+  namespace: openfireblocks
+spec:
+  selector: { app: bitcoind }
+  ports:
+    - { name: rpc, port: 18443, targetPort: rpc }

@@ -1,4 +1,4 @@
-import { IsNumber, IsOptional, IsString, Matches } from 'class-validator';
+import { IsNumber, IsOptional, IsString, Length, Matches } from 'class-validator';
 
 // Validated body for POST /keys/:keyId/sign.
 export class ThresholdSignRequestDto {
@@ -21,15 +21,35 @@ export class ThresholdSignRequestDto {
   // are not signing. Policy enforcement over *verified* intent requires
   // the settlement path, where the gateway builds the transaction itself
   // and hashes it. See docs/deployment/CLUSTER-DEPLOYMENT.md.
-  @Matches(/^0x[0-9a-fA-F]{40}$/, { message: 'to must be a 20-byte hex address' })
+  //
+  // Not constrained to an Ethereum address. This route is how a chain the
+  // gateway cannot build transactions for gets a digest signed -- Bitcoin
+  // goes through it, and a Bitcoin destination is a base58 or bech32 string,
+  // not 20 bytes of hex. Requiring an EVM address here made the platform
+  // multi-chain in its key derivation and single-chain in its signing API.
+  //
+  // Length-bounded rather than pattern-matched: the policy engine treats
+  // this as an opaque destination identifier for whitelist comparison, and
+  // any per-chain regex here would be a second, drifting copy of address
+  // validation that the chain layer already does properly.
+  @IsString()
+  @Length(1, 128, { message: 'to must be a destination address for the target chain' })
   to: string;
 
-  @Matches(/^[0-9]+$/, { message: 'value must be a base-10 wei string' })
+  // Base-10 integer in the chain's smallest unit: wei for Ethereum,
+  // satoshis for Bitcoin. Policy compares magnitudes, so the unit has to be
+  // consistent per chain rather than universal.
+  @Matches(/^[0-9]+$/, { message: 'value must be a base-10 integer string in the chain\'s smallest unit' })
   value: string;
 
   // Numeric EVM chain id (1 for mainnet, 11155111 for Sepolia), NOT the
   // key's `blockchain` name. The policy service takes chainId as an int
   // and rejects a string outright, so the two are not interchangeable.
+  //
+  // Zero for chains that have no such concept, which is how Bitcoin
+  // requests arrive. The field stays required rather than optional so a
+  // caller has to state which chain a signature is for, even when the
+  // answer is "not an EVM one".
   @IsNumber()
   chainId: number;
 
