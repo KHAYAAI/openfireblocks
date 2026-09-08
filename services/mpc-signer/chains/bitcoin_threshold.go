@@ -348,6 +348,45 @@ func AssembleBitcoinTransaction(
 	return buf.Bytes(), nil
 }
 
+// BitcoinAddressesForPubKey returns the addresses a threshold key can be
+// paid at, in the order they should be preferred for change.
+//
+// Both come from the same 20-byte hash of the same compressed key; only the
+// encoding differs. That is why a key needs no second ceremony to receive at
+// a segwit address -- and why a wallet's balance is the sum of what it holds
+// under either encoding, not one or the other. A platform that looked at
+// only one form would report a balance of zero for a customer whose
+// counterparty happened to pay the other.
+func BitcoinAddressesForPubKey(pubKeyHex, network string) (p2wpkh, p2pkh string, err error) {
+	params, err := bitcoinNetParams(network)
+	if err != nil {
+		return "", "", err
+	}
+	raw, err := hex.DecodeString(stripHexPrefix(pubKeyHex))
+	if err != nil {
+		return "", "", fmt.Errorf("invalid public key hex: %w", err)
+	}
+	parsed, err := btcec.ParsePubKey(raw, btcec.S256())
+	if err != nil {
+		return "", "", fmt.Errorf("invalid public key: %w", err)
+	}
+	// Compressed, always -- see AssembleBitcoinTransaction. The DKG reports
+	// uncompressed keys and Bitcoin addresses derive from the compressed
+	// form, so normalising in one place is what keeps derivation and
+	// spending from disagreeing.
+	hash := btcutil.Hash160(parsed.SerializeCompressed())
+
+	segwit, err := btcutil.NewAddressWitnessPubKeyHash(hash, params)
+	if err != nil {
+		return "", "", fmt.Errorf("deriving the segwit address: %w", err)
+	}
+	legacy, err := btcutil.NewAddressPubKeyHash(hash, params)
+	if err != nil {
+		return "", "", fmt.Errorf("deriving the legacy address: %w", err)
+	}
+	return segwit.EncodeAddress(), legacy.EncodeAddress(), nil
+}
+
 // BitcoinTxID returns the transaction id in the display order bitcoind uses.
 func BitcoinTxID(signedTx []byte) (string, error) {
 	tx := wire.NewMsgTx(wire.TxVersion)

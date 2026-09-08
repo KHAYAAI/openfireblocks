@@ -92,6 +92,15 @@ func (sr *SignerRouter) BroadcastTransaction(ctx context.Context, chainID string
 	return signer.BroadcastTransaction(ctx, signedTx)
 }
 
+// Signer returns the chain's signer, or nil if the chain is unsupported.
+//
+// Exposed so a caller that needs chain-specific capabilities beyond the
+// ChainSigner interface -- reading a Bitcoin node, for instance -- can reach
+// them without the router growing a method per chain.
+func (sr *SignerRouter) Signer(chainID string) ChainSigner {
+	return sr.signers[chainID]
+}
+
 // IsValidChainID checks if a chain is supported.
 func (sr *SignerRouter) IsValidChainID(chainID string) bool {
 	_, ok := sr.signers[chainID]

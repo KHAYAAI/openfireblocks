@@ -23,12 +23,19 @@ import (
 // here would either not compile against txscript or force a btcd upgrade
 // that breaks tss-lib -- and tss-lib is the threshold-signing core this
 // whole platform is built on, so it wins the version conflict.
-type BitcoinSigner struct{}
+type BitcoinSigner struct {
+	// rpc is nil when no node is configured, which is the deployment that
+	// can derive addresses and sign but cannot see the chain.
+	rpc *BitcoinRPC
+}
 
 // NewBitcoinSigner creates a new Bitcoin signer.
 func NewBitcoinSigner() ChainSigner {
-	return &BitcoinSigner{}
+	return &BitcoinSigner{rpc: NewBitcoinRPCFromEnv()}
 }
+
+// Node returns the configured Bitcoin node client, or nil.
+func (b *BitcoinSigner) Node() *BitcoinRPC { return b.rpc }
 
 func decodeBitcoinPrivKey(privKeyHex string) (*btcec.PrivateKey, error) {
 	if len(privKeyHex) >= 2 && (privKeyHex[:2] == "0x" || privKeyHex[:2] == "0X") {
@@ -250,12 +257,35 @@ func (b *BitcoinSigner) SignTransactionInput(
 	return buf.Bytes(), nil
 }
 
-// BroadcastTransaction is not implemented: it needs a Bitcoin node or a
-// third-party broadcast API, neither of which this service is configured
-// with. Returning an error is deliberate -- a stub that reported success
-// would be far worse than one that admits it cannot broadcast.
+// BroadcastTransaction relays a signed transaction through the configured
+// node.
+//
+// signedTx is the serialised transaction, which is what the ChainSigner
+// interface passes around; bitcoind takes it as hex.
+//
+// With no node configured this still fails, and says why. That was the
+// state of this method for a long time and it was the right stub: a
+// broadcast that silently reports success is far worse than one that admits
+// it cannot reach a node, because the caller believes money moved.
 func (b *BitcoinSigner) BroadcastTransaction(ctx context.Context, signedTx []byte) (string, error) {
-	return "", fmt.Errorf("broadcasting not implemented for Bitcoin: no node or broadcast API is configured")
+	if b.rpc == nil {
+		return "", fmt.Errorf(
+			"cannot broadcast: no Bitcoin node is configured (set BITCOIN_RPC_URL)")
+	}
+	// Tolerates either raw bytes or a hex string, since callers reaching
+	// this through the generic /broadcast route send hex.
+	raw := string(signedTx)
+	if _, err := hex.DecodeString(stripHexPrefix(raw)); err != nil {
+		raw = hex.EncodeToString(signedTx)
+	} else {
+		raw = stripHexPrefix(raw)
+	}
+
+	txid, err := b.rpc.SendRawTransaction(ctx, raw)
+	if err != nil {
+		return "", fmt.Errorf("the node rejected the transaction: %w", err)
+	}
+	return txid, nil
 }
 
 func bitcoinNetParams(network string) (*chaincfg.Params, error) {

@@ -257,6 +257,10 @@ func main() {
 	router.HandleFunc("/address", s.handleAddress).Methods(http.MethodGet)
 	router.HandleFunc("/sign-multi-chain", s.handleSignMultiChain).Methods(http.MethodPost)
 	router.HandleFunc("/broadcast", s.handleBroadcast).Methods(http.MethodPost)
+	// Bitcoin needs two calls rather than one because a threshold ceremony
+	// happens between them -- see bitcoin_http.go.
+	router.HandleFunc("/bitcoin/prepare", s.handleBitcoinPrepare).Methods(http.MethodPost)
+	router.HandleFunc("/bitcoin/finalize", s.handleBitcoinFinalize).Methods(http.MethodPost)
 	router.HandleFunc("/health", handleHealth).Methods(http.MethodGet)
 	router.Handle("/metrics", promhttp.Handler()).Methods(http.MethodGet)
 
