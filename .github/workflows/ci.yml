@@ -34,6 +34,11 @@ jobs:
           - services/webhooks
           - services/marketplace
           - services/compliance
+          # Added when they were: a module absent from this list is a module
+          # nobody notices breaking. vault-unseal in particular holds the
+          # coordination that decides whether a Vault cluster can ever be
+          # unsealed again, and its race is only caught under -race.
+          - services/vault-unseal
           - sdks/sdk-go
     steps:
       - uses: actions/checkout@v4
@@ -56,9 +61,14 @@ jobs:
           else
             go vet ./...
           fi
+      # -race, because the concurrency bugs in this repo are the expensive
+      # ones. services/vault-unseal coordinates several replicas racing to
+      # initialise one Vault cluster, and a loser overwriting the winner's
+      # unseal key leaves a cluster nobody can ever open again -- a failure
+      # a serial test run would never reproduce.
       - name: Test
         working-directory: ${{ matrix.module }}
-        run: go test ./... -count=1
+        run: go test -race ./... -count=1
 
   mpc-tss:
     name: MPC threshold signing (tss tag)

@@ -392,6 +392,25 @@ Do not read section 2 as more than it is.
    status code. Whether a CTR filing is correct, or an invoice adds up, is
    not covered by anything.
 
+
+## 4a. The drills, and what each one is evidence for
+
+Each proves one thing, and each was written after the thing it tests turned
+out to be broken. Run them against a deployed cluster.
+
+| Script | The claim it settles |
+|---|---|
+| `smoke-test.sh` | The customer path works: real DKG across three pods, three shares sealed, policy and tenant isolation enforced, a 2-of-3 signature recovering to the derived address |
+| `chain-test.sh` | An Ethereum transaction the gateway built is accepted by a node that seals nothing, propagates over p2p, and is mined by a separate signer |
+| `bitcoin-drill.sh` | A Bitcoin transaction spending from a threshold-derived address is accepted and mined by Bitcoin Core |
+| `node-failure-drill.sh` | A 2-of-3 key keeps signing when the node hosting a committee member is drained |
+| `postgres-failover-drill.sh` | The standby is genuinely streaming, promotes out of recovery, and keeps the data written before the promotion |
+| `services-smoke-test.sh` | The six supporting services answer their real endpoints with honest status codes |
+
+None of them mock anything. Where one cannot prove something -- automatic
+failover, mainnet behaviour, business logic -- it says so in its own header
+rather than passing quietly.
+
 ## 5. Running it in a sandboxed environment
 
 Two things bite in nested-container environments (CI sandboxes, dev
