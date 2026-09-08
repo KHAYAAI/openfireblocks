@@ -123,6 +123,7 @@ Offered so an auditor can skip re-deriving it — and to be explicit that
 | DKG produces a real, usable threshold key | Real 2-of-3 DKG across three independent OS processes; signature recovers to the derived address (`crypto.SigToPub`) |
 | The full customer path works | `POST /keys` → real Temporal workflow → real DKG → `key_pairs` activated with a real address, then signing with that key. ~24s. `services/api-gateway/src/keys/keys.provisioning.live.spec.ts` |
 | mTLS on internal links | Real Vault-PKI-issued certs; valid cert accepted, absent cert rejected at the TLS layer. Now also running in-cluster for the party↔party and worker↔party links, which are the ones carrying protocol messages |
+| Vault survives losing a node | Three-replica Raft cluster, one per worker. The node hosting the Raft leader was drained: quorum held, leadership moved, and a party pod scheduled after the drain obtained a fresh certificate through Kubernetes auth |
 | A signing path with no cryptography behind it | Removed. `mpc-party` served `/round/*` and `/sign` backed by a stand-in documented as "not cryptographically secure"; no workflow used them, but they were reachable by anything that could reach a party. Deleted, with a test pinning them as 404 |
 | Automated cert issuance | `services/vault-pki-init` against a real Vault PKI mount, real handshake with the issued certs; both the token path and (now) the Kubernetes-auth path |
 | Tenant isolation | Real Postgres: cross-tenant reads return zero rows; `app` confirmed to lack BYPASSRLS |

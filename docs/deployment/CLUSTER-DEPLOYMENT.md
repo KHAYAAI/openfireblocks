@@ -337,20 +337,19 @@ Do not read section 2 as more than it is.
    node loss -- power off, kernel panic, network partition -- is not the
    same event and has not been run. Nor has losing *two* nodes, which
    should fail closed for a 2-of-3 key and is untested.
-5. **Vault survives its pod dying, not its node.** It now runs on a
-   PersistentVolumeClaim instead of in memory, and the PKI demonstrably
-   survives the pod being force-deleted. It does **not** survive the node
-   going away: kind's `local-path` provisioner makes volumes node-pinned
-   (`kubectl get pv -o jsonpath='{...spec.nodeAffinity...}'` shows the
-   node), so the data is physically on one machine and the pod cannot be
-   scheduled elsewhere. Draining Vault's node leaves it permanently
-   Pending and takes the platform with it. The same is true of Postgres.
+5. **Postgres is still a single point of failure; Vault is not.** Vault
+   now runs as a three-replica Raft cluster, one per worker, each with its
+   own volume. Draining the node hosting the Raft *leader* was tested
+   directly: that replica goes Pending (its volume is node-pinned and
+   cannot move), the surviving two hold quorum, leadership moves, and a
+   party pod rescheduled **after** the drain still authenticated via
+   Kubernetes auth and was issued a certificate. Uncordoning brings the
+   third replica back as a follower.
 
-   No manifest fixes this on a single-host cluster. The real answer is a
-   three-replica Vault Raft cluster, one per node, each with its own
-   volume, so losing a node leaves quorum -- a production architecture
-   change, not a config tweak. The drill therefore drains a node that
-   pins no volume, and says so, rather than pretending the property holds.
+   Postgres has had no equivalent treatment: one replica, one node-pinned
+   volume, and draining its node takes the platform down. `services/backup`
+   has a `pg_basebackup` standby and a measured promotion (252ms), but
+   nothing runs a standby in this cluster by default.
 6. **Dev-grade dependencies.** Vault in dev mode (in-memory,
    auto-unsealed, a root CA generated in place with no offline backup), one
    Postgres with no replica, well-known passwords. Nothing about HA,

@@ -139,26 +139,29 @@ spec:
   ports:
     - { name: postgres, port: 5432, targetPort: postgres }
 ---
-# Vault with storage that survives the pod moving.
+# A three-node Vault Raft cluster, one replica per worker.
 #
-# This was `vault server -dev`, whose storage is in memory. Draining the node
-# it happened to be on destroyed the PKI mount, its root CA and the
-# Kubernetes auth backend outright: every party then failed to obtain a
-# certificate, and the platform could not recover without a human
-# re-bootstrapping it. The node-failure drill hit exactly that and had to
-# repair it explicitly to measure anything.
+# This started as `vault server -dev`, which keeps everything in memory:
+# draining Vault's node destroyed the PKI mount, its root CA and the
+# Kubernetes auth backend outright, and the platform could not recover
+# without a human re-bootstrapping it.
 #
-# A StatefulSet with a PersistentVolumeClaim and the file storage backend
-# instead, so the data outlives the pod. That turns Vault from "loses
-# everything when rescheduled" into "comes back sealed and is unsealed by
-# the sidecar below".
+# Persistent storage fixed the pod case and not the node case. kind's
+# local-path provisioner makes a PersistentVolume node-pinned -- the data is
+# physically on one machine -- so a single replica simply cannot be
+# rescheduled when that machine goes away, and stays Pending forever.
 #
-# STILL NOT PRODUCTION. One replica, file storage rather than Raft, a
-# single unseal share, and that share kept on the same volume as the data it
-# protects -- see the unseal sidecar for why that is acceptable here and
-# nowhere else. A real deployment runs an HA Raft cluster with KMS or HSM
-# auto-unseal; infrastructure/terraform/modules/vault-pki is where that
-# lives.
+# Raft is the answer that works on node-local disks: three replicas, three
+# volumes, three nodes, replicating between themselves. Losing one leaves
+# two, which is a quorum, and the cluster keeps serving. That is the same
+# architecture a production deployment runs, rather than a development
+# shortcut that happens to survive this particular test.
+#
+# STILL NOT PRODUCTION KEY HANDLING. One unseal share, stored in a Secret in
+# the cluster it protects, so services/vault-unseal can open replicas
+# unattended. Production replaces that with a `seal` stanza pointing at KMS
+# or an HSM, at which point the unseal sidecar is unnecessary. See
+# docs/security/key-rotation.md.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -169,8 +172,16 @@ data:
     ui = false
     disable_mlock = true
 
-    storage "file" {
-      path = "/vault/data"
+    storage "raft" {
+      path    = "/vault/data"
+      node_id = "NODE_ID_PLACEHOLDER"
+
+      # Every replica lists every replica, itself included. Vault ignores
+      # the self-entry, and listing all three means any replica can be the
+      # first to start without a bootstrap ordering problem.
+      retry_join { leader_api_addr = "http://vault-0.vault-internal:8200" }
+      retry_join { leader_api_addr = "http://vault-1.vault-internal:8200" }
+      retry_join { leader_api_addr = "http://vault-2.vault-internal:8200" }
     }
 
     listener "tcp" {
@@ -178,7 +189,28 @@ data:
       tls_disable = true
     }
 
-    api_addr = "http://vault:8200"
+    # Must be this pod's own routable address, not the load-balanced Service:
+    # Raft peers use it to reach each other directly, and pointing it at the
+    # Service would have replicas trying to join through whichever pod the
+    # Service happened to pick.
+    api_addr     = "http://POD_NAME_PLACEHOLDER.vault-internal:8200"
+    cluster_addr = "http://POD_NAME_PLACEHOLDER.vault-internal:8201"
+---
+# Stable per-pod DNS (vault-0.vault-internal, ...), which Raft needs to
+# address individual peers. The regular `vault` Service load-balances and is
+# what clients use; this one exists purely so peers can find each other.
+apiVersion: v1
+kind: Service
+metadata:
+  name: vault-internal
+  namespace: openfireblocks
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector: { app: vault }
+  ports:
+    - { name: http, port: 8200, targetPort: http }
+    - { name: cluster, port: 8201, targetPort: cluster }
 ---
 apiVersion: apps/v1
 kind: StatefulSet
@@ -186,8 +218,23 @@ metadata:
   name: vault
   namespace: openfireblocks
 spec:
-  serviceName: vault
-  replicas: 1
+  serviceName: vault-internal
+  replicas: 3
+  # OrderedReady, which for once is the useful default.
+  #
+  # Starting all three at once looks faster and is a race: several
+  # uninitialised nodes each try to bootstrap the Raft cluster, one wins,
+  # and a loser can wedge in "waiting for raft retry join process to
+  # complete" against a leader that was still sealed when it asked. Observed
+  # directly -- vault-1 sat there indefinitely while the other two formed a
+  # cluster without it.
+  #
+  # Ordered startup makes the sequence deterministic: vault-0 starts, its
+  # unseal sidecar initialises and unseals it, it becomes Ready, and only
+  # then is vault-1 created -- by which point there is a healthy leader to
+  # join. This works only because the readiness probe below is strict about
+  # what Ready means.
+  podManagementPolicy: OrderedReady
   selector:
     matchLabels: { app: vault }
   template:
@@ -196,123 +243,106 @@ spec:
     spec:
       # The `vault` service account (infrastructure/kind/vault-pki-bootstrap.yaml)
       # carries system:auth-delegator, which Vault needs to call the
-      # Kubernetes TokenReview API when a pod logs in via kubernetes auth.
+      # Kubernetes TokenReview API when a pod logs in via kubernetes auth,
+      # and the Role below lets the unseal sidecar manage its Secret.
       serviceAccountName: vault
+      # One replica per node, or the whole exercise is pointless: three
+      # replicas on one node still all disappear when that node does.
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels: { app: vault }
+              topologyKey: kubernetes.io/hostname
+      initContainers:
+        # The config needs this pod's own identity in it (node_id, api_addr,
+        # cluster_addr), and a ConfigMap is the same for every pod. Rendering
+        # it here keeps one source of truth instead of three near-identical
+        # ConfigMaps that will drift.
+        - name: render-config
+          image: hashicorp/vault:1.17
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              sed -e "s/NODE_ID_PLACEHOLDER/${POD_NAME}/g" \
+                  -e "s/POD_NAME_PLACEHOLDER/${POD_NAME}/g" \
+                  /vault/config-template/vault.hcl > /vault/config/vault.hcl
+              echo "rendered config for ${POD_NAME}"
+          env:
+            - name: POD_NAME
+              valueFrom: { fieldRef: { fieldPath: metadata.name } }
+          volumeMounts:
+            - { name: config-template, mountPath: /vault/config-template }
+            - { name: config, mountPath: /vault/config }
       containers:
         - name: vault
           image: hashicorp/vault:1.17
-          # "server" only, with no -config.
-          #
-          # The image's entrypoint already rewrites `server` into
-          # `vault server -config=/vault/config ...`. Passing -config again
-          # makes Vault read the same file twice -- once via the directory
-          # and once directly -- so it sees two identical listener stanzas
-          # and collides with itself on bind. The error it prints for that is
-          # "address already in use", which sends you looking for another
-          # process that does not exist.
+          # "server" with no -config: the image's entrypoint already rewrites
+          # it to `vault server -config=/vault/config`. Passing -config again
+          # makes Vault read the same file twice and collide with itself on
+          # bind, which it reports as "address already in use" -- an error
+          # that sends you looking for a second process that does not exist.
           args: ["server"]
           env:
             - { name: VAULT_ADDR, value: "http://127.0.0.1:8200" }
           ports:
             - { name: http, containerPort: 8200 }
-          # standbyok and sealedcode: a sealed Vault answers /sys/health with
-          # 501 by default, so the default probe would mark the pod unready
-          # forever and the unseal sidecar would never get a chance to run.
+            - { name: cluster, containerPort: 8201 }
+          # standbyok, and nothing else.
+          #
+          # A standby replica is healthy and must stay in the Service -- that
+          # is the whole point of HA. A *sealed* or *uninitialised* one is
+          # not: it fails every request, and routing clients to it would turn
+          # a recoverable startup state into visible errors.
+          #
+          # An earlier version passed sealedcode=204&uninitcode=204, which
+          # reported those states as Ready. That is wrong twice over: it puts
+          # a useless replica in the Service, and it defeats the ordered
+          # startup above, because "Ready" would no longer mean "there is a
+          # leader to join".
           readinessProbe:
-            httpGet:
-              path: /v1/sys/health?standbyok=true&sealedcode=204&uninitcode=204
-              port: http
-            initialDelaySeconds: 3
+            httpGet: { path: "/v1/sys/health?standbyok=true", port: http }
+            initialDelaySeconds: 5
             periodSeconds: 5
+            failureThreshold: 3
+          # Restarts a replica that is running but has stopped making
+          # progress -- the wedged-join case above is invisible to
+          # readiness alone, because the process is alive and answering.
+          # Generous: sealed and uninitialised both count as alive here,
+          # since a replica waiting to be unsealed is working correctly.
+          livenessProbe:
+            httpGet:
+              path: "/v1/sys/health?standbyok=true&sealedcode=200&uninitcode=200"
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            failureThreshold: 4
           resources:
             requests: { cpu: 50m, memory: 128Mi }
           volumeMounts:
             - { name: config, mountPath: /vault/config }
             - { name: data, mountPath: /vault/data }
 
-        # Initialises Vault on first boot and unseals it on every boot.
-        #
-        # Persistent storage means Vault comes back with its data but sealed,
-        # and a sealed Vault is indistinguishable from a destroyed one as far
-        # as the rest of the platform is concerned -- every request fails. So
-        # something has to unseal it, and it has to keep doing so after each
-        # restart rather than once at install time.
-        #
-        # The unseal key lives on the same volume as the data. That is
-        # exactly the thing you must not do in production, and it is
-        # deliberate here: this cluster's threat model is "a laptop running
-        # kind", the alternative is dev mode which loses everything, and the
-        # honest fix -- KMS or HSM auto-unseal, where the key never exists on
-        # disk -- needs a cloud KMS this environment does not have. Anyone
-        # copying this file into a real deployment must replace this with a
-        # seal stanza.
-        #
-        # It also re-creates the well-known dev token after a fresh init, so
-        # the bootstrap job and services that read `vault-root-token` from
-        # the dependency Secret keep working without being handed a new token
-        # on every reinstall.
+        # Initialises the cluster once and unseals this replica whenever it
+        # comes back. See services/vault-unseal.
         - name: unseal
-          image: hashicorp/vault:1.17
+          image: openfireblocks/vault-unseal:latest
+          imagePullPolicy: IfNotPresent
           env:
             - { name: VAULT_ADDR, value: "http://127.0.0.1:8200" }
-            - name: DEV_ROOT_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: dev-dependency-credentials
-                  key: vault-root-token
-          command: ["/bin/sh", "-c"]
-          args:
-            - |
-              set -eu
-              INIT_FILE=/vault/data/cluster-init.json
-
-              # Wait for the API to answer at all. `vault status` exits 2
-              # when sealed and 1 when uninitialised, so a plain check would
-              # loop forever; this only waits for a reachable listener.
-              until vault status >/dev/null 2>&1 || [ $? -ne 1 ] ; do sleep 2; done
-              until wget -q -O- "${VAULT_ADDR}/v1/sys/seal-status" >/dev/null 2>&1; do sleep 2; done
-
-              initialized() {
-                wget -q -O- "${VAULT_ADDR}/v1/sys/seal-status" | grep -q '"initialized":true'
-              }
-              sealed() {
-                wget -q -O- "${VAULT_ADDR}/v1/sys/seal-status" | grep -q '"sealed":true'
-              }
-
-              if ! initialized; then
-                echo "initialising Vault"
-                vault operator init -key-shares=1 -key-threshold=1 -format=json > "${INIT_FILE}"
-                chmod 600 "${INIT_FILE}"
-              fi
-
-              # tr collapses the pretty-printed JSON so a single sed can pull
-              # each field out without jq, which this image does not carry.
-              FLAT=$(tr -d '\n ' < "${INIT_FILE}")
-              UNSEAL_KEY=$(echo "${FLAT}" | sed -n 's/.*"unseal_keys_b64":\["\([^"]*\)".*/\1/p')
-              ROOT_TOKEN=$(echo "${FLAT}" | sed -n 's/.*"root_token":"\([^"]*\)".*/\1/p')
-              [ -n "${UNSEAL_KEY}" ] || { echo "could not read the unseal key"; exit 1; }
-
-              while true; do
-                if sealed; then
-                  echo "vault is sealed; unsealing"
-                  vault operator unseal "${UNSEAL_KEY}" >/dev/null
-                  # Recreate the well-known token every time we unseal a
-                  # freshly-initialised cluster. Creating it when it already
-                  # exists is an error, which is fine to ignore.
-                  VAULT_TOKEN="${ROOT_TOKEN}" vault token create \
-                    -id="${DEV_ROOT_TOKEN}" -policy=root -orphan -ttl=0 \
-                    >/dev/null 2>&1 || true
-                  echo "vault unsealed"
-                fi
-                sleep 5
-              done
+            - { name: UNSEAL_SECRET_NAME, value: "vault-unseal" }
+            - name: POD_NAME
+              valueFrom: { fieldRef: { fieldPath: metadata.name } }
+            - name: POD_NAMESPACE
+              valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
           resources:
             requests: { cpu: 10m, memory: 32Mi }
-          volumeMounts:
-            - { name: data, mountPath: /vault/data }
       volumes:
-        - name: config
+        - name: config-template
           configMap: { name: vault-config }
+        - name: config
+          emptyDir: {}
   volumeClaimTemplates:
     - metadata:
         name: data

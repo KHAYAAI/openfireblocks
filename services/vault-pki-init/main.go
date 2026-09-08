@@ -44,6 +44,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -149,7 +150,9 @@ func main() {
 		wait := renewalDelay(expiry, ttl)
 		log.Printf("next renewal in %s (certificate valid until %s)",
 			wait.Round(time.Second), expiry.Format(time.RFC3339))
-		time.Sleep(wait)
+		if !sleepUntilRenewalOrCAChange(client, vaultAddr, pkiMount, outDir, wait) {
+			log.Printf("the issuing CA changed; re-issuing now rather than waiting for the scheduled renewal")
+		}
 
 		if os.Getenv("VAULT_TOKEN") == "" {
 			newToken, lerr := kubernetesLogin(client, vaultAddr, os.Getenv("VAULT_K8S_ROLE"))
@@ -379,4 +382,77 @@ func kubernetesLogin(client *http.Client, vaultAddr, role string) (string, error
 		return "", fmt.Errorf("vault login returned %d with no client_token: %s", resp.StatusCode, string(raw))
 	}
 	return parsed.Auth.ClientToken, nil
+}
+
+// caCheckInterval is how often the issuing CA is compared against the one on
+// disk while waiting for the next renewal.
+//
+// A root rotation invalidates every leaf at once. Waiting out a 24h
+// certificate's renewal schedule to notice would leave the whole platform
+// unable to verify anybody for most of a day -- every request failing with
+// "certificate signed by unknown authority", which points at the peer for a
+// problem that is entirely local. Observed exactly that after rebuilding
+// Vault underneath a running cluster.
+const caCheckInterval = 5 * time.Minute
+
+// sleepUntilRenewalOrCAChange waits for the scheduled renewal, returning
+// early if the CA changes underneath us.
+//
+// Returns true if the full wait elapsed, false if it stopped early because
+// the CA no longer matches.
+func sleepUntilRenewalOrCAChange(client *http.Client, vaultAddr, mount, outDir string, wait time.Duration) bool {
+	deadline := time.Now().Add(wait)
+	for {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return true
+		}
+		nap := caCheckInterval
+		if remaining < nap {
+			nap = remaining
+		}
+		time.Sleep(nap)
+
+		changed, err := caHasChanged(client, vaultAddr, mount, outDir)
+		if err != nil {
+			// Not fatal, and not worth logging every five minutes: the
+			// scheduled renewal is still coming, and a transient failure to
+			// read the CA says nothing about whether it changed.
+			continue
+		}
+		if changed {
+			return false
+		}
+	}
+}
+
+// caHasChanged reports whether Vault's current issuing CA differs from the
+// one this pod wrote to disk.
+func caHasChanged(client *http.Client, vaultAddr, mount, outDir string) (bool, error) {
+	onDisk, err := os.ReadFile(filepath.Join(outDir, "ca.crt"))
+	if err != nil {
+		return false, err
+	}
+
+	// The unauthenticated CA endpoint: no token needed, which matters
+	// because this runs between logins.
+	resp, err := client.Get(fmt.Sprintf("%s/v1/%s/ca/pem", vaultAddr, mount))
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return false, fmt.Errorf("reading the CA: %s", resp.Status)
+	}
+	current, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return false, err
+	}
+	if len(current) == 0 {
+		return false, fmt.Errorf("the CA endpoint returned nothing")
+	}
+
+	// Substring rather than equality: ca.crt may hold a chain, and Vault
+	// returns the issuing certificate alone.
+	return !strings.Contains(string(onDisk), strings.TrimSpace(string(current))), nil
 }

@@ -23,6 +23,7 @@ package main
 import (
 	"crypto/x509"
 	"encoding/pem"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -205,5 +206,66 @@ func TestRenewalDelayLeavesRoomToRetry(t *testing.T) {
 	// Nor should an already-expired certificate produce a busy loop.
 	if d := renewalDelay(time.Now().Add(-time.Hour), "1h"); d < minRenewalDelay {
 		t.Fatalf("expired-certificate delay %s would spin against Vault", d)
+	}
+}
+
+// A root rotation must be noticed promptly, not at the next scheduled
+// renewal.
+//
+// Rebuilding Vault underneath a running cluster produced exactly this: every
+// service kept presenting leaves from a CA that no longer existed, and every
+// connection failed with "certificate signed by unknown authority" -- an
+// error that blames the peer for a purely local problem. With a 24h
+// certificate, waiting for the renewal schedule would have meant most of a
+// day of that.
+func TestCAChangeIsDetected(t *testing.T) {
+	addr, token := requireVault(t)
+
+	const mount = "pki-ca-change-test"
+	vaultCLI(t, addr, token, "secrets", "enable", "-path="+mount, "pki")
+	defer vaultCLI(t, addr, token, "secrets", "disable", mount)
+	vaultCLI(t, addr, token, "secrets", "tune", "-max-lease-ttl=87600h", mount)
+	vaultCLI(t, addr, token, "write", mount+"/root/generate/internal",
+		"common_name=CA Change Test Root", "ttl=87600h")
+	vaultCLI(t, addr, token, "write", mount+"/roles/short",
+		"allowed_domains=internal", "allow_subdomains=true",
+		"max_ttl=24h", "require_cn=true", "client_flag=true", "server_flag=true")
+
+	dir := t.TempDir()
+	client := &http.Client{Timeout: 30 * time.Second}
+
+	cert, err := issueCertificate(client, addr, token, mount, "short", "party-1.internal", "", "1h")
+	if err != nil {
+		t.Fatalf("issue: %v", err)
+	}
+	if err := writeCertFiles(dir, cert); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	changed, err := caHasChanged(client, addr, mount, dir)
+	if err != nil {
+		t.Fatalf("caHasChanged: %v", err)
+	}
+	if changed {
+		t.Fatal("reported a CA change immediately after writing the CA it just fetched")
+	}
+
+	// A real rotation. Generating a second root on the same mount is not
+	// one: Vault creates an additional issuer and leaves the *default*
+	// issuer -- which is what /ca/pem serves -- pointing at the original, so
+	// nothing an existing client sees actually changes. Deleting the root
+	// first is what replacing a CA looks like, and is what wiping and
+	// reinstalling Vault does to a deployment.
+	vaultCLI(t, addr, token, "delete", mount+"/root")
+	vaultCLI(t, addr, token, "write", mount+"/root/generate/internal",
+		"common_name=CA Change Test Root Two", "ttl=87600h")
+
+	changed, err = caHasChanged(client, addr, mount, dir)
+	if err != nil {
+		t.Fatalf("caHasChanged after rotation: %v", err)
+	}
+	if !changed {
+		t.Fatal("a root rotation went unnoticed; every leaf is now unverifiable " +
+			"and nothing would re-issue until the scheduled renewal")
 	}
 }

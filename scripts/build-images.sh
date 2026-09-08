@@ -37,6 +37,7 @@ SERVICES=(
   policy-service
   temporal-worker
   vault-pki-init
+  vault-unseal
   billing
   webhooks
   marketplace
