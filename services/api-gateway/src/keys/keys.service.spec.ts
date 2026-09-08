@@ -44,6 +44,10 @@ describe('KeysService.createKey', () => {
       setKeyFailed: jest.fn().mockResolvedValue(undefined),
       getKey: jest.fn().mockResolvedValue(null),
       getCompletedCeremonyForKey: jest.fn().mockResolvedValue(null),
+      findSigningRequestByIdempotencyKey: jest.fn().mockResolvedValue(null),
+      createSigningRequest: jest.fn().mockResolvedValue(undefined),
+      completeSigningRequest: jest.fn().mockResolvedValue(undefined),
+      failSigningRequest: jest.fn().mockResolvedValue(undefined),
     } as unknown as PostgresService;
     const temporal = {
       start: temporalStart,
@@ -225,6 +229,10 @@ describe('KeysService.signWithKey', () => {
       getCompletedCeremonyForKey: jest.fn().mockResolvedValue(
         overrides.ceremony === undefined ? ceremony : overrides.ceremony,
       ),
+      findSigningRequestByIdempotencyKey: jest.fn().mockResolvedValue(null),
+      createSigningRequest: jest.fn().mockResolvedValue(undefined),
+      completeSigningRequest: jest.fn().mockResolvedValue(undefined),
+      failSigningRequest: jest.fn().mockResolvedValue(undefined),
     } as unknown as PostgresService;
     const temporal = {
       signWithThreshold:
@@ -464,6 +472,10 @@ describe('KeysService.signTransaction', () => {
         .fn()
         .mockResolvedValue(overrides.key === undefined ? activeKey : overrides.key),
       getCompletedCeremonyForKey: jest.fn().mockResolvedValue(ceremony),
+    findSigningRequestByIdempotencyKey: jest.fn().mockResolvedValue(null),
+    createSigningRequest: jest.fn().mockResolvedValue(undefined),
+    completeSigningRequest: jest.fn().mockResolvedValue(undefined),
+    failSigningRequest: jest.fn().mockResolvedValue(undefined),
     } as unknown as PostgresService;
     const temporal = {
       signWithThreshold: overrides.sign ?? signingCeremony(),

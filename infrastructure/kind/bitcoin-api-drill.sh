@@ -159,6 +159,55 @@ print(60000000 - sum(int(round(o['value'] * 1e8)) for o in tx['vout']))
 [[ "${ACTUAL_FEE}" -eq "${FEE}" ]] \
   || fail "the platform quoted a fee of ${FEE} sats and the chain paid ${ACTUAL_FEE}"
 
+echo "==> checking the platform recorded what it signed"
+# The record a custody platform exists to keep, and one nothing was
+# writing: signing_requests was read by GET /keys/:id/details, by
+# compliance's structuring signal, and by settlement, and never written by
+# anything. A signature that leaves no trace of who produced it is not
+# custody, it is a signing oracle.
+history=$("${CURL[@]}" -H "x-api-key: ${api_key}" "${API}/keys/${key_id}/details")
+RECORDED=$(echo "${history}" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+rows = d.get('signing_requests') or d.get('signingRequests') or []
+print(len(rows))
+")
+# One row per ceremony, and a two-input spend is two signatures.
+[[ "${RECORDED}" -eq "${INPUTS}" ]] \
+  || fail "the platform signed ${INPUTS} digest(s) and recorded ${RECORDED}"
+
+PARTIES_RECORDED=$(echo "${history}" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+rows = d.get('signing_requests') or d.get('signingRequests') or []
+print(sum(1 for r in rows if r.get('signing_parties')))
+")
+# Which parties signed is the first question an auditor asks: a threshold
+# signature only means something if you can say which shares combined.
+[[ "${PARTIES_RECORDED}" -eq "${INPUTS}" ]] \
+  || fail "${PARTIES_RECORDED} of ${RECORDED} recorded signatures name the committee that produced them"
+echo "    ${RECORDED} signature(s) recorded, each naming its committee"
+
+echo "==> checking a retried request does not sign twice"
+# Every signing route accepted an idempotencyKey and ignored it, so a
+# client retrying a timed-out call ran a second ceremony -- and here, would
+# have broadcast a second transaction.
+IDEM="drill-${S}-retry"
+first=$("${CURL[@]}" -X POST "${API}/keys/${key_id}/bitcoin-transactions" \
+  -H 'Content-Type: application/json' -H "x-api-key: ${api_key}" \
+  -d "{\"destination\":\"${DEST}\",\"amount\":\"100000\",\"feeRate\":5,\"idempotencyKey\":\"${IDEM}\"}")
+first_txid=$(echo "${first}" | jqp 'd.get("txid","")')
+[[ -n "${first_txid}" ]] || fail "the first idempotent spend failed: ${first}"
+
+second=$("${CURL[@]}" -X POST "${API}/keys/${key_id}/bitcoin-transactions" \
+  -H 'Content-Type: application/json' -H "x-api-key: ${api_key}" \
+  -d "{\"destination\":\"${DEST}\",\"amount\":\"100000\",\"feeRate\":5,\"idempotencyKey\":\"${IDEM}\"}")
+second_txid=$(echo "${second}" | jqp 'd.get("txid","")')
+[[ "${second_txid}" == "${first_txid}" ]] \
+  || fail "a retry with the same idempotency key produced ${second_txid}, not ${first_txid}: a second transaction was signed"
+echo "    the retry returned the same transaction ${first_txid}"
+btc generatetoaddress 1 "${MINER}" >/dev/null
+
 echo "==> checking the change came back to the key"
 sleep 2
 after=$("${CURL[@]}" -X POST "${API}/keys/${key_id}/bitcoin-transactions" \
@@ -174,9 +223,12 @@ after=$("${CURL[@]}" -X POST "${API}/keys/${key_id}/bitcoin-transactions" \
 [[ "${after}" == "400" ]] \
   || fail "a 1-sat spend returned ${after}; dust must be refused as a client error, before any ceremony runs"
 
+# The change from the first spend, less the second spend and its fee. The
+# point is that the change output was really created and is really
+# spendable -- it was, since the retry spend came out of it.
 remaining=$(btc scantxoutset start "[\"addr(${DEPOSIT})\"]" | jqp 'int(round(d["total_amount"] * 1e8))')
-[[ "${remaining}" -eq "${CHANGE}" ]] \
-  || fail "the key holds ${remaining} sats but the platform reported ${CHANGE} sats of change"
+[[ "${remaining}" -gt 0 && "${remaining}" -lt "${CHANGE}" ]] \
+  || fail "the key holds ${remaining} sats; expected less than the ${CHANGE} sats of change, and more than nothing"
 
 echo
 echo "PASS: a customer with an ordinary API key -- and without the raw-digest"
@@ -186,3 +238,7 @@ echo "      platform selected ${INPUTS} inputs, paid a ${FEE} sat fee the chain"
 echo "      confirms exactly, returned ${CHANGE} sats of change to the key,"
 echo "      and had it signed by parties ${PARTIES} of a key whose private key"
 echo "      does not exist. Bitcoin Core mined it (${CONFS} confirmation)."
+echo
+echo "      Each of the ${RECORDED} signatures is recorded with the committee that"
+echo "      produced it, and a retry under the same idempotency key returned the"
+echo "      original transaction rather than signing a second one."

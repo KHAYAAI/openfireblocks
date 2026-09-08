@@ -640,6 +640,89 @@ export class KeysService {
         `${signerCount} of ${ceremony.total_parties} parties)`,
     );
 
+    // A repeat of a request that already produced a signature.
+    //
+    // Every signing route has accepted an idempotencyKey since it was
+    // written and none of them consulted it, so a client retrying a
+    // timed-out call ran a second threshold ceremony -- and for Bitcoin
+    // broadcast a second transaction. The schema has carried
+    // UNIQUE (customer_id, idempotency_key) the whole time; this is the
+    // code that finally uses it.
+    //
+    // Replaying rather than refusing is the useful behaviour: a retry
+    // after a network timeout should get the answer it missed. The digest
+    // is part of the record, so a key reused for a *different* message is
+    // caught below rather than silently returning the wrong signature.
+    // requestId is the caller's idempotency key, which is any string --
+    // for a Bitcoin spend it is "<key>:input-2", one per ceremony. The
+    // row's own request_id is a UUID column and a different thing, so the
+    // two are kept apart rather than one being forced into the other.
+    const existing = await this.postgres.findSigningRequestByIdempotencyKey(
+      customerId,
+      requestId,
+    );
+    if (existing) {
+      if (existing.transaction_hash !== messageHash) {
+        throw new ConflictException(
+          `idempotency key ${requestId} was already used for a different message; ` +
+            'reusing it would return a signature over something else',
+        );
+      }
+      if (existing.status === 'completed' && existing.signature) {
+        this.logger.log(`replaying the recorded signature for request ${requestId}`);
+        return {
+          signature: existing.signature.toString('hex'),
+          parties: existing.signing_parties ?? [],
+          totalParties: ceremony.total_parties,
+        };
+      }
+      if (existing.status === 'in_progress') {
+        throw new ConflictException(
+          `a request with idempotency key ${requestId} is still running`,
+        );
+      }
+      // A failed request may be retried, but not under the same primary
+      // key -- the row already exists, so the retry proceeds without
+      // recording a second one.
+    }
+
+    // Recorded before the ceremony, not after. A ceremony that starts and
+    // never returns is exactly the event an audit trail has to contain,
+    // and a row written only on success would omit it.
+    const startedAt = Date.now();
+    const rowId = existing?.request_id ?? uuidv4();
+    if (!existing) {
+      try {
+        await this.postgres.createSigningRequest({
+          requestId: rowId,
+          customerId,
+          keyId,
+          blockchain: key.blockchain,
+          transactionHash: messageHash,
+          transactionData: Buffer.from(messageHash, 'hex'),
+          idempotencyKey: requestId,
+          workflowId: `threshold-sign-${requestId}`,
+        });
+      } catch (err) {
+        // 23505 = unique_violation: another request with this idempotency
+        // key was recorded between the lookup above and this insert.
+        if ((err as { code?: string }).code === '23505') {
+          throw new ConflictException(
+            `a request with idempotency key ${requestId} is already running`,
+          );
+        }
+        throw err;
+      }
+    }
+
+    const recordFailure = async (reason: string) => {
+      await this.postgres
+        .failSigningRequest(rowId, customerId, reason, Date.now() - startedAt)
+        .catch((err) =>
+          this.logger.error(`could not record the failed signing request: ${err.message}`),
+        );
+    };
+
     let result: { status: string; signature?: string; error?: string };
     try {
       result = await this.temporal.signWithThreshold({
@@ -657,6 +740,7 @@ export class KeysService {
       this.logger.error(
         `threshold signing workflow failed for key ${keyId}: ${(err as Error).message}`,
       );
+      await recordFailure((err as Error).message);
       throw new ServiceUnavailableException('threshold signing is unavailable');
     }
 
@@ -665,10 +749,27 @@ export class KeysService {
     // checked for a thrown error would treat a failure as success and
     // return no signature with a 200.
     if (result.status !== 'completed' || !result.signature) {
-      throw new ServiceUnavailableException(
-        `threshold signing did not complete: ${result.error ?? result.status}`,
-      );
+      const reason = result.error ?? result.status;
+      await recordFailure(reason);
+      throw new ServiceUnavailableException(`threshold signing did not complete: ${reason}`);
     }
+
+    // Best-effort: the signature exists and the caller is entitled to it,
+    // so a failure to write the audit row must not turn a successful
+    // signature into an error. It is logged loudly instead, because a
+    // signature that was produced and not recorded is a real problem --
+    // just not the caller's.
+    await this.postgres
+      .completeSigningRequest(rowId, customerId, {
+        signature: Buffer.from(result.signature, 'hex'),
+        latencyMs: Date.now() - startedAt,
+        parties,
+      })
+      .catch((err) =>
+        this.logger.error(
+          `signed with key ${keyId} but could not record request ${requestId}: ${err.message}`,
+        ),
+      );
 
     return {
       signature: result.signature,

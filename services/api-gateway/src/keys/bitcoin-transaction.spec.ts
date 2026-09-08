@@ -138,6 +138,10 @@ function build(
   const postgres = {
     getKey: jest.fn().mockResolvedValue(overrides.key === undefined ? bitcoinKey : overrides.key),
     getCompletedCeremonyForKey: jest.fn().mockResolvedValue(ceremony),
+    findSigningRequestByIdempotencyKey: jest.fn().mockResolvedValue(null),
+    createSigningRequest: jest.fn().mockResolvedValue(undefined),
+    completeSigningRequest: jest.fn().mockResolvedValue(undefined),
+    failSigningRequest: jest.fn().mockResolvedValue(undefined),
   } as unknown as PostgresService;
   const temporal = {
     signWithThreshold:

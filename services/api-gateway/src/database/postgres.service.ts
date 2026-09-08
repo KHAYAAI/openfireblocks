@@ -263,12 +263,122 @@ export class PostgresService {
   async getSigningRequestsForKey(keyId: string, customerId: string, limit = 50) {
     const result = await this.withTenant(customerId, (client) =>
       client.query(
-        `SELECT request_id, status, blockchain, transaction_hash, created_at, completed_at
+        `SELECT request_id, status, blockchain, transaction_hash, signing_parties,
+                latency_ms, created_at, completed_at
          FROM signing_requests WHERE key_id = $1 ORDER BY created_at DESC LIMIT $2`,
         [keyId, limit],
       ),
     );
     return result.rows;
+  }
+
+  // -- signing_requests: the record that a signature was asked for --
+  //
+  // Nothing wrote this table for a long time, and several things read it:
+  // GET /keys/:id/details showed an empty signing history, compliance's
+  // AML structuring signal counted rows in a table that was always empty,
+  // and settlement could not resolve the request a settlement was for. For
+  // a custody platform the deeper problem is that "what was signed, by
+  // whom, and when" is the most important record it keeps, and it was not
+  // being kept.
+  //
+  // One row per ceremony, which is the granularity at which a signature
+  // actually exists -- a Bitcoin spend with three inputs is three
+  // signatures and three rows.
+  async createSigningRequest(req: {
+    requestId: string;
+    customerId: string;
+    keyId: string;
+    blockchain: string;
+    transactionHash: string;
+    transactionData: Buffer;
+    idempotencyKey: string | null;
+    workflowId?: string | null;
+  }): Promise<void> {
+    await this.withTenant(req.customerId, (client) =>
+      client.query(
+        `INSERT INTO signing_requests
+           (request_id, customer_id, key_id, transaction_hash, transaction_data,
+            blockchain, idempotency_key, status, workflow_id, started_at)
+         VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7, 'in_progress', $8, NOW())`,
+        [
+          req.requestId,
+          req.customerId,
+          req.keyId,
+          req.transactionHash,
+          req.transactionData,
+          req.blockchain,
+          req.idempotencyKey,
+          req.workflowId ?? null,
+        ],
+      ),
+    );
+  }
+
+  async completeSigningRequest(
+    requestId: string,
+    customerId: string,
+    result: {
+      signature: Buffer;
+      signedTransaction?: Buffer | null;
+      latencyMs: number;
+      parties: number[];
+    },
+  ): Promise<void> {
+    await this.withTenant(customerId, (client) =>
+      client.query(
+        `UPDATE signing_requests
+            SET status = 'completed', signature = $3, signed_transaction = $4,
+                latency_ms = $5, signing_parties = $6, completed_at = NOW(), updated_at = NOW()
+          WHERE request_id = $1::uuid AND customer_id = $2::uuid`,
+        [
+          requestId,
+          customerId,
+          result.signature,
+          result.signedTransaction ?? null,
+          result.latencyMs,
+          result.parties,
+        ],
+      ),
+    );
+  }
+
+  async failSigningRequest(
+    requestId: string,
+    customerId: string,
+    error: string,
+    latencyMs: number,
+  ): Promise<void> {
+    await this.withTenant(customerId, (client) =>
+      client.query(
+        `UPDATE signing_requests
+            SET status = 'failed', error_message = $3, latency_ms = $4,
+                completed_at = NOW(), updated_at = NOW()
+          WHERE request_id = $1::uuid AND customer_id = $2::uuid`,
+        [requestId, customerId, error.slice(0, 2000), latencyMs],
+      ),
+    );
+  }
+
+  // The row a repeated idempotency key refers to.
+  //
+  // The schema has carried UNIQUE (customer_id, idempotency_key) since the
+  // first migration, and until this method existed nothing consulted it:
+  // every signing route accepted an idempotencyKey and ignored it, so a
+  // client retrying a timed-out request ran a second threshold ceremony.
+  // For Bitcoin that means broadcasting a second transaction.
+  async findSigningRequestByIdempotencyKey(customerId: string, idempotencyKey: string) {
+    const result = await this.withTenant(customerId, (client) =>
+      client.query(
+        `SELECT request_id, key_id, status, blockchain, transaction_hash,
+                signature, signed_transaction, signing_parties, error_message,
+                created_at, completed_at
+           FROM signing_requests
+          WHERE customer_id = $1::uuid AND idempotency_key = $2`,
+        [customerId, idempotencyKey],
+      ),
+    );
+    return result.rows[0] ?? null;
   }
 
   async countSignaturesForKey(keyId: string, customerId: string): Promise<number> {
