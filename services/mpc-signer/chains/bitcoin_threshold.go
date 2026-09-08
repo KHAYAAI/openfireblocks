@@ -57,6 +57,14 @@ type BitcoinSigningPlan struct {
 	// PrevScripts mirrors SigHashes: the script each input spends, needed
 	// again at assembly time to build the correct signature script.
 	PrevScripts []string `json:"prev_scripts"`
+	// Witness marks which inputs are segwit. Carried rather than
+	// re-derived so assembly cannot disagree with planning about how an
+	// input was signed -- a disagreement there produces a transaction that
+	// looks fine and spends nothing.
+	Witness []bool `json:"witness"`
+	// Amounts is required to re-verify a segwit input: BIP143 signs the
+	// value, so the script engine needs it too.
+	Amounts []int64 `json:"amounts"`
 }
 
 // BitcoinInputSignature is one committee-produced signature.
@@ -142,6 +150,12 @@ func PlanBitcoinTransaction(req *BitcoinSigningRequest) (*BitcoinSigningPlan, er
 		}
 	}
 
+	// Computed once and shared across inputs: BIP143 hashes the prevouts,
+	// sequences and outputs of the whole transaction, and recomputing them
+	// per input is what makes naive segwit signing quadratic -- the very
+	// problem BIP143 was written to remove.
+	sigHashes := txscript.NewTxSigHashes(tx)
+
 	plan := &BitcoinSigningPlan{}
 	for i, in := range req.Inputs {
 		prevScript, err := hex.DecodeString(in.Script)
@@ -151,12 +165,39 @@ func PlanBitcoinTransaction(req *BitcoinSigningRequest) (*BitcoinSigningPlan, er
 		if len(prevScript) == 0 {
 			return nil, fmt.Errorf("input %d: no scriptPubKey; the sighash cannot be computed without it", i)
 		}
-		digest, err := txscript.CalcSignatureHash(prevScript, txscript.SigHashAll, tx, i)
+
+		witness := txscript.IsPayToWitnessPubKeyHash(prevScript)
+		var digest []byte
+		if witness {
+			// BIP143 commits to the value being spent, which the legacy
+			// algorithm does not. That is the fix for the hardware-wallet
+			// fee attack, and it means an input's amount is now part of what
+			// gets signed -- so a wrong amount produces a signature that
+			// silently fails rather than a transaction that overpays.
+			if in.Amount <= 0 {
+				return nil, fmt.Errorf(
+					"input %d spends a segwit output but has no amount; BIP143 signs the value, so it cannot be omitted", i)
+			}
+			// The script actually hashed for P2WPKH is not the witness
+			// program -- it is the equivalent P2PKH script built from the
+			// same key hash. Signing the witness program instead produces a
+			// signature that verifies against nothing.
+			script, serr := p2pkhScriptForWitnessProgram(prevScript)
+			if serr != nil {
+				return nil, fmt.Errorf("input %d: %w", i, serr)
+			}
+			digest, err = txscript.CalcWitnessSigHash(script, sigHashes, txscript.SigHashAll, tx, i, in.Amount)
+		} else {
+			digest, err = txscript.CalcSignatureHash(prevScript, txscript.SigHashAll, tx, i)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("input %d: failed to compute sighash: %w", i, err)
 		}
+
 		plan.SigHashes = append(plan.SigHashes, hex.EncodeToString(digest))
 		plan.PrevScripts = append(plan.PrevScripts, in.Script)
+		plan.Witness = append(plan.Witness, witness)
+		plan.Amounts = append(plan.Amounts, in.Amount)
 	}
 
 	var buf bytes.Buffer
@@ -253,6 +294,16 @@ func AssembleBitcoinTransaction(
 		// DER encoding: it tells a verifier which sighash was signed.
 		sigWithHashType := append(btcSig.Serialize(), byte(txscript.SigHashAll))
 
+		if i < len(plan.Witness) && plan.Witness[i] {
+			// A segwit input carries its signature in the witness, and its
+			// signature script must stay *empty*. Putting the same data in
+			// both is not belt-and-braces: it changes the txid, because the
+			// signature script is committed to and the witness is not.
+			tx.TxIn[i].Witness = wire.TxWitness{sigWithHashType, pubKeyBytes}
+			tx.TxIn[i].SignatureScript = nil
+			continue
+		}
+
 		sigScript, err := txscript.NewScriptBuilder().
 			AddData(sigWithHashType).
 			AddData(pubKeyBytes).
@@ -264,13 +315,23 @@ func AssembleBitcoinTransaction(
 	}
 
 	// Execute each input's script for real, against the output it spends.
+	//
+	// The hash cache and the input amount are not optional for segwit: the
+	// engine recomputes the BIP143 digest to check the signature, and it
+	// signs over the value. Passing 0 here would fail every segwit input
+	// with a signature error that has nothing to do with the signature.
+	hashCache := txscript.NewTxSigHashes(tx)
 	for i, prevScriptHex := range plan.PrevScripts {
 		prevScript, err := hex.DecodeString(prevScriptHex)
 		if err != nil {
 			return nil, fmt.Errorf("input %d: invalid previous script hex: %w", i, err)
 		}
+		var amount int64
+		if i < len(plan.Amounts) {
+			amount = plan.Amounts[i]
+		}
 		engine, err := txscript.NewEngine(prevScript, tx, i,
-			txscript.StandardVerifyFlags, nil, nil, 0)
+			txscript.StandardVerifyFlags, nil, hashCache, amount)
 		if err != nil {
 			return nil, fmt.Errorf("input %d: could not build a script engine: %w", i, err)
 		}
@@ -301,4 +362,26 @@ func stripHexPrefix(s string) string {
 		return s[2:]
 	}
 	return s
+}
+
+// p2pkhScriptForWitnessProgram returns the script BIP143 actually hashes for
+// a P2WPKH input.
+//
+// A witness program is `OP_0 <20-byte key hash>`, but that is not what gets
+// signed. BIP143 specifies the "scriptCode" for P2WPKH as the equivalent
+// legacy P2PKH script over the same key hash, which is the one non-obvious
+// step in segwit signing and the one that produces a signature verifying
+// against nothing if you skip it.
+func p2pkhScriptForWitnessProgram(witnessProgram []byte) ([]byte, error) {
+	// OP_0 (0x00), PUSH20 (0x14), then 20 bytes.
+	if len(witnessProgram) != 22 || witnessProgram[0] != 0x00 || witnessProgram[1] != 0x14 {
+		return nil, fmt.Errorf("not a P2WPKH witness program")
+	}
+	return txscript.NewScriptBuilder().
+		AddOp(txscript.OP_DUP).
+		AddOp(txscript.OP_HASH160).
+		AddData(witnessProgram[2:]).
+		AddOp(txscript.OP_EQUALVERIFY).
+		AddOp(txscript.OP_CHECKSIG).
+		Script()
 }

@@ -77,98 +77,129 @@ PUBKEY=$(echo "${key}" | jqp 'd["public_key"]')
 # The same DKG public key, read through Bitcoin's address rules rather than
 # Ethereum's. One key, many chains -- which is the point of deriving rather
 # than provisioning a separate key per chain.
-BTC_ADDR=$(btctool address "${PUBKEY}")
+P2PKH_ADDR=$(btctool address "${PUBKEY}" p2pkh)
+P2WPKH_ADDR=$(btctool address "${PUBKEY}" p2wpkh)
 echo "    key ${key_id}"
-echo "    bitcoin address ${BTC_ADDR}"
+echo "    p2pkh  ${P2PKH_ADDR}"
+echo "    p2wpkh ${P2WPKH_ADDR}"
 
-echo "==> funding it on regtest"
+# The digest route, which is what a non-Ethereum chain needs: the gateway
+# cannot build a Bitcoin transaction, so it signs the digest this drill
+# computes. It is gated per tenant precisely because a digest is opaque to
+# policy -- see migration 017 -- so the drill grants it explicitly, once.
+"${CURL[@]}" -o /dev/null -X PUT "${API}/admin/customers/${customer_id}/raw-digest-signing" \
+  -H 'Content-Type: application/json' -H "x-admin-key: ${ADMIN_KEY}" \
+  -d '{"enabled":true}'
+
 # 101 blocks: coinbase output needs 100 confirmations before it is spendable,
 # so anything less leaves the wallet with a balance it cannot actually use.
 MINER=$(btc getnewaddress)
 btc generatetoaddress 101 "${MINER}" >/dev/null
-FUND_TXID=$(btc -rpcwallet=drill sendtoaddress "${BTC_ADDR}" 0.5)
-[[ -n "${FUND_TXID}" ]] || fail "funding transaction was not accepted"
-btc generatetoaddress 1 "${MINER}" >/dev/null
-echo "    funded with 0.5 BTC in ${FUND_TXID}"
 
-# Find the output that actually paid the threshold address. sendtoaddress
-# also creates a change output, and spending the wrong one produces a
-# transaction whose signature cannot possibly satisfy the script.
-VOUT_JSON=$(btc getrawtransaction "${FUND_TXID}" 1)
-read -r VOUT AMOUNT SCRIPT <<<"$(echo "${VOUT_JSON}" | python3 -c "
+
+# spend_from <address> <label>
+#
+# Funds the threshold address, then moves the money out of it: plan, sighash,
+# threshold-sign, assemble, broadcast, mine, and check Core's own view of
+# where the money went.
+#
+# Written as a function because it runs twice, over the two output types the
+# same key can receive. What differs between the runs is entirely inside
+# PlanBitcoinTransaction -- BIP143 versus the legacy sighash, a witness stack
+# versus a signature script. Nothing about the ceremony changes, and running
+# the identical script over both is how that claim gets tested rather than
+# asserted.
+spend_from() {
+  local ADDR="$1" LABEL="$2"
+
+  echo "==> ${LABEL}: funding ${ADDR}"
+  local FUND_TXID
+  FUND_TXID=$(btc -rpcwallet=drill sendtoaddress "${ADDR}" 0.5)
+  [[ -n "${FUND_TXID}" ]] || fail "${LABEL}: funding transaction was not accepted"
+  btc generatetoaddress 1 "${MINER}" >/dev/null
+  echo "    funded with 0.5 BTC in ${FUND_TXID}"
+
+  # Find the output that actually paid the threshold address. sendtoaddress
+  # also creates a change output, and spending the wrong one produces a
+  # transaction whose signature cannot possibly satisfy the script.
+  local VOUT AMOUNT SCRIPT
+  read -r VOUT AMOUNT SCRIPT <<<"$(btc getrawtransaction "${FUND_TXID}" 1 | python3 -c "
 import sys, json
 tx = json.load(sys.stdin)
 for out in tx['vout']:
     spk = out['scriptPubKey']
-    if '${BTC_ADDR}' in (spk.get('addresses') or [spk.get('address')]):
+    if '${ADDR}' in (spk.get('addresses') or [spk.get('address')]):
         print(out['n'], int(round(out['value'] * 1e8)), spk['hex'])
         break
 else:
     raise SystemExit('no output paid the threshold address')
 ")"
-[[ -n "${VOUT:-}" ]] || fail "could not find the funding output"
-echo "    spending vout ${VOUT} (${AMOUNT} sats)"
+  [[ -n "${VOUT:-}" ]] || fail "${LABEL}: could not find the funding output"
+  echo "    spending vout ${VOUT} (${AMOUNT} sats)"
 
-echo "==> planning the spend and computing the sighash"
-DEST=$(btc getnewaddress)
-SEND=$(( AMOUNT - 10000 ))   # 10k sats fee
-PLAN=$(python3 -c "
+  echo "==> ${LABEL}: planning the spend and computing the sighash"
+  local DEST SEND PLAN SIGHASH
+  DEST=$(btc getnewaddress)
+  SEND=$(( AMOUNT - 10000 ))   # 10k sats fee
+  # The amount travels with the input for both types, and for segwit it is
+  # not optional: BIP143 commits to the value being spent, which is the fix
+  # for the fee attack that legacy sighashes allowed.
+  PLAN=$(python3 -c "
 import json
 print(json.dumps({
   'network': 'regtest',
   'inputs':  [{'txid': '${FUND_TXID}', 'vout': ${VOUT}, 'amount': ${AMOUNT}, 'script': '${SCRIPT}'}],
   'outputs': [{'address': '${DEST}', 'amount': ${SEND}}],
 }))" | btctool plan)
-SIGHASH=$(echo "${PLAN}" | jqp 'd["sighashes"][0]')
-[[ ${#SIGHASH} -eq 64 ]] || fail "sighash is not 32 bytes: ${SIGHASH}"
-echo "    sighash ${SIGHASH}"
+  SIGHASH=$(echo "${PLAN}" | jqp 'd["sighashes"][0]')
+  [[ ${#SIGHASH} -eq 64 ]] || fail "${LABEL}: sighash is not 32 bytes: ${SIGHASH}"
+  echo "    sighash ${SIGHASH}"
 
-echo "==> threshold-signing the sighash with 2 of the 3 parties"
-# The digest route, which is what a non-Ethereum chain needs: the gateway
-# cannot build a Bitcoin transaction, so it signs the digest this drill
-# computed. It is gated per tenant precisely because a digest is opaque to
-# policy -- see migration 017 -- so the drill grants it explicitly.
-"${CURL[@]}" -o /dev/null -X PUT "${API}/admin/customers/${customer_id}/raw-digest-signing" \
-  -H 'Content-Type: application/json' -H "x-admin-key: ${ADMIN_KEY}" \
-  -d '{"enabled":true}'
+  echo "==> ${LABEL}: threshold-signing with 2 of the 3 parties"
+  local signed SIG R SS
+  signed=$("${CURL[@]}" -X POST "${API}/keys/${key_id}/sign" \
+    -H 'Content-Type: application/json' -H "x-api-key: ${api_key}" \
+    -d "{\"message\":\"${SIGHASH}\",\"to\":\"${DEST}\",\"value\":\"${SEND}\",\"chainId\":0}")
+  SIG=$(echo "${signed}" | jqp 'd.get("signature","")')
+  [[ -n "${SIG}" ]] || fail "${LABEL}: signing failed: ${signed}"
+  PARTIES=$(echo "${signed}" | jqp 'd["parties"]')
+  # 65 bytes: r (32) || s (32) || v (1). Bitcoin does not use the recovery id.
+  R=${SIG:0:64}
+  SS=${SIG:64:64}
+  echo "    signed by parties ${PARTIES}"
 
-signed=$("${CURL[@]}" -X POST "${API}/keys/${key_id}/sign" \
-  -H 'Content-Type: application/json' -H "x-api-key: ${api_key}" \
-  -d "{\"message\":\"${SIGHASH}\",\"to\":\"${DEST}\",\"value\":\"${SEND}\",\"chainId\":0}")
-SIG=$(echo "${signed}" | jqp 'd.get("signature","")')
-[[ -n "${SIG}" ]] || fail "signing failed: ${signed}"
-PARTIES=$(echo "${signed}" | jqp 'd["parties"]')
-# 65 bytes: r (32) || s (32) || v (1). Bitcoin does not use the recovery id.
-R=${SIG:0:64}
-SS=${SIG:64:64}
-echo "    signed by parties ${PARTIES}"
-
-echo "==> assembling the Bitcoin transaction"
-ASSEMBLED=$(python3 -c "
+  echo "==> ${LABEL}: assembling the Bitcoin transaction"
+  local ASSEMBLED RAW EXPECTED_TXID
+  ASSEMBLED=$(python3 -c "
 import json,sys
 plan = json.loads(sys.stdin.read())
 print(json.dumps({'plan': plan,
                   'signatures': [{'r': '${R}', 's': '${SS}'}],
                   'pubkey_hex': '${PUBKEY}'}))
 " <<<"${PLAN}" | btctool assemble)
-RAW=$(echo "${ASSEMBLED}" | jqp 'd["raw_tx_hex"]')
-EXPECTED_TXID=$(echo "${ASSEMBLED}" | jqp 'd["txid"]')
-echo "    assembled ${EXPECTED_TXID}"
+  RAW=$(echo "${ASSEMBLED}" | jqp 'd["raw_tx_hex"]')
+  EXPECTED_TXID=$(echo "${ASSEMBLED}" | jqp 'd["txid"]')
+  echo "    assembled ${EXPECTED_TXID}"
 
-echo "==> broadcasting to Bitcoin Core"
-TXID=$(btc sendrawtransaction "${RAW}") \
-  || fail "Bitcoin Core rejected the transaction"
-[[ "${TXID}" == "${EXPECTED_TXID}" ]] \
-  || fail "Core computed txid ${TXID}, we predicted ${EXPECTED_TXID}"
-echo "    accepted as ${TXID}"
+  echo "==> ${LABEL}: broadcasting to Bitcoin Core"
+  local TXID CONFS RECEIVED
+  TXID=$(btc sendrawtransaction "${RAW}") \
+    || fail "${LABEL}: Bitcoin Core rejected the transaction"
+  # For a segwit spend this equality carries an extra claim: the txid is
+  # computed over the transaction without its witness, so predicting it
+  # correctly means the witness went in the witness and not in the signature
+  # script.
+  [[ "${TXID}" == "${EXPECTED_TXID}" ]] \
+    || fail "${LABEL}: Core computed txid ${TXID}, we predicted ${EXPECTED_TXID}"
+  echo "    accepted as ${TXID}"
 
-echo "==> mining it"
-btc generatetoaddress 1 "${MINER}" >/dev/null
-CONFS=$(btc getrawtransaction "${TXID}" 1 | jqp 'd.get("confirmations",0)')
-[[ "${CONFS}" -ge 1 ]] || fail "the transaction was accepted but never mined"
+  echo "==> ${LABEL}: mining it"
+  btc generatetoaddress 1 "${MINER}" >/dev/null
+  CONFS=$(btc getrawtransaction "${TXID}" 1 | jqp 'd.get("confirmations",0)')
+  [[ "${CONFS}" -ge 1 ]] || fail "${LABEL}: the transaction was accepted but never mined"
 
-# Core's own view of where the money went.
-RECEIVED=$(btc getrawtransaction "${TXID}" 1 | python3 -c "
+  # Core's own view of where the money went.
+  RECEIVED=$(btc getrawtransaction "${TXID}" 1 | python3 -c "
 import sys, json
 tx = json.load(sys.stdin)
 for out in tx['vout']:
@@ -179,11 +210,22 @@ for out in tx['vout']:
 else:
     print(0)
 ")
-[[ "${RECEIVED}" -eq "${SEND}" ]] \
-  || fail "the recipient received ${RECEIVED} sats, expected ${SEND}"
+  [[ "${RECEIVED}" -eq "${SEND}" ]] \
+    || fail "${LABEL}: the recipient received ${RECEIVED} sats, expected ${SEND}"
+  echo "    ${RECEIVED} sats delivered, ${CONFS} confirmation"
+
+  MOVED=$(( MOVED + RECEIVED ))
+}
+
+MOVED=0
+spend_from "${P2PKH_ADDR}"  "legacy p2pkh"
+echo
+spend_from "${P2WPKH_ADDR}" "segwit p2wpkh"
 
 echo
-echo "PASS: a Bitcoin transaction spending from ${BTC_ADDR} -- an address"
-echo "      derived from a 2-of-3 threshold key whose private key does not"
-echo "      exist -- was signed by parties ${PARTIES}, accepted by Bitcoin"
-echo "      Core, mined (${CONFS} confirmation), and moved ${RECEIVED} sats."
+echo "PASS: two Bitcoin transactions -- one legacy P2PKH, one segwit P2WPKH --"
+echo "      spending from addresses derived from a single 2-of-3 threshold key"
+echo "      whose private key does not exist, were signed by parties"
+echo "      ${PARTIES}, accepted by Bitcoin Core, mined, and moved ${MOVED} sats"
+echo "      in total. Core validated both a legacy sighash and a BIP143"
+echo "      witness digest produced by the same ceremony."

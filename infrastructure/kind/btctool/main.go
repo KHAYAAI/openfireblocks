@@ -34,12 +34,18 @@ func main() {
 	}
 }
 
-// address derives the regtest P2PKH address for a compressed secp256k1
-// public key -- the same key the DKG produced, read through Bitcoin's
-// address rules instead of Ethereum's.
+// address derives a regtest address for a secp256k1 public key -- the same
+// key the DKG produced, read through Bitcoin's address rules instead of
+// Ethereum's.
+//
+// Both output types come from the same 20-byte hash of the same compressed
+// key; only the encoding differs. That is worth stating explicitly because
+// it is the reason a segwit address needs no new key material, no second
+// DKG, and no change to the ceremony -- only a different sighash on the way
+// out.
 func cmdAddress() {
 	if len(os.Args) < 3 {
-		die("usage: btctool address <compressed-pubkey-hex>")
+		die("usage: btctool address <compressed-pubkey-hex> [p2pkh|p2wpkh]")
 	}
 	raw, err := hex.DecodeString(stripHex(os.Args[2]))
 	if err != nil {
@@ -49,8 +55,22 @@ func cmdAddress() {
 	if err != nil {
 		die("invalid public key: %v", err)
 	}
-	addr, err := btcutil.NewAddressPubKeyHash(
-		btcutil.Hash160(pub.SerializeCompressed()), &chaincfg.RegressionNetParams)
+	hash := btcutil.Hash160(pub.SerializeCompressed())
+
+	kind := "p2pkh"
+	if len(os.Args) > 3 && os.Args[3] != "" {
+		kind = os.Args[3]
+	}
+
+	var addr btcutil.Address
+	switch kind {
+	case "p2pkh":
+		addr, err = btcutil.NewAddressPubKeyHash(hash, &chaincfg.RegressionNetParams)
+	case "p2wpkh":
+		addr, err = btcutil.NewAddressWitnessPubKeyHash(hash, &chaincfg.RegressionNetParams)
+	default:
+		die("unknown address type %q (want p2pkh or p2wpkh)", kind)
+	}
 	if err != nil {
 		die("address: %v", err)
 	}
