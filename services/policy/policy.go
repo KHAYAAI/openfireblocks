@@ -195,6 +195,9 @@ func (s *PolicyService) EvaluatePolicy(ctx context.Context, eval *PolicyEvaluati
 	// the policy check can actually run (fail-closed).
 	policies, err := s.ListPoliciesByKey(ctx, eval.KeyID)
 	if err != nil {
+		// %w, so a caller naming a key that does not exist still surfaces as
+		// a 404 rather than being flattened into "evaluation unavailable" --
+		// which reads as a platform fault and is not one.
 		log.Printf("Failed to get policies: %v", err)
 		return nil, fmt.Errorf("policy evaluation unavailable: %w", err)
 	}
@@ -411,15 +414,14 @@ func (s *PolicyService) HandleGetPolicy(w http.ResponseWriter, r *http.Request) 
 func (s *PolicyService) HandleListPolicies(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	keyID := r.URL.Query().Get("key_id")
-
-	if keyID == "" {
-		http.Error(w, "key_id required", http.StatusBadRequest)
+	if err := requireUUID("key_id", keyID); err != nil {
+		writeError(w, "list policies", err)
 		return
 	}
 
 	policies, err := s.ListPoliciesByKey(ctx, keyID)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to fetch policies: %v", err), http.StatusInternalServerError)
+		writeError(w, "list policies", err)
 		return
 	}
 
@@ -438,13 +440,20 @@ func (s *PolicyService) HandleEvaluatePolicy(w http.ResponseWriter, r *http.Requ
 
 	var eval PolicyEvaluationRequest
 	if err := json.NewDecoder(r.Body).Decode(&eval); err != nil {
-		http.Error(w, fmt.Sprintf("Invalid request: %v", err), http.StatusBadRequest)
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	// Validated before the query rather than after it fails: a malformed key
+	// id reaches Postgres as a bad uuid cast, and the driver error that
+	// comes back became a 500 carrying the SQLSTATE to the caller.
+	if err := requireUUID("key_id", eval.KeyID); err != nil {
+		writeError(w, "evaluate policy", err)
 		return
 	}
 
 	result, err := s.EvaluatePolicy(ctx, &eval)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Evaluation failed: %v", err), http.StatusInternalServerError)
+		writeError(w, "evaluate policy", err)
 		return
 	}
 

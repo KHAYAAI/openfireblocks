@@ -85,7 +85,7 @@ func (p *PostgresDB) resolveCustomerIDForWebhook(ctx context.Context, webhookID 
 	var customerID string
 	err := p.admin.QueryRowContext(ctx, `SELECT customer_id FROM webhooks WHERE webhook_id = $1::uuid`, webhookID).Scan(&customerID)
 	if err == sql.ErrNoRows {
-		return "", fmt.Errorf("webhook %s not found", webhookID)
+		return "", fmt.Errorf("webhook %s: %w", webhookID, ErrNotFound)
 	}
 	if err != nil {
 		return "", fmt.Errorf("failed to resolve customer for webhook %s: %w", webhookID, err)
@@ -104,7 +104,7 @@ func (p *PostgresDB) resolveCustomerIDForDelivery(ctx context.Context, deliveryI
 		WHERE d.delivery_id = $1::uuid
 	`, deliveryID).Scan(&customerID)
 	if err == sql.ErrNoRows {
-		return "", fmt.Errorf("delivery %s not found", deliveryID)
+		return "", fmt.Errorf("delivery %s: %w", deliveryID, ErrNotFound)
 	}
 	if err != nil {
 		return "", fmt.Errorf("failed to resolve customer for delivery %s: %w", deliveryID, err)
@@ -221,7 +221,7 @@ func (p *PostgresDB) GetWebhookDelivery(ctx context.Context, deliveryID string) 
 			&d.Success, &errMsg, &d.NextRetryAt, &d.CreatedAt, &payload)
 	})
 	if err == sql.ErrNoRows {
-		return nil, fmt.Errorf("delivery %s not found", deliveryID)
+		return nil, fmt.Errorf("delivery %s: %w", deliveryID, ErrNotFound)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to query webhook delivery: %w", err)

@@ -85,7 +85,7 @@ func (p *PostgresDB) resolveCustomerIDForSubscription(ctx context.Context, subsc
 	var customerID string
 	err := p.admin.QueryRowContext(ctx, `SELECT customer_id FROM subscriptions WHERE subscription_id = $1::uuid`, subscriptionID).Scan(&customerID)
 	if err == sql.ErrNoRows {
-		return "", fmt.Errorf("subscription %s not found", subscriptionID)
+		return "", fmt.Errorf("subscription %s: %w", subscriptionID, ErrNotFound)
 	}
 	if err != nil {
 		return "", fmt.Errorf("failed to resolve customer for subscription %s: %w", subscriptionID, err)
@@ -121,7 +121,7 @@ func (p *PostgresDB) GetPlan(ctx context.Context, planID string) (*Plan, error) 
 	`, planID)
 	if err := row.Scan(&plan.PlanID, &plan.Name, &plan.Description, &plan.Price, &plan.Currency, &plan.BillingCycle, &plan.SigningLimit, &plan.KeyLimit, &plan.SupportLevel, &featuresRaw, &plan.CreatedAt); err != nil {
 		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("plan %s not found", planID)
+			return nil, fmt.Errorf("plan %s: %w", planID, ErrNotFound)
 		}
 		return nil, fmt.Errorf("failed to query plan: %w", err)
 	}
@@ -162,7 +162,7 @@ func (p *PostgresDB) GetSubscription(ctx context.Context, subscriptionID string)
 			&s.CanceledAt, &s.TrialEndsAt, &s.AutoRenew, &paymentMethod, &s.CreatedAt, &s.UpdatedAt)
 	})
 	if err == sql.ErrNoRows {
-		return nil, fmt.Errorf("subscription %s not found", subscriptionID)
+		return nil, fmt.Errorf("subscription %s: %w", subscriptionID, ErrNotFound)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to query subscription: %w", err)
@@ -219,7 +219,7 @@ func (p *PostgresDB) UpdateSubscription(ctx context.Context, s *Subscription) er
 			return fmt.Errorf("failed to update subscription: %w", err)
 		}
 		if n, _ := result.RowsAffected(); n == 0 {
-			return fmt.Errorf("subscription %s not found", s.SubscriptionID)
+			return fmt.Errorf("subscription %s: %w", s.SubscriptionID, ErrNotFound)
 		}
 		return nil
 	})

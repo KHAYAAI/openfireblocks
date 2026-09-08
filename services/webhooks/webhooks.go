@@ -400,15 +400,14 @@ func (s *WebhookService) HandlePublishEvent(w http.ResponseWriter, r *http.Reque
 func (s *WebhookService) HandleGetDeliveries(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	webhookID := r.URL.Query().Get("webhook_id")
-
-	if webhookID == "" {
-		http.Error(w, "webhook_id required", http.StatusBadRequest)
+	if err := requireUUID("webhook_id", webhookID); err != nil {
+		writeError(w, "list deliveries", err)
 		return
 	}
 
 	deliveries, err := s.GetWebhookDeliveries(ctx, webhookID, 100)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to fetch deliveries: %v", err), http.StatusInternalServerError)
+		writeError(w, "list deliveries", err)
 		return
 	}
 

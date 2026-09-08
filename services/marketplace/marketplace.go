@@ -440,15 +440,14 @@ func (s *MarketplaceService) HandleCreateIntegration(w http.ResponseWriter, r *h
 func (s *MarketplaceService) HandleListIntegrations(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	customerID := r.Header.Get("X-Customer-ID")
-
-	if customerID == "" {
-		http.Error(w, "X-Customer-ID header required", http.StatusBadRequest)
+	if err := requireUUID("X-Customer-ID", customerID); err != nil {
+		writeError(w, "list integrations", err)
 		return
 	}
 
 	integrations, err := s.ListIntegrations(ctx, customerID)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to fetch integrations: %v", err), http.StatusInternalServerError)
+		writeError(w, "list integrations", err)
 		return
 	}
 

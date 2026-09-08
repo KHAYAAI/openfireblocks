@@ -294,14 +294,14 @@ func (b *BillingService) HandleGetUsage(w http.ResponseWriter, r *http.Request) 
 	ctx := r.Context()
 	subscriptionID := r.URL.Query().Get("subscription_id")
 
-	if subscriptionID == "" {
-		http.Error(w, "subscription_id required", http.StatusBadRequest)
+	if err := requireUUID("subscription_id", subscriptionID); err != nil {
+		writeError(w, "get usage", err)
 		return
 	}
 
 	metrics, err := b.GetUsageMetrics(ctx, subscriptionID)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to get usage: %v", err), http.StatusInternalServerError)
+		writeError(w, "get usage", err)
 		return
 	}
 

@@ -96,7 +96,7 @@ func (p *PostgresDB) resolveCustomerIDForKey(ctx context.Context, keyID string) 
 	var customerID string
 	err := p.admin.QueryRowContext(ctx, `SELECT customer_id FROM key_pairs WHERE key_id = $1::uuid`, keyID).Scan(&customerID)
 	if err == sql.ErrNoRows {
-		return "", fmt.Errorf("key %s not found", keyID)
+		return "", fmt.Errorf("key %s: %w", keyID, ErrNotFound)
 	}
 	if err != nil {
 		return "", fmt.Errorf("failed to resolve customer for key %s: %w", keyID, err)
@@ -110,7 +110,7 @@ func (p *PostgresDB) resolveCustomerIDForPolicy(ctx context.Context, policyID st
 	var customerID string
 	err := p.admin.QueryRowContext(ctx, `SELECT customer_id FROM policies WHERE policy_id = $1::uuid`, policyID).Scan(&customerID)
 	if err == sql.ErrNoRows {
-		return "", fmt.Errorf("policy %s not found", policyID)
+		return "", fmt.Errorf("policy %s: %w", policyID, ErrNotFound)
 	}
 	if err != nil {
 		return "", fmt.Errorf("failed to resolve customer for policy %s: %w", policyID, err)
@@ -177,7 +177,7 @@ func (p *PostgresDB) GetPolicy(ctx context.Context, policyID string) (*Policy, e
 		// belongs to. Both cases are indistinguishable to the caller and
 		// both should read as "not found," never as a different error
 		// that might hint at cross-tenant existence.
-		return nil, fmt.Errorf("policy %s not found", policyID)
+		return nil, fmt.Errorf("policy %s: %w", policyID, ErrNotFound)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to query policy: %w", err)

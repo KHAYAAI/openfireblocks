@@ -292,7 +292,26 @@ were valid; the services had simply never been run. They fail closed rather
 than falling back, which is why this surfaced as a crash loop instead of as
 silently disabled row-level security.
 
-### 3.12 Also fixed along the way
+### 3.12 Client errors were being reported as server failures
+
+Found by pointing `services-smoke-test.sh` at the six supporting services
+for the first time. Five of nineteen endpoints failed, three with 500s.
+
+None of them were broken exactly; they answered every error the same way.
+A request naming a subscription, webhook or key that does not exist
+produced a database "not found", which became `500 Internal Server Error`
+with the error text attached. That is wrong twice: it tells a caller to
+retry something that will never work and pages whoever owns the alerts,
+and the text came straight from the driver -- a malformed id returned
+`pq: invalid input syntax for type uuid: "" (22P02)` to an unauthenticated
+caller, handing over the database engine, the column type and the SQLSTATE.
+
+All four affected services now classify: malformed input is a 400 with a
+message written by us, a resource that does not exist is a 404, and
+anything else is a 500 whose detail goes to the log and not the response.
+Identifiers are shape-checked before the query rather than after it fails.
+
+### 3.13 Also fixed along the way
 
 ## 4. What is still not proven
 
@@ -365,11 +384,13 @@ Do not read section 2 as more than it is.
    and the pre-params contention in 3.7 is a direct demonstration that
    this system's behaviour under CPU pressure differs from its behaviour
    when idle. Do not read any of these numbers as capacity data.
-8. **The extra services run, but nothing exercises them.** `policyApi`,
-   `settlement`, `billing`, `webhooks`, `marketplace` and `compliance` are
-   deployed and healthy -- which is how the missing `DATABASE_TENANT_URL`
-   in 3.11 was found -- but no test drives their endpoints. "Starts and
-   stays up" is a low bar. `ceremony-orchestrator` has been deleted.
+8. **The extra services answer, but their business logic is untested.**
+   `services-smoke-test.sh` drives 19 real endpoints across all six from
+   inside the cluster, which found five broken routes (below). What it
+   deliberately does not do is test what they compute -- it checks that a
+   request reaches the service, is parsed, and comes back with an honest
+   status code. Whether a CTR filing is correct, or an invoice adds up, is
+   not covered by anything.
 
 ## 5. Running it in a sandboxed environment
 
