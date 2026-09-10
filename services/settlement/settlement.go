@@ -20,9 +20,24 @@ import (
 
 // SettlementService broadcasts signed transactions to blockchains
 type SettlementService struct {
-	db      *PostgresDB
+	db      SettlementStore
 	chains  map[string]ChainClient
 	metrics *SettlementMetrics
+}
+
+// SettlementStore is the persistence this service needs.
+//
+// An interface rather than *PostgresDB directly, so that the broadcast path
+// can be tested at all. This service takes a signed transaction and puts it
+// on a public blockchain -- the least reversible thing the platform does --
+// and it had no tests, because reaching Settle() required a live Postgres.
+// The four methods here are exactly what it calls; *PostgresDB satisfies
+// them unchanged.
+type SettlementStore interface {
+	CreateSettlement(ctx context.Context, settlement *Settlement) error
+	GetSettlement(ctx context.Context, settlementID string) (*Settlement, error)
+	ListSettlements(ctx context.Context, customerID string) ([]*Settlement, error)
+	UpdateSettlement(ctx context.Context, settlement *Settlement) error
 }
 
 // ChainClient is an interface for blockchain interactions
@@ -69,10 +84,34 @@ type SettlementMetrics struct {
 	SuccessfulSettlements int64
 	FailedSettlements     int64
 	AvgConfirmationTime   float64
+	// How many samples the average is over. Needed to keep it a mean:
+	// without it the only thing you can compute from a running total is a
+	// blend of the last value with whatever came before, which is what
+	// this used to do -- see recordConfirmationTime.
+	confirmedSamples int64
+}
+
+// recordConfirmationTime folds one measurement into the running mean.
+//
+// This used to be `avg = (avg + sample) / 2`, which is not an average. It
+// weights the most recent sample at 1/2, the one before at 1/4, and
+// everything older into irrelevance -- so a single slow confirmation moved
+// the reported figure by half the difference, and starting from zero the
+// first sample was reported at half its true value forever after.
+//
+// It matters because this number is the one an SLO would be written
+// against. A latency figure that is really "roughly the last couple of
+// confirmations" cannot support a claim about the service, and it looks
+// exactly like a real average until somebody checks the arithmetic.
+func (m *SettlementMetrics) recordConfirmationTime(seconds float64) {
+	m.confirmedSamples++
+	// Incremental mean: avg += (sample - avg) / n. Equivalent to summing
+	// and dividing, without keeping a total that grows without bound.
+	m.AvgConfirmationTime += (seconds - m.AvgConfirmationTime) / float64(m.confirmedSamples)
 }
 
 // NewSettlementService creates a new settlement service
-func NewSettlementService(db *PostgresDB) *SettlementService {
+func NewSettlementService(db SettlementStore) *SettlementService {
 	return &SettlementService{
 		db:      db,
 		chains:  make(map[string]ChainClient),
@@ -218,8 +257,7 @@ func (s *SettlementService) trackConfirmation(ctx context.Context, settlement Se
 				settlement.ConfirmationTime = int64(confirmationTime)
 
 				// Update metrics
-				currentAvg := s.metrics.AvgConfirmationTime
-				s.metrics.AvgConfirmationTime = (currentAvg + confirmationTime) / 2
+				s.metrics.recordConfirmationTime(confirmationTime)
 			}
 
 			// Update settlement in database

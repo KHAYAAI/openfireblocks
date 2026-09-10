@@ -95,10 +95,34 @@ func (r *RegulatoryReportingService) EvaluateCTR(
 		return nil, fmt.Errorf("failed to load transactions for CTR evaluation: %w", err)
 	}
 
+	return EvaluateCTRFrom(customerID, chain, dayStart, thresholdUSD, usdPerNativeUnit, txs), nil
+}
+
+// EvaluateCTRFrom is the CTR decision itself, with the database taken out.
+//
+// Separated so it can be tested exhaustively, because this is the function
+// that decides whether a currency transaction report is owed. Failing to
+// file one is a federal reporting violation; filing on a wrong aggregate is
+// a report a regulator can show is wrong. Neither is a defect anyone wants
+// to discover from an examiner, and neither is reachable through a test
+// that needs a populated database.
+func EvaluateCTRFrom(
+	customerID, chain string,
+	dayStart time.Time,
+	thresholdUSD float64,
+	usdPerNativeUnit *big.Float,
+	txs []NativeTransaction,
+) *CTREvaluation {
 	total := new(big.Int)
 	ids := make([]string, 0, len(txs))
 	for _, tx := range txs {
-		total.Add(total, tx.Amount)
+		// A transaction with no parsed amount contributes nothing rather
+		// than panicking. It should not happen -- the column is not null --
+		// but a nil dereference here would take down the whole daily
+		// evaluation for every customer, not just this one.
+		if tx.Amount != nil {
+			total.Add(total, tx.Amount)
+		}
 		ids = append(ids, tx.RequestID)
 	}
 
@@ -113,7 +137,7 @@ func (r *RegulatoryReportingService) EvaluateCTR(
 
 	if usdPerNativeUnit == nil {
 		eval.Reason = "no price oracle configured: cannot convert native-unit aggregate to USD"
-		return eval, nil
+		return eval
 	}
 
 	totalF := new(big.Float).SetInt(total)
@@ -122,8 +146,12 @@ func (r *RegulatoryReportingService) EvaluateCTR(
 
 	eval.Evaluated = true
 	eval.AggregateAmountUSD = usd
+	// At or above, not above. FinCEN's CTR obligation is transactions "in
+	// excess of $10,000", but the aggregation rule treats a day totalling
+	// exactly the threshold as reportable in practice, and over-reporting
+	// is a filing while under-reporting is a violation.
 	eval.OverThreshold = usd >= thresholdUSD
-	return eval, nil
+	return eval
 }
 
 // GenerateCTR persists a CTR draft from a completed evaluation. Only

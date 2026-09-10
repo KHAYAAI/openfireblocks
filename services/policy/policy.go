@@ -7,6 +7,7 @@ import (
 	"log"
 	"math/big"
 	"net/http"
+	"regexp"
 	"time"
 
 	"github.com/google/uuid"
@@ -271,18 +272,59 @@ func (s *PolicyService) checkAmountLimit(cfg RuleConfig, eval *PolicyEvaluationR
 		return true
 	}
 
-	amount, ok := new(big.Float).SetString(eval.Amount)
+	amount, ok := parseAmount(eval.Amount)
 	if !ok {
 		// Can't parse the amount at all: fail closed rather than silently
 		// treat an unparseable value as passing the limit check.
 		return false
 	}
-	max, ok := new(big.Float).SetString(*cfg.MaxAmount)
+	max, ok := parseAmount(*cfg.MaxAmount)
 	if !ok {
 		return false
 	}
 
 	return amount.Cmp(max) <= 0
+}
+
+// amountPattern is what an amount is allowed to look like.
+//
+// A plain non-negative decimal number, optionally with a fractional part.
+// No sign, no exponent, no underscores, no alternate base, no infinity.
+var amountPattern = regexp.MustCompile(`^[0-9]+(\.[0-9]+)?$`)
+
+// parseAmount converts an amount string to a number, strictly.
+//
+// big.Float.SetString on its own is far too permissive for a security
+// control, and every one of these was accepted before this existed:
+//
+//	"-5"     parses, and is <= every positive limit
+//	"-Inf"   parses, and is <= every limit there is
+//	"0x10"   parses as 16, because SetString accepts hexadecimal
+//	"0b101"  parses as 5
+//	"1e3"    parses as 1000
+//	"1_000"  parses as 1000, because underscores are digit separators
+//
+// The negative cases are a straight bypass: an amount limit that a
+// negative number satisfies is not a limit. The rest are worse in a
+// subtler way -- they make the policy engine and the signing path disagree
+// about what a string means. Policy reads "0x10" as sixteen and allows it
+// under a limit of a thousand; whatever builds the transaction reads the
+// same string its own way. The signature that results was authorised for a
+// transaction nobody evaluated.
+//
+// So the shape is pinned first and the value parsed second. Amounts in
+// this platform are decimal base-unit strings; anything else is a caller
+// doing something the system was not designed for, and the safe answer to
+// that on a control like this one is no.
+func parseAmount(raw string) (*big.Float, bool) {
+	if !amountPattern.MatchString(raw) {
+		return nil, false
+	}
+	value, ok := new(big.Float).SetString(raw)
+	if !ok {
+		return nil, false
+	}
+	return value, true
 }
 
 // checkWhitelist verifies destination is in whitelist
