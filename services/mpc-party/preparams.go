@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"os"
 	"sync"
 	"time"
 
@@ -74,7 +75,23 @@ func newPreParamsPool(size int) *preParamsPool {
 
 // start begins filling the pool in the background. Safe to call more than
 // once; only the first call starts the filler.
+//
+// TSS_PREPARAMS_POOL=0 keeps it stopped. Pre-parameters are Paillier keys,
+// used only by secp256k1 ceremonies, and generating them is a CPU-bound
+// safe-prime search -- so a party deployed to serve only Ed25519 chains
+// (Solana) would otherwise burn a core producing something it can never
+// use. The test suite sets it for the same reason: six Ed25519 parties
+// each searching for safe primes starved the ECDSA tests running beside
+// them of the CPU they genuinely needed, and made them time out.
+//
+// A party that has this off and is then asked for a secp256k1 ceremony
+// still works -- get() generates inline, paying the full cost on that
+// ceremony rather than having had one ready.
 func (p *preParamsPool) start() {
+	if os.Getenv("TSS_PREPARAMS_POOL") == "0" {
+		log.Printf("pre-params pool disabled (TSS_PREPARAMS_POOL=0); secp256k1 ceremonies will generate inline")
+		return
+	}
 	p.startOnce.Do(func() { go p.fill() })
 }
 

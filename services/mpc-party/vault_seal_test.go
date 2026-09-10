@@ -57,7 +57,7 @@ func TestSealAndLoadKeyShareRoundTrip(t *testing.T) {
 	}
 
 	for _, id := range []int{partyID, otherPartyID} {
-		if err := managers[id].StartKeygen(ceremonyID, 1, peers); err != nil {
+		if err := managers[id].StartKeygen(ceremonyID, 1, peers, CurveSecp256k1); err != nil {
 			t.Fatalf("party %d: StartKeygen failed: %v", id, err)
 		}
 	}

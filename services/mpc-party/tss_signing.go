@@ -9,8 +9,8 @@ import (
 	"sync"
 
 	"github.com/bnb-chain/tss-lib/v2/common"
-	tsskeygen "github.com/bnb-chain/tss-lib/v2/ecdsa/keygen"
 	tsssigning "github.com/bnb-chain/tss-lib/v2/ecdsa/signing"
+	eddsasigning "github.com/bnb-chain/tss-lib/v2/eddsa/signing"
 	tsscommon "github.com/bnb-chain/tss-lib/v2/tss"
 )
 
@@ -60,7 +60,8 @@ type tssSigningCeremony struct {
 	committee   tsscommon.SortedPartyIDs // subset of the DKG parties, original relative order preserved
 	peers       map[int]string           // partyId -> base URL, restricted to committee members
 	localParty  tsscommon.Party
-	signature   string // hex-encoded 65-byte [R||S||V], once completed
+	curve       Curve  // decides the signature encoding below
+	signature   string // hex: 65-byte [R||S||V] on secp256k1, 64-byte [R||S] on ed25519
 }
 
 // StartSigning begins a threshold signing ceremony over a 32-byte message
@@ -72,8 +73,8 @@ type tssSigningCeremony struct {
 // the signing initiator -- mirroring how StartKeygen's peers map must be
 // identical across all parties.
 func (m *TSSPartyManager) StartSigning(signID, keygenCeremonyID string, messageHash []byte, committeePartyIDs []int) error {
-	if len(messageHash) != 32 {
-		return fmt.Errorf("message hash must be 32 bytes, got %d", len(messageHash))
+	if len(messageHash) == 0 {
+		return fmt.Errorf("nothing to sign")
 	}
 
 	m.mu.Lock()
@@ -89,7 +90,16 @@ func (m *TSSPartyManager) StartSigning(signID, keygenCeremonyID string, messageH
 		keygenCeremony.mu.Unlock()
 		return fmt.Errorf("keygen ceremony %s has not completed (status: %s)", keygenCeremonyID, status)
 	}
-	saveData := *keygenCeremony.saveData
+	share := keygenCeremony.saveData
+
+	// The length rule is per curve, so it is checked here rather than at
+	// the top -- ECDSA signs a 32-byte digest and nothing else, while
+	// Ed25519 signs the message itself and has no fixed length. Applying
+	// the ECDSA rule to both would have made every Solana transaction
+	// unsignable.
+	if share.Curve == CurveSecp256k1 && len(messageHash) != 32 {
+		return fmt.Errorf("a secp256k1 signature is over a 32-byte digest, got %d bytes", len(messageHash))
+	}
 	fullSortedIDs := keygenCeremony.sortedIDs
 	fullPeers := keygenCeremony.peers
 	threshold := keygenCeremony.threshold
@@ -145,7 +155,8 @@ func (m *TSSPartyManager) StartSigning(signID, keygenCeremonyID string, messageH
 	m.signings[signID] = ceremony
 	m.signMu.Unlock()
 
-	go m.runSigning(signID, ceremony, committee, peers, self, threshold, saveData, messageHash)
+	ceremony.curve = share.Curve
+	go m.runSigning(signID, ceremony, committee, peers, self, threshold, share, messageHash)
 
 	return nil
 }
@@ -164,18 +175,41 @@ func (m *TSSPartyManager) runSigning(
 	peers map[int]string,
 	self *tsscommon.PartyID,
 	threshold int,
-	saveData tsskeygen.LocalPartySaveData,
+	share *KeyShare,
 	messageHash []byte,
 ) {
+	ec, err := share.Curve.ellipticCurve()
+	if err != nil {
+		m.failSigning(signID, err)
+		return
+	}
+
 	peerCtx := tsscommon.NewPeerContext(committee)
-	params := tsscommon.NewParameters(tsscommon.S256(), peerCtx, self, len(committee), threshold)
+	params := tsscommon.NewParameters(ec, peerCtx, self, len(committee), threshold)
 	msg := new(big.Int).SetBytes(messageHash)
 
 	outCh := make(chan tsscommon.Message, len(committee)*len(committee))
+	// The same type for both curves, which is why everything downstream of
+	// here -- the relay loop, the completion path, the signature encoding
+	// -- needs no branch at all.
 	endCh := make(chan common.SignatureData, 1)
 	errCh := make(chan *tsscommon.Error, 1)
 
-	localParty := tsssigning.NewLocalParty(msg, params, saveData, outCh, endCh)
+	var localParty tsscommon.Party
+	switch share.Curve {
+	case CurveSecp256k1:
+		localParty = tsssigning.NewLocalParty(msg, params, *share.ECDSA, outCh, endCh)
+	case CurveEd25519:
+		// Note what `msg` is here. For ECDSA it is a hash; Ed25519 signs
+		// the message itself, and services/mpc-signer/chains/solana.go
+		// documents that its "messageHash" parameter is really the
+		// serialised message. The caller decides which it passed; this
+		// only signs the bytes it is given.
+		localParty = eddsasigning.NewLocalParty(msg, params, *share.EdDSA, outCh, endCh)
+	default:
+		m.failSigning(signID, fmt.Errorf("unknown curve %q", share.Curve))
+		return
+	}
 
 	ceremony.mu.Lock()
 	ceremony.localParty = localParty
@@ -213,8 +247,13 @@ func (m *TSSPartyManager) driveSigning(
 		// check on the channel receive itself is unavoidable without
 		// forking tss-lib's public API; documented there).
 		case sd := <-endCh:
-			r, s, recovery := sd.R, sd.S, sd.SignatureRecovery
-			m.completeSigning(signID, ceremony, r, s, recovery)
+			// sd.Signature is the encoding tss-lib itself produced, which
+			// for Ed25519 is the only correct one: R and S are
+			// little-endian there, and assembling them from sd.R/sd.S the
+			// way the ECDSA path does yields 64 well-formed bytes that no
+			// verifier accepts.
+			r, s, recovery, encoded := sd.R, sd.S, sd.SignatureRecovery, sd.Signature
+			m.completeSigning(signID, ceremony, r, s, recovery, encoded)
 			return
 		}
 	}
@@ -253,14 +292,31 @@ func (m *TSSPartyManager) failSigning(signID string, err error) {
 	log.Printf("signing ceremony %s failed: %v", signID, err)
 }
 
-func (m *TSSPartyManager) completeSigning(signID string, ceremony *tssSigningCeremony, r, s []byte, recovery []byte) {
-	// Assemble the 65-byte Ethereum-compatible signature [R || S || V],
-	// exactly as services/mpc-signer/tss/tss.go's Sign() does.
-	sig := make([]byte, 65)
-	copy(sig[32-len(r):32], r)
-	copy(sig[64-len(s):64], s)
-	if len(recovery) > 0 {
-		sig[64] = recovery[0]
+func (m *TSSPartyManager) completeSigning(signID string, ceremony *tssSigningCeremony, r, s []byte, recovery []byte, encoded []byte) {
+	// The encoding is per curve, and getting it wrong produces a
+	// well-formed signature that the chain rejects.
+	//
+	// secp256k1: 65 bytes [R || S || V], as services/mpc-signer/tss's
+	// Sign() does, where V is the recovery id Ethereum uses to recover the
+	// signer's address.
+	//
+	// Ed25519: 64 bytes [R || S], and no recovery byte -- Ed25519 has no
+	// public-key recovery at all, so a 65th byte would simply make the
+	// signature invalid. Solana verifies exactly 64.
+	var sig []byte
+	if ceremony.curve == CurveEd25519 {
+		// Taken as tss-lib encoded it. R and S are little-endian for
+		// Ed25519, so building the 64 bytes from sd.R and sd.S the way the
+		// branch below does produces a signature of exactly the right
+		// length that fails every verification.
+		sig = encoded
+	} else {
+		sig = make([]byte, 65)
+		copy(sig[32-len(r):32], r)
+		copy(sig[64-len(s):64], s)
+		if len(recovery) > 0 {
+			sig[64] = recovery[0]
+		}
 	}
 
 	ceremony.mu.Lock()

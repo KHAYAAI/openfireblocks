@@ -90,6 +90,9 @@ type tssKeygenStartRequest struct {
 	CeremonyID string            `json:"ceremony_id"`
 	Threshold  int               `json:"threshold"`
 	Peers      map[string]string `json:"peers"` // partyId (as string, JSON object keys) -> base URL
+	// Which curve to generate on. Absent means secp256k1, which is what
+	// every key generated before this field existed is.
+	Curve string `json:"curve,omitempty"`
 }
 
 func (ps *PartyServer) HandleTSSKeygenStart(w http.ResponseWriter, r *http.Request) {
@@ -117,7 +120,17 @@ func (ps *PartyServer) HandleTSSKeygenStart(w http.ResponseWriter, r *http.Reque
 		peers[id] = url
 	}
 
-	if err := ps.tssManager.StartKeygen(req.CeremonyID, req.Threshold, peers); err != nil {
+	// Defaulted to secp256k1 when absent, for the orchestrator that
+	// predates the field. Every key generated before curves existed is
+	// secp256k1, so this preserves the meaning of an old request rather
+	// than guessing about a new one -- and an explicitly wrong curve is
+	// still refused by StartKeygen.
+	curve := Curve(req.Curve)
+	if curve == "" {
+		curve = CurveSecp256k1
+	}
+
+	if err := ps.tssManager.StartKeygen(req.CeremonyID, req.Threshold, peers, curve); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}

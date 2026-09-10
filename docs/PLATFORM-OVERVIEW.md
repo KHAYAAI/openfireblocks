@@ -23,19 +23,28 @@ entire security claim, so it is stated per chain rather than as a list.
 |---|---|---|---|---|
 | Ethereum | ECDSA secp256k1 | **Yes** | Yes — `POST /keys/:id/transactions` | `chain-test.sh` against a real multi-node network |
 | Bitcoin | ECDSA secp256k1 | **Yes** | Yes — `POST /keys/:id/bitcoin-transactions` | `bitcoin-api-drill.sh` against Bitcoin Core |
-| Cosmos | ECDSA secp256k1 | Not wired | No API route | — |
-| Solana | Ed25519 | **No — single key** | No API route | — |
+| Solana | Ed25519 | **Yes** | Not yet — no API route | `TestEd25519ThresholdSignatureVerifies` |
+| Cosmos | ECDSA secp256k1 | Yes (same path as Ethereum) | Not yet — no API route | — |
 
-Solana is the one to be careful about. The signer in
-`services/mpc-signer/chains/solana.go` holds a whole Ed25519 private key; it
-is not threshold signing, and describing Solana as MPC custody would be
-false. Ed25519 threshold signing is available in the `tss-lib` version this
-platform already depends on (`eddsa/keygen`, `eddsa/signing`) and is not
-built here yet — see the roadmap. Until it is, Solana should not be sold.
+Two different kinds of "not yet" in that table, and the distinction is the
+one that matters commercially.
 
-Cosmos uses the same curve as Ethereum and Bitcoin, so the existing
-threshold path applies to it; what is missing is transaction construction
-and a public route, not cryptography.
+**Solana's keys are now genuinely threshold.** A 2-of-3 Ed25519 DKG runs
+across three parties over the network, and the signature it produces is
+verified by `crypto/ed25519` — the same code a Solana validator runs —
+against the group public key. No party can produce it alone. This needed no
+new protocol and no new dependency: `tss-lib` ships `eddsa/keygen` and
+`eddsa/signing` alongside the ECDSA packages, on `tss.Edwards()`.
+
+What Solana still lacks is the *product* layer: there is no
+`POST /keys/:id/solana-transactions` that builds a transaction, fetches a
+recent blockhash, signs and submits it. A customer can hold a Solana key
+whose private key does not exist; they cannot yet spend from it through
+this API. Cosmos is in the same position for the same reason.
+
+So Solana can honestly be described as MPC custody today, and cannot yet be
+described as a chain a customer can transact on. Both halves matter in a
+pitch.
 
 ## Platform Architecture
 

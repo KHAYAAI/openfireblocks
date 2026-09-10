@@ -41,6 +41,13 @@ type tssKeygenStartBody struct {
 	CeremonyID string            `json:"ceremony_id"`
 	Threshold  int               `json:"threshold"`
 	Peers      map[string]string `json:"peers"`
+	// The chain the key is for, so each party can generate on the curve
+	// that chain's signatures require. Sent rather than a curve name: the
+	// mapping from chain to curve is one decision and it lives in
+	// mpc-party, next to the ceremony that acts on it. Duplicating it here
+	// would be a second place for the two to disagree, and a disagreement
+	// produces a key that completes its DKG and cannot sign.
+	Blockchain string `json:"blockchain,omitempty"`
 }
 
 type tssKeygenStatusBody struct {
@@ -91,6 +98,7 @@ func (a *Activities) ExecuteRealDKG(ctx context.Context, req workflows.DKGCeremo
 		CeremonyID: req.CeremonyID,
 		Threshold:  req.K,
 		Peers:      peers,
+		Blockchain: req.ChainID,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("marshal keygen start request: %w", err)

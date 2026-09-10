@@ -1,10 +1,10 @@
 bou.ke/monkey v1.0.1 h1:zEMLInw9xvNakzUUPjfS4Ds6jYPqCFx3m7bRmG5NH2U=
 bou.ke/monkey v1.0.1/go.mod h1:FgHuK96Rv2Nlf+0u1OOVDpCMdsWyOFmeeketDHE7LIg=
 github.com/aead/siphash v1.0.1/go.mod h1:Nywa3cDsYNNK3gaciGTWPwHt0wlpNV15vwmswBAUSII=
-github.com/agl/ed25519 v0.0.0-20170116200512-5312a6153412 h1:w1UutsfOrms1J05zt7ISrnJIXKzwaspym5BTKGx93EI=
-github.com/agl/ed25519 v0.0.0-20170116200512-5312a6153412/go.mod h1:WPjqKcmVOxf0XSf3YxCJs6N6AOSrOx3obionmG7T0y0=
 github.com/beorn7/perks v1.0.1 h1:VlbKKnNfV8bJzeqoa4cOKqO6bYr3WgKZxO8Z16+hsOM=
 github.com/beorn7/perks v1.0.1/go.mod h1:G2ZrVWU2WbWT9wwq4/hrbKbnv/1ERSJQ0ibhJ6rlkpw=
+github.com/binance-chain/edwards25519 v0.0.0-20200305024217-f36fc4b53d43 h1:Vkf7rtHx8uHx8gDfkQaCdVfc+gfrF9v6sR6xJy7RXNg=
+github.com/binance-chain/edwards25519 v0.0.0-20200305024217-f36fc4b53d43/go.mod h1:TnVqVdGEK8b6erOMkcyYGWzCQMw7HEMCOw3BgFYCFWs=
 github.com/bnb-chain/tss-lib/v2 v2.0.0 h1:VE2X5eWmHSH4u0UI7z87oI/99IJbfevtm3OYDZM48Eg=
 github.com/bnb-chain/tss-lib/v2 v2.0.0/go.mod h1:7Uai3xfLjJPD2gbd0+/1gHsfqa9PKxONdwDtnt6ZYxc=
 github.com/btcsuite/btcd v0.0.0-20190629003639-c26ffa870fd8 h1:mOg8/RgDSHTQ1R0IR+LMDuW4TDShPv+JzYHuR4GLoNA=

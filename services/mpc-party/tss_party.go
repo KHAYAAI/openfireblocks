@@ -2,9 +2,7 @@ package main
 
 import (
 	"context"
-	"crypto/ecdsa"
 	"encoding/base64"
-	"encoding/hex"
 	"fmt"
 	"log"
 	"math/big"
@@ -14,8 +12,8 @@ import (
 	"time"
 
 	tsslib "github.com/bnb-chain/tss-lib/v2/ecdsa/keygen"
+	eddsakeygen "github.com/bnb-chain/tss-lib/v2/eddsa/keygen"
 	tsscommon "github.com/bnb-chain/tss-lib/v2/tss"
-	"github.com/ethereum/go-ethereum/crypto"
 )
 
 // Real, network-driven threshold-ECDSA DKG. This drives an
@@ -46,12 +44,16 @@ type tssKeygenCeremony struct {
 	status       ceremonyStatus
 	errorMessage string
 
-	selfPartyID  int
-	threshold    int                      // needed later by StartSigning to size the signing committee
-	sortedIDs    tsscommon.SortedPartyIDs // identical on every process, see deterministicPartyIDs
-	peers        map[int]string           // partyId -> base URL, for relaying outgoing messages
-	localParty   tsscommon.Party
-	saveData     *tsslib.LocalPartySaveData
+	selfPartyID int
+	threshold   int                      // needed later by StartSigning to size the signing committee
+	sortedIDs   tsscommon.SortedPartyIDs // identical on every process, see deterministicPartyIDs
+	peers       map[int]string           // partyId -> base URL, for relaying outgoing messages
+	localParty  tsscommon.Party
+	// Which curve this ceremony ran on, and the share it produced. Both
+	// are needed: the save-data types come from different packages and
+	// share no interface, so the curve is what says which pointer is set.
+	curve        Curve
+	saveData     *KeyShare
 	publicKeyHex string
 	address      string
 	sealed       bool // true if the key share was durably sealed in Vault, see vault_seal.go
@@ -143,9 +145,17 @@ func findPartyID(sorted tsscommon.SortedPartyIDs, partyID int) *tsscommon.PartyI
 // outgoing messages over HTTP and watch for completion/failure. Returns
 // once the ceremony is registered and Start() has been called -- it does
 // NOT block for completion; poll GetStatus for that.
-func (m *TSSPartyManager) StartKeygen(ceremonyID string, threshold int, peers map[int]string) error {
+func (m *TSSPartyManager) StartKeygen(ceremonyID string, threshold int, peers map[int]string, curve Curve) error {
 	if _, ok := peers[m.partyID]; !ok {
 		return fmt.Errorf("peers map does not include this party's own id %d", m.partyID)
+	}
+
+	// Validated before anything starts. A ceremony on a curve this build
+	// does not know would otherwise run to completion and produce a share
+	// nothing can sign with -- discovered by a customer whose key never
+	// works, long after the DKG reported success.
+	if _, err := curve.ellipticCurve(); err != nil {
+		return fmt.Errorf("cannot start a ceremony: %w", err)
 	}
 
 	sorted := deterministicPartyIDs(peers)
@@ -167,6 +177,7 @@ func (m *TSSPartyManager) StartKeygen(ceremonyID string, threshold int, peers ma
 		threshold:   threshold,
 		sortedIDs:   sorted,
 		peers:       peers,
+		curve:       curve,
 	}
 	m.mu.Lock()
 	m.ceremonies[ceremonyID] = ceremony
@@ -182,43 +193,86 @@ func (m *TSSPartyManager) StartKeygen(ceremonyID string, threshold int, peers ma
 // calling StartKeygen returns immediately rather than blocking on prime
 // generation.
 func (m *TSSPartyManager) runKeygen(ceremonyID string, ceremony *tssKeygenCeremony, sorted tsscommon.SortedPartyIDs, self *tsscommon.PartyID, threshold int) {
-	peerCtx := tsscommon.NewPeerContext(sorted)
-	params := tsscommon.NewParameters(tsscommon.S256(), peerCtx, self, len(sorted), threshold)
-
-	preParams, err := m.preParams.get()
+	ec, err := ceremony.curve.ellipticCurve()
 	if err != nil {
-		m.failCeremony(ceremonyID, fmt.Errorf("failed to generate pre-params: %w", err))
+		m.failCeremony(ceremonyID, err)
 		return
 	}
 
+	peerCtx := tsscommon.NewPeerContext(sorted)
+	params := tsscommon.NewParameters(ec, peerCtx, self, len(sorted), threshold)
 	outCh := make(chan tsscommon.Message, len(sorted)*len(sorted))
-	endCh := make(chan tsslib.LocalPartySaveData, 1)
 	errCh := make(chan *tsscommon.Error, 1)
 
-	localParty := tsslib.NewLocalParty(params, outCh, endCh, *preParams)
+	// The two curves differ here and nowhere else in the ceremony. ECDSA
+	// needs Paillier pre-parameters, whose safe-prime generation is the
+	// slow part of a DKG; EdDSA needs none, so an Ed25519 ceremony starts
+	// immediately and finishes in a fraction of the time.
+	switch ceremony.curve {
+	case CurveSecp256k1:
+		preParams, err := m.preParams.get()
+		if err != nil {
+			m.failCeremony(ceremonyID, fmt.Errorf("failed to generate pre-params: %w", err))
+			return
+		}
 
+		endCh := make(chan tsslib.LocalPartySaveData, 1)
+		localParty := tsslib.NewLocalParty(params, outCh, endCh, *preParams)
+		if !m.startLocalParty(ceremonyID, ceremony, localParty) {
+			return
+		}
+		driveKeygen(m, ceremonyID, ceremony, outCh, endCh, errCh,
+			func(save tsslib.LocalPartySaveData) *KeyShare {
+				return &KeyShare{Curve: CurveSecp256k1, ECDSA: &save}
+			})
+
+	case CurveEd25519:
+		endCh := make(chan eddsakeygen.LocalPartySaveData, 1)
+		localParty := eddsakeygen.NewLocalParty(params, outCh, endCh)
+		if !m.startLocalParty(ceremonyID, ceremony, localParty) {
+			return
+		}
+		driveKeygen(m, ceremonyID, ceremony, outCh, endCh, errCh,
+			func(save eddsakeygen.LocalPartySaveData) *KeyShare {
+				return &KeyShare{Curve: CurveEd25519, EdDSA: &save}
+			})
+
+	default:
+		m.failCeremony(ceremonyID, fmt.Errorf("unknown curve %q", ceremony.curve))
+	}
+}
+
+// startLocalParty records the party and starts it, reporting whether the
+// caller should continue. Shared so the curve branches above differ only in
+// the types they name.
+func (m *TSSPartyManager) startLocalParty(ceremonyID string, ceremony *tssKeygenCeremony, localParty tsscommon.Party) bool {
 	ceremony.mu.Lock()
 	ceremony.localParty = localParty
 	ceremony.mu.Unlock()
 
 	if err := localParty.Start(); err != nil {
 		m.failCeremony(ceremonyID, fmt.Errorf("failed to start local party: %w", err))
-		return
+		return false
 	}
-
-	m.driveKeygen(ceremonyID, ceremony, outCh, endCh, errCh)
+	return true
 }
 
 // driveKeygen relays outgoing protocol messages over HTTP and watches for
 // the ceremony to finish (successfully or not). Mirrors
 // mpc-signer/tss/tss.go's Keygen event loop, transport swapped from
 // in-process channels to real HTTP POSTs.
-func (m *TSSPartyManager) driveKeygen(
+// driveKeygen is generic over the save-data type because that is the only
+// thing that differs between the curves -- the message relay, the error
+// handling and the completion path are identical, and duplicating this loop
+// per curve would mean fixing every future transport bug twice.
+func driveKeygen[S any](
+	m *TSSPartyManager,
 	ceremonyID string,
 	ceremony *tssKeygenCeremony,
 	outCh chan tsscommon.Message,
-	endCh chan tsslib.LocalPartySaveData,
+	endCh chan S,
 	errCh chan *tsscommon.Error,
+	wrap func(S) *KeyShare,
 ) {
 	for {
 		select {
@@ -231,7 +285,7 @@ func (m *TSSPartyManager) driveKeygen(
 			m.failCeremony(ceremonyID, fmt.Errorf("tss-lib protocol error: %w", err))
 			return
 		case save := <-endCh:
-			m.completeCeremony(ceremonyID, ceremony, save)
+			m.completeCeremony(ceremonyID, ceremony, wrap(save))
 			return
 		}
 	}
@@ -316,14 +370,16 @@ func (m *TSSPartyManager) failCeremony(ceremonyID string, err error) {
 	log.Printf("keygen ceremony %s failed: %v", ceremonyID, err)
 }
 
-func (m *TSSPartyManager) completeCeremony(ceremonyID string, ceremony *tssKeygenCeremony, save tsslib.LocalPartySaveData) {
-	pubKey := &ecdsa.PublicKey{
-		Curve: crypto.S256(),
-		X:     save.ECDSAPub.X(),
-		Y:     save.ECDSAPub.Y(),
+func (m *TSSPartyManager) completeCeremony(ceremonyID string, ceremony *tssKeygenCeremony, share *KeyShare) {
+	// Derived through the share rather than here, because the two curves
+	// produce addresses in entirely different ways -- an Ethereum address
+	// is the last 20 bytes of a hash of the public key, and a Solana
+	// address is the public key itself, base58 encoded.
+	pubKeyHex, address, err := share.PublicKey()
+	if err != nil {
+		m.failCeremony(ceremonyID, fmt.Errorf("keygen succeeded but the public key could not be derived: %w", err))
+		return
 	}
-	address := crypto.PubkeyToAddress(*pubKey).Hex()
-	pubKeyHex := hex.EncodeToString(crypto.FromECDSAPub(pubKey))
 
 	// Seal this party's own share before reporting success -- a key share
 	// that exists only in this process's RAM is not durably generated. If
@@ -331,7 +387,7 @@ func (m *TSSPartyManager) completeCeremony(ceremonyID string, ceremony *tssKeyge
 	// (see vault_seal.go); if it IS configured, a sealing failure fails
 	// the whole ceremony rather than silently reporting "completed" with
 	// nothing durable to show for it.
-	sealed, err := SealKeyShare(context.Background(), os.Getenv, ceremony.selfPartyID, ceremonyID, &save)
+	sealed, err := SealKeyShare(context.Background(), os.Getenv, ceremony.selfPartyID, ceremonyID, share)
 	if err != nil {
 		m.failCeremony(ceremonyID, fmt.Errorf("keygen succeeded but sealing the key share in Vault failed: %w", err))
 		return
@@ -339,16 +395,16 @@ func (m *TSSPartyManager) completeCeremony(ceremonyID string, ceremony *tssKeyge
 
 	ceremony.mu.Lock()
 	ceremony.status = ceremonyCompleted
-	ceremony.saveData = &save
+	ceremony.saveData = share
 	ceremony.publicKeyHex = pubKeyHex
 	ceremony.address = address
 	ceremony.sealed = sealed
 	ceremony.mu.Unlock()
 
 	if sealed {
-		log.Printf("keygen ceremony %s completed: party %d derived shared address %s (key share sealed in Vault)", ceremonyID, ceremony.selfPartyID, address)
+		log.Printf("keygen ceremony %s completed on %s: party %d derived shared address %s (key share sealed in Vault)", ceremonyID, ceremony.curve, ceremony.selfPartyID, address)
 	} else {
-		log.Printf("keygen ceremony %s completed: party %d derived shared address %s (VAULT_ADDR not set -- key share held in memory only)", ceremonyID, ceremony.selfPartyID, address)
+		log.Printf("keygen ceremony %s completed on %s: party %d derived shared address %s (VAULT_ADDR not set -- key share held in memory only)", ceremonyID, ceremony.curve, ceremony.selfPartyID, address)
 	}
 }
 

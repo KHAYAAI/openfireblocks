@@ -6,6 +6,7 @@ toolchain go1.24.7
 
 require (
 	github.com/bnb-chain/tss-lib/v2 v2.0.0
+	github.com/btcsuite/btcutil v0.0.0-20190425235716-9e5f4b9a998d
 	github.com/ethereum/go-ethereum v1.13.10
 	github.com/gorilla/mux v1.8.1
 	github.com/hashicorp/vault/api v1.23.0
@@ -17,7 +18,6 @@ require (
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/btcsuite/btcd v0.0.0-20190629003639-c26ffa870fd8 // indirect
 	github.com/btcsuite/btcd/btcec/v2 v2.2.0 // indirect
-	github.com/btcsuite/btcutil v0.0.0-20190425235716-9e5f4b9a998d // indirect
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
 	github.com/cespare/xxhash/v2 v2.2.0 // indirect
 	github.com/decred/dcrd/dcrec/edwards/v2 v2.0.0 // indirect
@@ -55,3 +55,17 @@ require (
 	golang.org/x/time v0.12.0 // indirect
 	google.golang.org/protobuf v1.31.0 // indirect
 )
+
+// tss-lib's eddsa packages import github.com/agl/ed25519/edwards25519 and
+// need Binance's fork of it, which adds the group-arithmetic helpers
+// (GeAdd, GeSub, ...) that upstream never had.
+//
+// tss-lib declares this replace in its OWN go.mod, and Go ignores replace
+// directives from dependencies -- only the main module's apply. So without
+// repeating it here the eddsa packages simply do not compile:
+//
+//	eddsa/signing/utils.go:97:15: undefined: edwards25519.GeAdd
+//
+// Nothing warns about this. The ecdsa half of tss-lib builds fine, so the
+// omission is invisible until the first line of code that touches eddsa.
+replace github.com/agl/ed25519 => github.com/binance-chain/edwards25519 v0.0.0-20200305024217-f36fc4b53d43

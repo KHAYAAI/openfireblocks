@@ -47,7 +47,7 @@ func TestRealMultiPartySigningOverHTTP(t *testing.T) {
 	// --- Phase 1: real DKG over real HTTP ---
 	ceremonyID := "signing-integration-keygen"
 	for i := 1; i <= n; i++ {
-		if err := managers[i].StartKeygen(ceremonyID, threshold, peers); err != nil {
+		if err := managers[i].StartKeygen(ceremonyID, threshold, peers, CurveSecp256k1); err != nil {
 			t.Fatalf("party %d: StartKeygen failed: %v", i, err)
 		}
 	}
@@ -204,7 +204,7 @@ func TestSigningWithEveryCommittee(t *testing.T) {
 
 	ceremonyID := "every-committee-keygen"
 	for i := 1; i <= n; i++ {
-		if err := managers[i].StartKeygen(ceremonyID, threshold, peers); err != nil {
+		if err := managers[i].StartKeygen(ceremonyID, threshold, peers, CurveSecp256k1); err != nil {
 			t.Fatalf("party %d: StartKeygen failed: %v", i, err)
 		}
 	}

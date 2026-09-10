@@ -57,7 +57,7 @@ func vaultShareConfigFromEnv(getenv func(string) string, partyID int, ceremonyID
 // at rest by Vault's storage backend and never written to disk in
 // plaintext by this process. Returns (false, nil) if VAULT_ADDR isn't set
 // -- not an error, just "sealing wasn't configured for this run."
-func SealKeyShare(ctx context.Context, getenv func(string) string, partyID int, ceremonyID string, saveData *tsskeygen.LocalPartySaveData) (bool, error) {
+func SealKeyShare(ctx context.Context, getenv func(string) string, partyID int, ceremonyID string, share *KeyShare) (bool, error) {
 	cfg, configured := vaultShareConfigFromEnv(getenv, partyID, ceremonyID)
 	if !configured {
 		return false, nil
@@ -71,7 +71,12 @@ func SealKeyShare(ctx context.Context, getenv func(string) string, partyID int, 
 		client.SetToken(cfg.token)
 	}
 
-	raw, err := json.Marshal(saveData)
+	// Marshalled through the tagged union, so the stored blob says which
+	// curve it was generated on. A share read back without that tag is a
+	// blob of JSON that happens to parse as either package's struct, and
+	// unmarshalling it into the wrong one produces a party that cannot
+	// sign -- discovered at signing time, on a key holding money.
+	raw, err := MarshalShare(share)
 	if err != nil {
 		return false, fmt.Errorf("marshal key share: %w", err)
 	}
@@ -80,6 +85,7 @@ func SealKeyShare(ctx context.Context, getenv func(string) string, partyID int, 
 	if _, err := kv.Put(ctx, cfg.keyPath, map[string]interface{}{
 		"party_id":    partyID,
 		"ceremony_id": ceremonyID,
+		"curve":       string(share.Curve),
 		"save_data":   string(raw),
 	}); err != nil {
 		return false, fmt.Errorf("vault write %s: %w", cfg.keyPath, err)
