@@ -315,3 +315,90 @@ service up (each file's doc comment gives the exact commands).
 
 Sequence them in that order. Item 1 can start immediately against the
 repository; items 2 and 3 are blocked on the go-live runbook.
+
+---
+
+## 6. Turning this into an engagement
+
+Everything above describes what to audit. This section is what somebody has
+to actually do, because the package has been ready for a while and the gap
+between "ready" and "engaged" is procurement, not engineering.
+
+### The shortlist question
+
+Ask candidate firms one question before anything else: **name a threshold
+signature implementation you have reviewed, and what you found in it.**
+
+Firms that do general application security will answer with web
+vulnerabilities. That is a fine answer to a different question and it means
+they are the wrong firm for priority 1 — a reviewer who has not implemented
+or broken a threshold scheme will read `tss-lib` call sites and check that
+errors are handled, which the tests already do. The failure modes that
+matter here are protocol-level: a committee subset indexed wrongly, a
+message replayed across rounds, an abort that leaks a share, a nonce reused
+between ceremonies. Only somebody who has looked for those before will find
+them.
+
+Categories worth approaching, without naming firms (the market moves and a
+stale list is worse than none):
+
+- academic or research-led cryptography consultancies with published work
+  on MPC or threshold signatures
+- the security teams that have published audits of other MPC custody
+  products — those reports are public and name the reviewers
+- the maintainers of the underlying library, or people who have contributed
+  fixes to it
+
+For the penetration test, ordinary application security firms are correct
+and the market is deep.
+
+### What to have ready when asking for a quote
+
+A firm will ask for these and the answer is faster if it exists first:
+
+| Item | Where it is |
+|---|---|
+| Scope and priority order | Section 1 above |
+| What is already verified, and how | Sections 2 and 2b |
+| What is known-unverified | Section 3 |
+| Repository orientation | Section 4 |
+| Threat model | `docs/security/threat-model.md` |
+| Deployment topology and its current honest state | `docs/deployment/PARTY-ISOLATION.md` |
+| A running environment to test against | Blocked — see below |
+
+### Sequencing, and what blocks what
+
+1. **Cryptographic review** can start today, against the repository. It
+   needs no environment, and it is the engagement whose finding would
+   invalidate the product. Start here.
+2. **Penetration test** needs a deployed environment that is not somebody's
+   laptop. It is therefore blocked on the same work as
+   `docs/deployment/PARTY-ISOLATION.md` — and usefully so: a pentest
+   against a genuinely multi-account deployment tests the real thing,
+   while one against the kind cluster tests a topology that will not ship.
+3. **Infrastructure review** needs the Terraform to have been applied at
+   least once. Reviewing never-applied infrastructure-as-code finds typos,
+   not misconfigurations.
+
+### Budgeting
+
+Deliberately not estimated here. Cryptographic review pricing varies by
+more than an order of magnitude depending on depth — a code read is a
+different product from a protocol analysis with proofs — and quoting a
+number in a repository document invites it to be treated as the budget. Get
+three quotes against section 1 and compare what each proposes to *do*,
+not what each costs.
+
+The one budgeting fact worth stating: this is the largest single line item
+between here and holding customer funds, and it is not optional. A custody
+platform whose signing layer has never been examined by anybody outside the
+team that wrote it has no answer to the first question a serious customer
+or regulator asks.
+
+### Re-auditing
+
+A cryptographic review is a point-in-time statement about a commit. Any
+change to `services/mpc-party/`, to the committee-selection logic in the
+gateway, or to the `tss-lib` version invalidates part of it. Decide up
+front whether the engagement includes a re-review window, because
+negotiating one afterwards costs more than including it.

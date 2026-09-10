@@ -314,3 +314,64 @@ Recommended SOC 2 audit firms:
 ---
 
 **Target**: SOC 2 Type II Report issued by Month 12 of Phase 3
+
+---
+
+## Getting from written to certified
+
+The criteria above are documented and the technical controls largely exist.
+Neither fact moves the audit forward on its own, and the distance between
+this document and a report is not more documentation.
+
+### The three things standing in the way
+
+1. **No auditor is engaged, and no scope is defined.** A SOC 2 report
+   covers a named service organisation, a defined system boundary, and a
+   defined period. None of the three is decided. Until they are, "which
+   controls apply" is unanswerable — a criterion is in scope or not
+   depending on where the boundary is drawn, and drawing it is the first
+   conversation with the firm, not something to settle beforehand.
+
+2. **Nothing was producing evidence.** The evidence checklist in this
+   document was ticked while no mechanism wrote anything down, which is the
+   normal way a Type II slips: the controls operated, and nobody can show
+   that they did. `scripts/collect-soc2-evidence.sh` now produces the
+   technical half — RLS policies actually in force, the roles that can
+   bypass them, which service links require mTLS, every change to the
+   signing layer with its author, the drills and where they run, and the
+   measured isolation between the parties holding key shares. Run it on a
+   schedule and keep the output; a Type II needs a series of snapshots, not
+   one.
+
+3. **The non-technical half has no owner.** Training records, access
+   reviews, vendor assessments, a dated risk register, board oversight,
+   incident records. The collector lists these explicitly as things it
+   cannot produce, because a tidy evidence directory that quietly omits
+   them falls apart at the first question. These are what determine whether
+   the audit completes on schedule, and they need a named person, not a
+   script.
+
+### Sequencing
+
+A Type II observes a period — commonly three to twelve months — so the
+observation window cannot start before the controls are operating and
+generating evidence. That makes the order:
+
+1. Start collecting evidence now, on a schedule. The window can only begin
+   once there is something to sample.
+2. Engage a firm and agree scope and boundary.
+3. Consider a Type I first. It attests that controls are designed
+   appropriately at a point in time, needs no observation window, and is
+   often enough to unblock a commercial conversation while the Type II
+   window runs.
+4. Assign the non-technical controls to a person, by name.
+
+### The honest position
+
+Nothing here is a substitute for the isolation work in
+`docs/deployment/PARTY-ISOLATION.md` or the cryptographic review in
+`docs/security/AUDIT-READINESS.md`. A SOC 2 report says controls operated as
+described; it does not say the threshold signing is sound, and an auditor
+will not examine it. A customer who accepts a SOC 2 report as evidence that
+the cryptography is safe has misread it, and it is not in anybody's interest
+to encourage that reading.
