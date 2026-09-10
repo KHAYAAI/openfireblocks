@@ -8,12 +8,34 @@
 OpenFireblocks is an institutional-grade, threshold cryptography platform enabling secure multi-chain digital asset custody. The platform uses Shamir Secret Sharing and threshold ECDSA to eliminate single points of failure in key management, allowing k+1 of N parties to authorize transactions without any party having access to the full private key.
 
 **Current Capabilities**:
-- ✅ 4-of-7 threshold signing (configurable k-of-n)
-- ✅ Multi-chain support (Bitcoin, Ethereum, Solana, Cosmos)
+- ✅ Configurable k-of-n threshold signing (2-of-3 by default)
 - ✅ Distributed Key Generation (DKG) ceremonies
-- ✅ 99.95% availability with multi-region HA
-- 🔄 SOC 2 Type II certification (in progress, target Q1-Q3 2027)
-- 🔄 ISO 27001:2022 certification (in progress, target Q1 2027)
+- 🔄 SOC 2 Type II certification (not started — no auditor engaged; see
+  `PHASE3-SOC2-COMPLIANCE.md` for what stands in the way)
+- 🔄 ISO 27001:2022 certification (not started)
+
+### Chain support, precisely
+
+"Multi-chain support" covers two different things and the difference is the
+entire security claim, so it is stated per chain rather than as a list.
+
+| Chain | Signature scheme | Threshold (MPC) | Server-side build & broadcast | Proven by |
+|---|---|---|---|---|
+| Ethereum | ECDSA secp256k1 | **Yes** | Yes — `POST /keys/:id/transactions` | `chain-test.sh` against a real multi-node network |
+| Bitcoin | ECDSA secp256k1 | **Yes** | Yes — `POST /keys/:id/bitcoin-transactions` | `bitcoin-api-drill.sh` against Bitcoin Core |
+| Cosmos | ECDSA secp256k1 | Not wired | No API route | — |
+| Solana | Ed25519 | **No — single key** | No API route | — |
+
+Solana is the one to be careful about. The signer in
+`services/mpc-signer/chains/solana.go` holds a whole Ed25519 private key; it
+is not threshold signing, and describing Solana as MPC custody would be
+false. Ed25519 threshold signing is available in the `tss-lib` version this
+platform already depends on (`eddsa/keygen`, `eddsa/signing`) and is not
+built here yet — see the roadmap. Until it is, Solana should not be sold.
+
+Cosmos uses the same curve as Ethereum and Bitcoin, so the existing
+threshold path applies to it; what is missing is transaction construction
+and a public route, not cryptography.
 
 ## Platform Architecture
 
