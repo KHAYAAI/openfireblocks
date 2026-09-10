@@ -1,0 +1,165 @@
+name: End-to-end drills
+
+# Every claim this platform makes about itself is proven by a script in
+# infrastructure/kind/, and until now every one of them was something a
+# human ran by hand. That means the proofs were anecdotes: true on the day
+# somebody ran them, unknown afterwards. A threshold signature that stops
+# recovering the right address, a coin selection that starts under-paying
+# fees, a webhook that silently stops being signed -- none of it would be
+# caught by the unit tests in ci.yml, because none of it is reachable
+# without a running cluster, a real Bitcoin node and three MPC parties
+# talking to each other over the network.
+#
+# So this workflow stands the whole thing up and runs the drills.
+#
+# It is deliberately NOT part of ci.yml. It takes tens of minutes and needs
+# a cluster, and a slow required check is a check people learn to route
+# around. It runs on merges to the default branch, nightly, on demand, and
+# on any pull request labelled `e2e` -- which is the escape hatch for
+# changing something the drills cover and wanting to know before merging.
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    types: [labeled, synchronize]
+  schedule:
+    # 03:00 UTC. Nightly rather than hourly because the failure modes this
+    # catches are introduced by commits, not by time.
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # One cluster's worth of work at a time per ref. Two runs of this
+  # workflow on the same branch would build the same images twice and race
+  # over the same ports for nothing.
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  drills:
+    name: Drills on a real cluster
+    # Skipped for pull requests that are not asking for it. Written as a
+    # job-level condition rather than a path filter because whether a
+    # change can break a drill is a judgement, not a directory.
+    if: >-
+      github.event_name != 'pull_request' ||
+      contains(github.event.pull_request.labels.*.name, 'e2e')
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free disk space
+        # The runner starts with ~14GB free and this build needs more than
+        # that: a dozen service images, four kind nodes, Bitcoin Core,
+        # geth, Temporal and Vault. Running out mid-build produces a
+        # confusing failure a long way from its cause -- a Go build that
+        # dies with "no space left on device" inside a Docker layer, or a
+        # kind node whose containerd cannot unpack an image it just
+        # imported. Both were hit while developing these drills.
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /usr/local/share/boost "${AGENT_TOOLSDIRECTORY:-}"
+          sudo docker image prune -af
+          df -h /
+
+      - uses: helm/kind-action@v1
+        with:
+          version: v0.24.0
+          cluster_name: ofb
+          config: infrastructure/kind/cluster.yaml
+          wait: 300s
+
+      - name: Install helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.15.4
+
+      - name: Build and deploy the platform
+        # up.sh is the same script used locally. Running the real one
+        # rather than a CI-shaped copy is the point: a deployment path that
+        # only CI exercises is a deployment path nobody can debug, and one
+        # that only humans exercise is the situation this workflow exists
+        # to end.
+        run: ./infrastructure/kind/up.sh
+
+      - name: Start Bitcoin Core (regtest)
+        run: |
+          kubectl apply -f infrastructure/kind/bitcoind-regtest.yaml
+          kubectl -n openfireblocks wait --for=condition=ready pod \
+            -l app=bitcoind --timeout=300s
+
+      - name: Start the Ethereum network
+        run: |
+          kubectl apply -f infrastructure/kind/geth-poa.yaml
+          kubectl -n openfireblocks wait --for=condition=ready pod \
+            -l app=geth-signer --timeout=300s
+
+      - name: Port-forward the API
+        run: |
+          kubectl -n openfireblocks port-forward \
+            svc/ofb-openfireblocks-api-gateway 3000:3000 &
+          for _ in $(seq 1 30); do
+            curl -sf http://127.0.0.1:3000/health >/dev/null && exit 0
+            sleep 2
+          done
+          echo "the API gateway never became reachable" >&2
+          exit 1
+
+      # From here each drill is its own step, so a red run names the proof
+      # that broke rather than "e2e failed". They share one cluster because
+      # standing up four of them would cost four builds to learn the same
+      # thing.
+
+      - name: Supporting services answer
+        run: ./infrastructure/kind/services-smoke-test.sh
+
+      - name: Threshold signing against a real Ethereum network
+        run: ./infrastructure/kind/chain-test.sh
+
+      - name: A customer can send Bitcoin
+        run: ./infrastructure/kind/bitcoin-api-drill.sh
+
+      - name: Platform activity becomes an invoice
+        run: ./infrastructure/kind/billing-drill.sh
+
+      - name: Customers are told what happened
+        run: ./infrastructure/kind/webhook-drill.sh
+
+      - name: A 2-of-3 key survives losing a party
+        # Last of the drills that share the cluster, because it deliberately
+        # takes a node out and the recovery is the thing being tested --
+        # anything running after it would be measuring the repair, not the
+        # feature.
+        run: ./infrastructure/kind/node-failure-drill.sh
+
+      - name: Collect diagnostics
+        if: failure()
+        # A red drill in CI is only useful if you can see why without
+        # re-running it locally, which for a cluster that no longer exists
+        # is not possible at all.
+        run: |
+          mkdir -p /tmp/diag
+          kubectl -n openfireblocks get pods -o wide > /tmp/diag/pods.txt 2>&1 || true
+          kubectl -n openfireblocks get events --sort-by=.lastTimestamp \
+            > /tmp/diag/events.txt 2>&1 || true
+          for deploy in $(kubectl -n openfireblocks get deploy -o name 2>/dev/null); do
+            name=$(basename "${deploy}")
+            kubectl -n openfireblocks logs "${deploy}" --tail=500 --all-containers \
+              > "/tmp/diag/${name}.log" 2>&1 || true
+            kubectl -n openfireblocks logs "${deploy}" --tail=200 --all-containers \
+              --previous > "/tmp/diag/${name}.previous.log" 2>&1 || true
+          done
+
+      - name: Upload diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cluster-diagnostics
+          path: /tmp/diag
+          retention-days: 7

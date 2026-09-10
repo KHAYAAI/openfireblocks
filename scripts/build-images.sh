@@ -16,6 +16,7 @@
 # proxy that is only listening on the host's loopback.
 #
 #   REGISTRY=openfireblocks TAG=latest ./scripts/build-images.sh
+#   ./scripts/build-images.sh --list    # print the service list and exit
 #   EXTRA_CA_CERT_FILE=/root/.ccr/ca-bundle.crt BUILD_NETWORK=host \
 #     ./scripts/build-images.sh
 set -euo pipefail
@@ -45,6 +46,16 @@ SERVICES=(
   policy
   compliance
 )
+
+# So other scripts can ask what the list is rather than keeping their own
+# copy of it. infrastructure/kind/up.sh had a second list that had fallen
+# six services behind this one, which meant a fresh cluster came up with
+# billing, webhooks, marketplace, settlement, policy and compliance all in
+# ImagePullBackOff -- the chart deploys them, nothing had built them.
+if [[ "${1:-}" == "--list" ]]; then
+  printf '%s\n' "${SERVICES[@]}"
+  exit 0
+fi
 
 build_args=()
 if [[ -n "${EXTRA_CA_CERT_FILE:-}" ]]; then

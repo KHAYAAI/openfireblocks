@@ -219,3 +219,33 @@ jobs:
             echo "--- $m"
             (cd "$m" && $(go env GOPATH)/bin/gosec -quiet -severity high ./... || true)
           done
+
+  stripe-live:
+    name: Stripe (real test API)
+    runs-on: ubuntu-latest
+    # Whether this platform can actually collect money is a question about
+    # Stripe's behaviour, not ours, and a stub cannot answer it: a stub says
+    # yes to a wrong field name, a deprecated parameter, or an idempotency
+    # key that does not deduplicate the way the docs claim.
+    #
+    # Runs only where the secret exists -- so it is silently absent on
+    # forks, and the tests themselves skip with a message saying what has
+    # therefore not been verified. `continue-on-error` is deliberately NOT
+    # set: if the secret is configured and Stripe rejects what we send, that
+    # is a broken payment path and it should be red.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+      - name: Verify against Stripe test mode
+        env:
+          STRIPE_TEST_API_KEY: ${{ secrets.STRIPE_TEST_API_KEY }}
+        run: |
+          if [ -z "${STRIPE_TEST_API_KEY}" ]; then
+            echo "::warning title=Stripe unverified::STRIPE_TEST_API_KEY is not configured."
+            echo "The payment path is proven only against a stub; whether Stripe accepts"
+            echo "what this platform sends is UNVERIFIED. Add a test-mode secret key as"
+            echo "the STRIPE_TEST_API_KEY repository secret to close this gap."
+          fi
+          cd services/billing && go test -v -run Live ./...

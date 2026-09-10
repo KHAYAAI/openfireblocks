@@ -86,6 +86,15 @@ type PaymentIntent struct {
 type StripeCustomer struct {
 	ID    string `json:"id"`
 	Email string `json:"email"`
+	// Sent on creation and, until now, discarded on the way back.
+	//
+	// This carries openfireblocks_customer_id, which is the only thing
+	// linking a payment in Stripe to a tenant here. Reading it back is how
+	// you confirm the link actually exists rather than assuming the field
+	// was accepted -- Stripe silently ignores metadata keys it considers
+	// malformed, and a charge nobody can attribute is a reconciliation
+	// problem discovered at month end.
+	Metadata map[string]string `json:"metadata"`
 }
 
 // post sends a form-encoded request and decodes the JSON response.

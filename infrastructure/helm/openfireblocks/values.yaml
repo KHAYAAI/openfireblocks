@@ -198,6 +198,18 @@ settlement:
 
 billing:
   enabled: true
+  # When invoices go out. Without this nothing raises them: the endpoint
+  # exists and waits to be called, which for a business whose revenue is
+  # the invoices is a billing library rather than a billing system.
+  schedule:
+    enabled: true
+    # 02:00 daily rather than monthly. Subscriptions do not all start on
+    # the first of the month, so "due" is a per-subscription question asked
+    # every day, and a daily sweep bills each one the morning after its own
+    # period ends. A monthly cron would bill some customers up to 30 days
+    # late.
+    cron: "0 2 * * *"
+    timeZone: "UTC"
   image: billing
   tag: latest
   replicas: 2

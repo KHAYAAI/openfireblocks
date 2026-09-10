@@ -28,7 +28,12 @@ NS="${K8S_NAMESPACE:-openfireblocks}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "${HERE}/../.." && pwd)"
 
-SERVICES=(api-gateway mpc-party mpc-signer policy-service temporal-worker vault-pki-init)
+# Asked of build-images.sh rather than restated here. This list used to be
+# its own six-entry copy, and the chart had grown to deploy thirteen
+# services -- so a cluster built from scratch had six deployments stuck in
+# ImagePullBackOff, and the only reason it was not noticed is that the
+# images happened to already exist on the machine where it was developed.
+mapfile -t SERVICES < <("${ROOT}/scripts/build-images.sh" --list)
 DEPENDENCY_IMAGES=(postgres:16-bookworm hashicorp/vault:1.17 temporalio/auto-setup:1.25.2)
 
 need() { command -v "$1" >/dev/null || { echo "missing required tool: $1" >&2; exit 1; }; }
