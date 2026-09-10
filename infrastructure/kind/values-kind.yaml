@@ -1,0 +1,131 @@
+# Chart overrides for a local kind cluster.
+#
+# Points .Values.external.* at the throwaway dependencies in
+# infrastructure/kind/dependencies.yaml, and narrows the deployment to the
+# services that make up the signing path -- the ones with an image that
+# scripts/build-images.sh actually produces.
+
+imagePullPolicy: IfNotPresent
+
+external:
+  databaseUrlSecret: openfireblocks-secrets
+  databaseAdminUrlSecret: openfireblocks-secrets
+  temporalHostPort: temporal-frontend:7233
+  temporalNamespace: default
+  # Empty: no chain is reachable from this cluster, and both the gateway
+  # and the worker treat an unset RPC as "cannot broadcast" rather than
+  # hanging. Chain-level behaviour is covered by the `live` build-tagged
+  # tests in services/temporal-worker/activities/chain_live_test.go, which
+  # run against a real geth node.
+  ethereumRpcSepolia: ""
+  requiredConfirmations: "6"
+  # This cluster's bitcoind runs in regtest -- see bitcoind-regtest.yaml.
+  # The value decides how a key's public key becomes an address, so
+  # leaving it at the mainnet default would derive addresses this node has
+  # never heard of and report every balance as zero.
+  bitcoinNetwork: regtest
+  redisUrl: ""
+
+apiGateway:
+  enabled: true
+  replicas: 1
+  autoscaling:
+    enabled: false
+
+mpcParty:
+  enabled: true
+  partyCount: 3
+  # The chart's default, restated here so it is visible in the deployment
+  # that actually exercises it: infrastructure/kind/cluster.yaml provisions
+  # three workers precisely so this can be "required" rather than softened
+  # to "preferred" for convenience.
+  spreadAcrossNodes: required
+  vault:
+    # Key shares are sealed into the dev Vault rather than held only in
+    # process memory -- this is the path services/mpc-party/vault_seal.go
+    # takes when VAULT_ADDR is set, and leaving it empty would exercise the
+    # weaker in-memory fallback instead.
+    addr: http://vault:8200
+  mtls:
+    # On, with certs issued per-pod at startup rather than mounted from a
+    # Secret. infrastructure/kind/vault-pki-bootstrap.yaml configures the
+    # Vault side (PKI mount, role, policy, kubernetes auth backend), which
+    # is what makes services/vault-pki-init take its kubernetesLogin()
+    # path -- the branch that had never executed anywhere before this,
+    # since only the VAULT_TOKEN path was ever exercised.
+    enabled: true
+    autoIssue:
+      enabled: true
+      vaultAddr: http://vault:8200
+
+mpcSigner:
+  enabled: true
+  bitcoin:
+    # bitcoind-regtest.yaml. Credentials match its -rpcuser/-rpcpassword;
+    # the password comes from the openfireblocks-secrets secret up.sh
+    # creates, so it is not in the manifest.
+    rpcUrl: http://bitcoind:18443
+    rpcUser: ofb
+    rpcPasswordSecret: openfireblocks-secrets
+
+policyService:
+  enabled: true
+
+temporalWorker:
+  enabled: true
+  mtls:
+    # The client side of the same links: temporal-worker dials the parties'
+    # DKG/signing endpoints, which now require a client certificate.
+    enabled: true
+    autoIssue:
+      enabled: true
+      vaultAddr: http://vault:8200
+
+# The rest of the platform. These were disabled while they had no images;
+# scripts/build-images.sh now builds all of them, so they run here and their
+# manifests get exercised rather than merely rendered.
+#
+# The chart already carries the right image name and port for each; all this
+# needs to do is turn them on and shrink the requests so thirteen
+# deployments fit on three small worker nodes.
+policyApi:
+  enabled: true
+  replicas: 1
+  resources:
+    requests: { cpu: 25m, memory: 32Mi }
+settlement:
+  enabled: true
+  replicas: 1
+  resources:
+    requests: { cpu: 25m, memory: 32Mi }
+billing:
+  enabled: true
+  replicas: 1
+  resources:
+    requests: { cpu: 25m, memory: 32Mi }
+webhooks:
+  enabled: true
+  replicas: 1
+  resources:
+    requests: { cpu: 25m, memory: 32Mi }
+marketplace:
+  enabled: true
+  replicas: 1
+  resources:
+    requests: { cpu: 25m, memory: 32Mi }
+compliance:
+  enabled: true
+  replicas: 1
+  resources:
+    requests: { cpu: 25m, memory: 32Mi }
+
+workos:
+  # Requires a real WORKOS_API_KEY. With this off the /auth/sso routes
+  # report enabled:false and fail closed with 503; local password + TOTP
+  # login is unaffected.
+  enabled: false
+
+ingress:
+  enabled: false
+serviceMonitor:
+  enabled: false

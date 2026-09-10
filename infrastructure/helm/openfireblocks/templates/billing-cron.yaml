@@ -1,0 +1,79 @@
+{{- if and .Values.billing.enabled .Values.billing.schedule.enabled }}
+# What makes invoices actually go out.
+#
+# The rule about which subscriptions are due, what they are charged, and
+# when the period rolls forward lives in the billing service, behind
+# POST /v1/billing/run. This CronJob holds none of it -- it is a trigger and
+# nothing else. A CronJob carrying business logic is a second place the
+# logic lives, reachable only by waiting for a schedule and impossible to
+# unit test.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "ofb.fullname" . }}-billing-run
+  labels:
+    {{- include "ofb.labels" . | nindent 4 }}
+    app.kubernetes.io/component: billing-run
+spec:
+  schedule: {{ .Values.billing.schedule.cron | quote }}
+  timeZone: {{ .Values.billing.schedule.timeZone | quote }}
+  # Forbid, not Allow. Two sweeps at once are safe -- the unique index on
+  # (subscription_id, period_start) means neither can double-bill -- but
+  # they would do the same work twice and make the logs much harder to
+  # reconcile against. Safe and pointless is still pointless.
+  concurrencyPolicy: Forbid
+  # A missed window is not made up for. If the cluster was down over a
+  # billing boundary the next run picks the subscription up anyway, because
+  # "due" is computed from current_period_end rather than from whether a
+  # particular firing happened.
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 7
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            {{- include "ofb.labels" . | nindent 12 }}
+            app.kubernetes.io/component: billing-run
+        spec:
+          restartPolicy: Never
+          securityContext:
+            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+          containers:
+            - name: trigger
+              # The billing image, running its own binary with a flag
+              # rather than calling the service over HTTP. Same code, same
+              # database, no question about how a CronJob authenticates to
+              # an internal endpoint, and nothing to go wrong between the
+              # trigger and the work.
+              image: {{ include "ofb.image" (dict "root" . "image" .Values.billing.image "tag" .Values.billing.tag) }}
+              imagePullPolicy: {{ .Values.imagePullPolicy }}
+              securityContext:
+                {{- toYaml .Values.containerSecurityContext | nindent 16 }}
+              command: ["/usr/local/bin/billing"]
+              args: ["--run-billing"]
+              env:
+                - name: APP_ENV
+                  value: production
+                - name: DATABASE_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.external.databaseAdminUrlSecret }}
+                      key: database-admin-url
+                - name: DATABASE_TENANT_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.external.databaseUrlSecret }}
+                      key: database-url
+                {{- if .Values.external.stripeSecret }}
+                - name: STRIPE_API_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.external.stripeSecret }}
+                      key: stripe-api-key
+                {{- end }}
+              resources:
+                {{- toYaml .Values.billing.resources | nindent 16 }}
+{{- end }}

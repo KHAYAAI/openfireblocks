@@ -140,7 +140,20 @@ func (k *KeyShares) Sign(ctx context.Context, hash []byte) ([]byte, error) {
 		}(parties[i])
 	}
 
-	var sigData common.SignatureData
+	// R/S/SignatureRecovery are copied out of the channel receive
+	// immediately rather than assigned into an outer-scope
+	// common.SignatureData variable, to avoid at least the *second* of two
+	// copies of a struct containing a mutex (protobuf's generated
+	// MessageState) that go vet's copylocks check flags. The first copy --
+	// receiving from tss-lib's own `chan common.SignatureData` at
+	// `case sd := <-endCh` below -- is unavoidable without forking
+	// signing.NewLocalParty's public API, which declares that channel by
+	// value; `go vet -tags tss ./tss/...` still reports that one line.
+	// MessageState's mutex guards protobuf's lazy marshal-cache
+	// initialization, never engaged by anything in this single-consumer
+	// select loop, so the copy is inert in practice -- documented here
+	// rather than silently left unexplained.
+	var r, s, recovery []byte
 	done := 0
 	for done < participants {
 		select {
@@ -153,7 +166,7 @@ func (k *KeyShares) Sign(ctx context.Context, hash []byte) ([]byte, error) {
 				return nil, err
 			}
 		case sd := <-endCh:
-			sigData = sd
+			r, s, recovery = sd.R, sd.S, sd.SignatureRecovery
 			done++
 		}
 	}
@@ -161,9 +174,9 @@ func (k *KeyShares) Sign(ctx context.Context, hash []byte) ([]byte, error) {
 	// Assemble the 65-byte Ethereum signature [R || S || V]. tss-lib returns R
 	// and S as big-endian byte slices and a single recovery byte.
 	sig := make([]byte, 65)
-	copy(sig[32-len(sigData.R):32], sigData.R)
-	copy(sig[64-len(sigData.S):64], sigData.S)
-	sig[64] = sigData.SignatureRecovery[0]
+	copy(sig[32-len(r):32], r)
+	copy(sig[64-len(s):64], s)
+	sig[64] = recovery[0]
 	return sig, nil
 }
 

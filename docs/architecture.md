@@ -1,8 +1,9 @@
-# Architecture (Phase 0)
+# Architecture
 
-OpenFireblocks is a sovereign, open-source settlement layer. Phase 0 is a
-minimal but complete proof of concept that signs and broadcasts a single-chain
-(Ethereum) transaction while recording an immutable audit trail.
+OpenFireblocks is a sovereign, open-source settlement layer for agents and financial institutions.
+This document covers the full roadmap from Phase 0 (MVP) through Phase 3 (bank-grade hardening).
+
+See also: [Phase 2: MPC & Multi-Chain](phase-2-mpc-multichain.md) | [Phase 3: Bank-Grade](phase-3-bank-grade.md)
 
 ## Components
 
@@ -86,3 +87,31 @@ identical regardless of path.
 - Single shared signing key (real MPC threshold signing is Phase 2).
 - API keys stored as-is (hashing is on the audit checklist).
 - Rate limiting / mTLS not yet enabled by default.
+
+## Phase 2: Real MPC & Multi-Chain
+
+Phase 2 replaces the single shared key with cryptographically-secure k-of-n threshold ECDSA
+signing and adds support for Bitcoin, Solana, and Cosmos. See [Phase 2 detailed architecture](phase-2-mpc-multichain.md).
+
+**New components:**
+- `ceremony-orchestrator` (Go) — DKG ceremony coordination and key share management
+- `mpc-party` (Go) — Distributed signing worker (one per party)
+- Multi-chain signing adapters (Bitcoin, Solana, Cosmos)
+
+**Key changes:**
+- MPC signer becomes chain-agnostic with pluggable signing logic per blockchain
+- Ceremonies replace single key: k-of-n threshold with Vault-sealed shares
+- API gateway routes to chain-specific signing endpoints
+- Temporal workflows extended for ceremony initiation and key rotation
+
+## Phase 3: Bank-Grade Hardening
+
+Phase 3 adds external security audits, SOC 2 Type II compliance, ISO 27001 certification,
+multi-region HA, and regulatory compliance (AML/KYC, OFAC, GDPR). See [Phase 3 detailed architecture](phase-3-bank-grade.md).
+
+**Key additions:**
+- Security audit reports (cryptography, penetration testing, code review)
+- Compliance frameworks (SOC 2, ISO 27001, AML/KYC)
+- Multi-region deployment with automatic failover
+- Enhanced monitoring and incident response
+- Regulatory reporting (SARs, audit trails, data privacy)

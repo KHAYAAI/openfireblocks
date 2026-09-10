@@ -1,0 +1,570 @@
+# Stateful dependencies for a local cluster bring-up.
+#
+# In production these live outside the chart -- RDS, a real Vault cluster,
+# Temporal Cloud -- which is why infrastructure/helm/openfireblocks only
+# takes their endpoints as .Values.external.*. This file stands up
+# throwaway equivalents so the chart can be exercised end to end on a kind
+# cluster.
+#
+# NOT FOR PRODUCTION. Vault runs in dev mode (in-memory, auto-unsealed,
+# a fixed root token), Postgres has no replica, and every credential here
+# is a well-known development string.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: openfireblocks
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: dev-dependency-credentials
+  namespace: openfireblocks
+stringData:
+  # The cluster bootstraps as `postgres`. `app` is deliberately NOT the
+  # bootstrap role: PostgreSQL refuses to let the bootstrap role give up
+  # SUPERUSER ("The bootstrap user must have the SUPERUSER attribute"), and
+  # a superuser bypasses row-level security unconditionally, so migration
+  # 011 could never enforce tenant isolation on such a cluster. It now
+  # raises rather than silently leaving RLS unenforced.
+  postgres-superuser-password: postgres-dev-password
+  app-password: app-dev-password
+  app-admin-password: app-admin-dev-password
+  vault-root-token: dev-root-token
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-data
+  namespace: openfireblocks
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 4Gi
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-initdb
+  namespace: openfireblocks
+data:
+  # Applied by the postgres image on first initialisation only.
+  00-roles.sql: |
+    -- Runs once as the bootstrap superuser (`postgres`), before any
+    -- migration, against POSTGRES_DB.
+    --
+    -- Both application roles are created here rather than by migration 011,
+    -- because by the time 011 runs it is executing as `app`, which is
+    -- deliberately not a superuser and therefore cannot grant BYPASSRLS.
+    -- 011 guards its own CREATE ROLE with IF NOT EXISTS, so this is
+    -- idempotent with respect to it.
+    DO $$
+    BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app') THEN
+        CREATE ROLE app LOGIN PASSWORD 'app-dev-password';
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app_admin') THEN
+        CREATE ROLE app_admin LOGIN PASSWORD 'app-admin-dev-password' BYPASSRLS;
+      END IF;
+    END
+    $$;
+
+    -- `app` must OWN the tables the migrations create. Migration 011 turns
+    -- on FORCE ROW LEVEL SECURITY (which binds the owner too) and grants
+    -- table privileges only to app_admin -- never to `app`. So if anything
+    -- other than `app` created the tables, `app` would end up with no
+    -- access to them at all. Owning schema public is what makes `app` the
+    -- owner of everything it subsequently creates; since PostgreSQL 15,
+    -- schema public no longer grants CREATE to PUBLIC by default.
+    ALTER DATABASE openfireblocks OWNER TO app;
+    ALTER SCHEMA public OWNER TO app;
+    GRANT ALL ON SCHEMA public TO app;
+    GRANT USAGE ON SCHEMA public TO app_admin;
+
+    -- The role the standby streams with. REPLICATION and LOGIN only: it can
+    -- read the write-ahead log and nothing else, so a compromised standby
+    -- cannot read or change application data through this account.
+    DO $$
+    BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'replicator') THEN
+        CREATE ROLE replicator WITH REPLICATION LOGIN PASSWORD 'replicator-dev-password';
+      END IF;
+    END
+    $$;
+  # Executed by the postgres entrypoint after initdb, on first init only.
+  #
+  # pg_hba.conf cannot be edited through SQL -- there is no ALTER SYSTEM for
+  # it -- so the rule that lets the standby connect has to be appended to the
+  # file itself. initdb writes a pg_hba with `host replication all` entries
+  # for localhost only, which is exactly the case a standby on another node
+  # is not.
+  01-replication-hba.sh: |
+    #!/bin/bash
+    set -e
+    echo "host replication replicator all scram-sha-256" >> "${PGDATA}/pg_hba.conf"
+    echo "added a replication rule for the standby"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: openfireblocks
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: postgres }
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels: { app: postgres }
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-bookworm
+          env:
+            # No POSTGRES_USER: the bootstrap role stays `postgres`, so
+            # that `app` is demotable -- see 00-roles.sql above.
+            - name: POSTGRES_DB
+              value: openfireblocks
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: dev-dependency-credentials
+                  key: postgres-superuser-password
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          ports:
+            - { name: postgres, containerPort: 5432 }
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/postgresql/data }
+            - { name: initdb, mountPath: /docker-entrypoint-initdb.d }
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "postgres", "-d", "openfireblocks"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+      volumes:
+        - name: data
+          persistentVolumeClaim: { claimName: postgres-data }
+        - name: initdb
+          configMap: { name: postgres-initdb }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: openfireblocks
+spec:
+  selector: { app: postgres }
+  ports:
+    - { name: postgres, port: 5432, targetPort: postgres }
+---
+# A streaming replica of the primary, on a different node.
+#
+# Postgres was the platform's last single point of failure: one pod, one
+# node-pinned volume, and draining that node took everything down with it --
+# the same shape of problem Vault had before it became a Raft cluster.
+#
+# This is deliberately *not* an HA cluster with automatic failover. There is
+# no leader election here, so a primary failure needs a deliberate promotion
+# (infrastructure/kind/postgres-failover-drill.sh, and the promotion logic in
+# services/backup). Calling that "high availability" would be a lie. What it
+# is, is a warm replica holding a continuously up-to-date copy, so recovery
+# is a promotion measured in seconds rather than a restore measured in
+# however long a restore takes.
+#
+# Production runs Patroni, a managed Postgres, or Spilo -- something that
+# does leader election properly. This is the honest middle: real streaming
+# replication, real promotion, no pretence of automation.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-standby-data
+  namespace: openfireblocks
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 4Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres-standby
+  namespace: openfireblocks
+spec:
+  replicas: 1
+  strategy:
+    # A base backup is a full copy of the primary; two running at once would
+    # double the disk and the load for no benefit.
+    type: Recreate
+  selector:
+    matchLabels: { app: postgres-standby }
+  template:
+    metadata:
+      labels: { app: postgres-standby }
+    spec:
+      # A replica on the same node as its primary protects against nothing.
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchExpressions:
+                  - key: app
+                    operator: In
+                    values: [postgres, postgres-standby]
+              topologyKey: kubernetes.io/hostname
+      initContainers:
+        # Takes the base backup, unless this volume already holds one.
+        #
+        # Idempotence matters: this pod restarts for all the ordinary
+        # reasons, and re-cloning the primary each time would throw away a
+        # replica that was already caught up and hammer the primary with a
+        # full copy. PG_VERSION is the marker that the directory is already
+        # populated.
+        - name: basebackup
+          image: postgres:16-bookworm
+          env:
+            - { name: PGDATA, value: /var/lib/postgresql/data/pgdata }
+            - { name: PGPASSWORD, value: replicator-dev-password }
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              set -euo pipefail
+              if [ -s "${PGDATA}/PG_VERSION" ]; then
+                echo "data directory already populated; letting recovery catch up"
+                exit 0
+              fi
+              echo "waiting for the primary"
+              until pg_isready -h postgres -U postgres -d openfireblocks; do sleep 2; done
+
+              mkdir -p "${PGDATA}"
+              rm -rf "${PGDATA:?}"/*
+              # -R writes standby.signal and primary_conninfo, which is what
+              # makes this a streaming replica rather than an independent
+              # database that has quietly forked from the primary.
+              # -Xs streams WAL during the copy, so the backup is consistent
+              # without WAL archiving being configured.
+              pg_basebackup -h postgres -U replicator -D "${PGDATA}" -Fp -Xs -R -P
+              chmod 0700 "${PGDATA}"
+              echo "base backup complete"
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/postgresql/data }
+      containers:
+        - name: postgres
+          image: postgres:16-bookworm
+          env:
+            - { name: PGDATA, value: /var/lib/postgresql/data/pgdata }
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: dev-dependency-credentials
+                  key: postgres-superuser-password
+          ports:
+            - { name: postgres, containerPort: 5432 }
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "postgres", "-d", "openfireblocks"]
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/postgresql/data }
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: postgres-standby-data
+---
+# Read-only endpoint. Nothing routes here by default: it exists so a
+# promotion drill, a reporting query, or an operator can reach the replica
+# without going through the primary.
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-standby
+  namespace: openfireblocks
+spec:
+  selector: { app: postgres-standby }
+  ports:
+    - { name: postgres, port: 5432, targetPort: postgres }
+---
+# A three-node Vault Raft cluster, one replica per worker.
+#
+# This started as `vault server -dev`, which keeps everything in memory:
+# draining Vault's node destroyed the PKI mount, its root CA and the
+# Kubernetes auth backend outright, and the platform could not recover
+# without a human re-bootstrapping it.
+#
+# Persistent storage fixed the pod case and not the node case. kind's
+# local-path provisioner makes a PersistentVolume node-pinned -- the data is
+# physically on one machine -- so a single replica simply cannot be
+# rescheduled when that machine goes away, and stays Pending forever.
+#
+# Raft is the answer that works on node-local disks: three replicas, three
+# volumes, three nodes, replicating between themselves. Losing one leaves
+# two, which is a quorum, and the cluster keeps serving. That is the same
+# architecture a production deployment runs, rather than a development
+# shortcut that happens to survive this particular test.
+#
+# STILL NOT PRODUCTION KEY HANDLING. One unseal share, stored in a Secret in
+# the cluster it protects, so services/vault-unseal can open replicas
+# unattended. Production replaces that with a `seal` stanza pointing at KMS
+# or an HSM, at which point the unseal sidecar is unnecessary. See
+# docs/security/key-rotation.md.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vault-config
+  namespace: openfireblocks
+data:
+  vault.hcl: |
+    ui = false
+    disable_mlock = true
+
+    storage "raft" {
+      path    = "/vault/data"
+      node_id = "NODE_ID_PLACEHOLDER"
+
+      # Every replica lists every replica, itself included. Vault ignores
+      # the self-entry, and listing all three means any replica can be the
+      # first to start without a bootstrap ordering problem.
+      retry_join { leader_api_addr = "http://vault-0.vault-internal:8200" }
+      retry_join { leader_api_addr = "http://vault-1.vault-internal:8200" }
+      retry_join { leader_api_addr = "http://vault-2.vault-internal:8200" }
+    }
+
+    listener "tcp" {
+      address     = "0.0.0.0:8200"
+      tls_disable = true
+    }
+
+    # Must be this pod's own routable address, not the load-balanced Service:
+    # Raft peers use it to reach each other directly, and pointing it at the
+    # Service would have replicas trying to join through whichever pod the
+    # Service happened to pick.
+    api_addr     = "http://POD_NAME_PLACEHOLDER.vault-internal:8200"
+    cluster_addr = "http://POD_NAME_PLACEHOLDER.vault-internal:8201"
+---
+# Stable per-pod DNS (vault-0.vault-internal, ...), which Raft needs to
+# address individual peers. The regular `vault` Service load-balances and is
+# what clients use; this one exists purely so peers can find each other.
+apiVersion: v1
+kind: Service
+metadata:
+  name: vault-internal
+  namespace: openfireblocks
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector: { app: vault }
+  ports:
+    - { name: http, port: 8200, targetPort: http }
+    - { name: cluster, port: 8201, targetPort: cluster }
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: vault
+  namespace: openfireblocks
+spec:
+  serviceName: vault-internal
+  replicas: 3
+  # OrderedReady, which for once is the useful default.
+  #
+  # Starting all three at once looks faster and is a race: several
+  # uninitialised nodes each try to bootstrap the Raft cluster, one wins,
+  # and a loser can wedge in "waiting for raft retry join process to
+  # complete" against a leader that was still sealed when it asked. Observed
+  # directly -- vault-1 sat there indefinitely while the other two formed a
+  # cluster without it.
+  #
+  # Ordered startup makes the sequence deterministic: vault-0 starts, its
+  # unseal sidecar initialises and unseals it, it becomes Ready, and only
+  # then is vault-1 created -- by which point there is a healthy leader to
+  # join. This works only because the readiness probe below is strict about
+  # what Ready means.
+  podManagementPolicy: OrderedReady
+  selector:
+    matchLabels: { app: vault }
+  template:
+    metadata:
+      labels: { app: vault }
+    spec:
+      # The `vault` service account (infrastructure/kind/vault-pki-bootstrap.yaml)
+      # carries system:auth-delegator, which Vault needs to call the
+      # Kubernetes TokenReview API when a pod logs in via kubernetes auth,
+      # and the Role below lets the unseal sidecar manage its Secret.
+      serviceAccountName: vault
+      # One replica per node, or the whole exercise is pointless: three
+      # replicas on one node still all disappear when that node does.
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels: { app: vault }
+              topologyKey: kubernetes.io/hostname
+      initContainers:
+        # The config needs this pod's own identity in it (node_id, api_addr,
+        # cluster_addr), and a ConfigMap is the same for every pod. Rendering
+        # it here keeps one source of truth instead of three near-identical
+        # ConfigMaps that will drift.
+        - name: render-config
+          image: hashicorp/vault:1.17
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              sed -e "s/NODE_ID_PLACEHOLDER/${POD_NAME}/g" \
+                  -e "s/POD_NAME_PLACEHOLDER/${POD_NAME}/g" \
+                  /vault/config-template/vault.hcl > /vault/config/vault.hcl
+              echo "rendered config for ${POD_NAME}"
+          env:
+            - name: POD_NAME
+              valueFrom: { fieldRef: { fieldPath: metadata.name } }
+          volumeMounts:
+            - { name: config-template, mountPath: /vault/config-template }
+            - { name: config, mountPath: /vault/config }
+      containers:
+        - name: vault
+          image: hashicorp/vault:1.17
+          # "server" with no -config: the image's entrypoint already rewrites
+          # it to `vault server -config=/vault/config`. Passing -config again
+          # makes Vault read the same file twice and collide with itself on
+          # bind, which it reports as "address already in use" -- an error
+          # that sends you looking for a second process that does not exist.
+          args: ["server"]
+          env:
+            - { name: VAULT_ADDR, value: "http://127.0.0.1:8200" }
+          ports:
+            - { name: http, containerPort: 8200 }
+            - { name: cluster, containerPort: 8201 }
+          # standbyok, and nothing else.
+          #
+          # A standby replica is healthy and must stay in the Service -- that
+          # is the whole point of HA. A *sealed* or *uninitialised* one is
+          # not: it fails every request, and routing clients to it would turn
+          # a recoverable startup state into visible errors.
+          #
+          # An earlier version passed sealedcode=204&uninitcode=204, which
+          # reported those states as Ready. That is wrong twice over: it puts
+          # a useless replica in the Service, and it defeats the ordered
+          # startup above, because "Ready" would no longer mean "there is a
+          # leader to join".
+          readinessProbe:
+            httpGet: { path: "/v1/sys/health?standbyok=true", port: http }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 3
+          # Restarts a replica that is running but has stopped making
+          # progress -- the wedged-join case above is invisible to
+          # readiness alone, because the process is alive and answering.
+          # Generous: sealed and uninitialised both count as alive here,
+          # since a replica waiting to be unsealed is working correctly.
+          livenessProbe:
+            httpGet:
+              path: "/v1/sys/health?standbyok=true&sealedcode=200&uninitcode=200"
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            failureThreshold: 4
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+          volumeMounts:
+            - { name: config, mountPath: /vault/config }
+            - { name: data, mountPath: /vault/data }
+
+        # Initialises the cluster once and unseals this replica whenever it
+        # comes back. See services/vault-unseal.
+        - name: unseal
+          image: openfireblocks/vault-unseal:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - { name: VAULT_ADDR, value: "http://127.0.0.1:8200" }
+            - { name: UNSEAL_SECRET_NAME, value: "vault-unseal" }
+            - name: POD_NAME
+              valueFrom: { fieldRef: { fieldPath: metadata.name } }
+            - name: POD_NAMESPACE
+              valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+      volumes:
+        - name: config-template
+          configMap: { name: vault-config }
+        - name: config
+          emptyDir: {}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vault
+  namespace: openfireblocks
+spec:
+  selector: { app: vault }
+  ports:
+    - { name: http, port: 8200, targetPort: http }
+---
+# Temporal's auto-setup image creates its own schema in the Postgres above
+# on first boot, in databases separate from `openfireblocks`.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: temporal-frontend
+  namespace: openfireblocks
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: temporal-frontend }
+  template:
+    metadata:
+      labels: { app: temporal-frontend }
+    spec:
+      containers:
+        - name: temporal
+          image: temporalio/auto-setup:1.25.2
+          env:
+            - { name: DB, value: postgres12 }
+            - { name: DB_PORT, value: "5432" }
+            - { name: POSTGRES_SEEDS, value: postgres }
+            # Temporal creates and owns its own databases, separate from
+            # `openfireblocks`, so it connects as the superuser rather than
+            # as the RLS-restricted `app`.
+            - { name: POSTGRES_USER, value: postgres }
+            - name: POSTGRES_PWD
+              valueFrom:
+                secretKeyRef:
+                  name: dev-dependency-credentials
+                  key: postgres-superuser-password
+            - { name: DEFAULT_NAMESPACE, value: default }
+            - { name: DEFAULT_NAMESPACE_RETENTION, value: 24h }
+            - { name: SKIP_ADD_CUSTOM_SEARCH_ATTRIBUTES, value: "true" }
+          ports:
+            - { name: grpc, containerPort: 7233 }
+          readinessProbe:
+            tcpSocket: { port: grpc }
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            failureThreshold: 30
+          resources:
+            requests: { cpu: 200m, memory: 512Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: temporal-frontend
+  namespace: openfireblocks
+spec:
+  selector: { app: temporal-frontend }
+  ports:
+    - { name: grpc, port: 7233, targetPort: grpc }

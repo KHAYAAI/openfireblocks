@@ -30,6 +30,11 @@ spec:
             - name: http
               containerPort: {{ .Values.mpcSigner.port }}
           env:
+            # Makes each service refuse to fall back to local development
+            # credentials if its DSN/config env var is missing, instead of
+            # silently attempting a localhost connection (gosec G101).
+            - name: APP_ENV
+              value: production
             - name: PORT
               value: {{ .Values.mpcSigner.port | quote }}
             {{- if .Values.mpcSigner.vault.addr }}
@@ -40,6 +45,21 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.mpcSigner.vault.tokenSecret }}
                   key: vault-token
+            {{- end }}
+            {{- if .Values.mpcSigner.bitcoin.rpcUrl }}
+            # A Bitcoin node. Without it this service can still derive
+            # addresses and assemble transactions, but it cannot see a
+            # key's coins or relay anything -- so /bitcoin/prepare answers
+            # 503 rather than pretending.
+            - name: BITCOIN_RPC_URL
+              value: {{ .Values.mpcSigner.bitcoin.rpcUrl | quote }}
+            - name: BITCOIN_RPC_USER
+              value: {{ .Values.mpcSigner.bitcoin.rpcUser | quote }}
+            - name: BITCOIN_RPC_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.mpcSigner.bitcoin.rpcPasswordSecret }}
+                  key: bitcoin-rpc-password
             {{- end }}
           livenessProbe:
             httpGet: { path: /health, port: http }

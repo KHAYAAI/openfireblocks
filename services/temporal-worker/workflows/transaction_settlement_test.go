@@ -21,7 +21,7 @@ func newEnv(t *testing.T) *testsuite.TestWorkflowEnvironment {
 	env := ts.NewTestWorkflowEnvironment()
 	// Register the activity struct so the workflow's string activity names
 	// resolve; individual methods are mocked per-test via OnActivity.
-	env.RegisterActivity(activities.NewActivities("", "", "", 3))
+	env.RegisterActivity(activities.NewActivities("", "", "", 3, nil))
 	return env
 }
 

@@ -165,7 +165,7 @@ export class SignService {
         try {
           finalHash = await this.ethereum.broadcastTransaction(signedTx);
           broadcasted = true;
-          await this.postgres.updateStatus(requestId, 'broadcasted', finalHash);
+          await this.postgres.updateStatus(requestId, customerId, 'broadcasted', finalHash);
           await this.billing.recordBroadcast(customerId);
           await this.audit.logEvent({
             type: 'BROADCAST_SUCCESS',

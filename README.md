@@ -4,11 +4,14 @@ A sovereign, open-source settlement infrastructure platform for agents and
 financial institutions — built on proven OSS (go-ethereum, Binance TSS-Lib,
 Temporal, OPA, immudb, HashiCorp Vault).
 
-> **Status: Phase 1 (MVP).** Ethereum single-chain. Multi-tenant with API-key
+> **Status: Phase 1 + Crypto.** Ethereum single-chain. Multi-tenant with API-key
 > auth, OPA policy engine, Temporal settlement orchestration, Vault-backed key
-> management, Prometheus/Grafana observability, Helm/K8s deploy. Signing still
-> uses a single shared key (real MPC threshold signing is Phase 2) — **not yet
-> audited for customer funds**; see [`docs/security`](docs/security).
+> management, Prometheus/Grafana observability, Helm/K8s deploy. Real MPC
+> threshold-ECDSA DKG now proven over real multi-process HTTP transport
+> (Binance TSS-Lib); threshold signing over the same transport is the next
+> increment. **Not yet audited for customer funds or licensed in any
+> jurisdiction**; see [`docs/security`](docs/security) and the
+> [launch-readiness checklist](#launch-readiness).
 
 ## Repository layout
 
@@ -61,16 +64,23 @@ cd services/mpc-signer && go build ./... && go run .
 cd services/api-gateway && npm install && npm run start:dev && npm test
 ```
 
+## Launch readiness
+
+See the [**Launch Readiness** document](https://claude.ai/code/artifact/ce28fa83-64df-4fdc-9b7b-0ed5f11e8545)
+for a complete breakdown of what this session built, everything between here and
+live launch (split by code-buildable vs. regulatory/operational/legal), and an
+honest comparison against Copper and Fireblocks.
+
 ## Documentation
 
-- [Readiness brief](docs/readiness-brief.md) — capability + bank-readiness summary
 - [Architecture](docs/architecture.md)
 - [API reference](docs/api.md)
 - [Policies (OPA)](docs/policies.md)
 - [Deployment (Compose / K8s / Helm)](docs/deployment.md)
 - [Troubleshooting](docs/troubleshooting.md) · [Operations runbook](docs/runbook.md)
 - [Security: threat model](docs/security/threat-model.md) ·
-  [audit checklist](docs/security/audit-checklist.md)
+  [audit checklist](docs/security/audit-checklist.md) ·
+  [what Claude cannot build](docs/security/what-claude-cannot-build.md)
 - Checklists: [Phase 0](docs/phase-0-checklist.md) · [Phase 1](docs/phase-1-checklist.md)
 
 ## Roadmap
@@ -78,16 +88,21 @@ cd services/api-gateway && npm install && npm run start:dev && npm test
 - **Phase 0** ✅ — Ethereum signing PoC with audit trail.
 - **Phase 1** ✅ — Multi-tenancy + API-key auth, OPA policy engine, Temporal
   settlement workflows, Vault key management, Prometheus/Grafana, Helm/K8s, CI, SDK.
-- **Phase 2** — Real MPC threshold signing (Binance TSS-Lib): cryptographic core
-  (k-of-n DKG + signing) proven in `services/mpc-signer/tss`; remaining work is
-  distributing parties + per-customer ceremonies. Plus multi-chain (Bitcoin,
-  Solana, Cosmos), risk engine (OFAC), treasury.
+- **Phase 2 (in progress)** — Real MPC threshold signing (Binance TSS-Lib):
+  - ✅ Cryptographic core (k-of-n DKG) proven in `services/mpc-signer/tss` (in-process)
+  - ✅ DKG proven over real multi-process HTTP transport (`services/mpc-party` → verified
+    3 independent servers converging on identical key)
+  - 🔄 Threshold **signing** over the same real network transport (DKG only so far)
+  - 🔄 Production orchestration wired to the real crypto path (currently on placeholder)
+  - Remaining: multi-chain (Bitcoin, Solana, Cosmos), risk engine (OFAC), treasury.
 - **Phase 3** — Bank-grade hardening: external crypto + pen-test audits, SOC 2 /
-  ISO 27001, regulatory reporting, multi-region HA.
+  ISO 27001, regulatory reporting, multi-region HA, HSM-backed Vault, key rotation.
 
-> **Not production-ready for customer funds yet.** The MVP still uses a single
-> shared signing key and has not been externally audited. See the
-> [audit checklist](docs/security/audit-checklist.md) for the go/no-go gate.
+> **Not production-ready for customer funds yet.** Phase 2 DKG is proven over real
+> HTTP transport but threshold signing isn't complete; the system hasn't cleared
+> money-transmitter licensing, SOC 2 Type II, or independent cryptographic audit.
+> See the [launch-readiness checklist](https://claude.ai/code/artifact/ce28fa83-64df-4fdc-9b7b-0ed5f11e8545)
+> for the full go/no-go gate.
 
 ## License
 

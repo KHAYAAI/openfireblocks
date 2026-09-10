@@ -35,6 +35,43 @@ type SignResult struct {
 	Broadcasted bool   `json:"broadcasted"`
 }
 
+// SignMultiChainRequest is a multi-chain transaction to sign.
+type SignMultiChainRequest struct {
+	ChainID  string                 `json:"chainId"`
+	Message  string                 `json:"message"`
+	Metadata map[string]interface{} `json:"metadata,omitempty"`
+}
+
+// SignMultiChainResponse is returned by SignMultiChain.
+type SignMultiChainResponse struct {
+	RequestID   string `json:"requestId"`
+	ChainID     string `json:"chainId"`
+	Signature   string `json:"signature"`
+	SignedTx    string `json:"signedTx,omitempty"`
+	From        string `json:"from"`
+	Status      string `json:"status"`
+	Broadcasted bool   `json:"broadcasted"`
+	Error       string `json:"error,omitempty"`
+}
+
+// BroadcastRequest is a signed transaction to broadcast.
+type BroadcastRequest struct {
+	ChainID string `json:"chainId"`
+	SignedTx string `json:"signedTx"`
+}
+
+// BroadcastResponse is returned by BroadcastTransaction.
+type BroadcastResponse struct {
+	TxHash string `json:"txHash"`
+	Status string `json:"status"`
+}
+
+// SupportedChainsResponse is returned by GetSupportedChains.
+type SupportedChainsResponse struct {
+	Chains []string `json:"chains"`
+	Count  int      `json:"count"`
+}
+
 // APIError is returned for any non-2xx response.
 type APIError struct {
 	StatusCode int
@@ -144,4 +181,31 @@ func (c *Client) GetAuditTrail(ctx context.Context, requestID string) ([]map[str
 		return nil, err
 	}
 	return out, nil
+}
+
+// GetSupportedChains returns the list of supported blockchains.
+func (c *Client) GetSupportedChains(ctx context.Context) (*SupportedChainsResponse, error) {
+	var out SupportedChainsResponse
+	if err := c.do(ctx, http.MethodPost, "/sign-multi-chain/chains", nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// SignMultiChain signs a transaction on any supported blockchain.
+func (c *Client) SignMultiChain(ctx context.Context, req *SignMultiChainRequest) (*SignMultiChainResponse, error) {
+	var out SignMultiChainResponse
+	if err := c.do(ctx, http.MethodPost, "/sign-multi-chain", req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// BroadcastTransaction broadcasts a signed transaction.
+func (c *Client) BroadcastTransaction(ctx context.Context, req *BroadcastRequest) (*BroadcastResponse, error) {
+	var out BroadcastResponse
+	if err := c.do(ctx, http.MethodPost, "/sign-multi-chain/broadcast", req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
 }

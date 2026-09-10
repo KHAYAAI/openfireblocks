@@ -1,0 +1,241 @@
+# Configures the dev Vault so that services/vault-pki-init can actually
+# authenticate to it the way it is designed to: Kubernetes auth, not a
+# long-lived token.
+#
+# In production this is Terraform's job -- infrastructure/terraform/modules/vault-pki
+# creates the same PKI mount, role, kubernetes auth backend and policy. This
+# file is the throwaway equivalent so the code path can be exercised on a
+# kind cluster, because until it ran, vault-pki-init's kubernetesLogin() had
+# never executed anywhere: only the VAULT_TOKEN path had.
+#
+# NOT FOR PRODUCTION: the root CA is generated inside Vault with no offline
+# backup, Vault is in dev mode, and the root token is a well-known string.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: vault
+  namespace: openfireblocks
+---
+# A long-lived token for Vault's own TokenReview calls.
+#
+# The bootstrap job used to hand Vault its *own pod's* projected
+# service-account token as token_reviewer_jwt. Projected tokens are bound to
+# the pod that requested them and expire with it, so once the job finished
+# and its pod was collected, Vault's reviewer credential became invalid and
+# every kubernetes-auth login started failing with "permission denied" --
+# which reads like a policy problem and is actually an expired credential.
+#
+# Dev mode hid this completely: Vault lost its state so often that the auth
+# backend was always freshly configured. It only became visible once Vault
+# had storage that outlived the bootstrap.
+#
+# A Secret of type kubernetes.io/service-account-token is the legacy,
+# non-expiring form, which is exactly what a long-running reviewer needs.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: vault-auth-reviewer
+  namespace: openfireblocks
+  annotations:
+    kubernetes.io/service-account.name: vault
+type: kubernetes.io/service-account-token
+---
+# Lets services/vault-unseal store and read the cluster's unseal material.
+#
+# Namespaced and narrow: get and create on Secrets, nothing else. It cannot
+# read other Secrets by name it does not know, cannot delete, and cannot
+# update -- the last one deliberately, because the coordination between
+# replicas depends on a create being rejected with 409 when the material
+# already exists. An update verb would let a losing replica overwrite the
+# winner's key and leave the cluster permanently unopenable.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: vault-unseal
+  namespace: openfireblocks
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: vault-unseal
+  namespace: openfireblocks
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: vault-unseal
+subjects:
+  - kind: ServiceAccount
+    name: vault
+    namespace: openfireblocks
+---
+# Vault validates a pod's service-account token by calling the Kubernetes
+# TokenReview API, which requires system:auth-delegator. Without this the
+# auth method is configured but every login fails with "permission denied",
+# which reads like a policy problem rather than an RBAC one.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: openfireblocks-vault-auth-delegator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:auth-delegator
+subjects:
+  - kind: ServiceAccount
+    name: vault
+    namespace: openfireblocks
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: vault-pki-bootstrap
+  namespace: openfireblocks
+spec:
+  # Generous: this waits for a Raft cluster to elect a leader and for the
+  # unseal sidecar to open it, neither of which is instant on a cold start.
+  backoffLimit: 10
+  template:
+    spec:
+      restartPolicy: Never
+      serviceAccountName: vault
+      containers:
+        - name: bootstrap
+          image: hashicorp/vault:1.17
+          env:
+            - { name: VAULT_ADDR, value: "http://vault:8200" }
+            # The well-known token every other component reads from the
+            # dependency Secret. It is created below rather than being what
+            # this job authenticates with: a real (non-dev) Vault generates
+            # its own root token at init, and this job's job is to reconcile
+            # the two.
+            - name: DEV_ROOT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: dev-dependency-credentials
+                  key: vault-root-token
+          volumeMounts:
+            - name: reviewer
+              mountPath: /reviewer
+              readOnly: true
+            - name: unseal
+              mountPath: /unseal
+              readOnly: true
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+
+              # Wait for services/vault-unseal to have initialised and
+              # opened the cluster. Mounted Secrets appear asynchronously,
+              # so the file is polled rather than assumed.
+              echo "waiting for the Vault cluster to be initialised and unsealed"
+              until [ -s /unseal/root-token ]; do sleep 3; done
+              VAULT_TOKEN="$(cat /unseal/root-token)"
+              export VAULT_TOKEN
+              until vault status >/dev/null 2>&1; do sleep 2; done
+
+              # Recreate the well-known token so every component that reads
+              # vault-root-token from the dependency Secret keeps working
+              # against a real Vault. Already existing is fine.
+              vault token create -id="${DEV_ROOT_TOKEN}" -policy=root \
+                -orphan -ttl=0 >/dev/null 2>&1 || true
+
+              # --- KV v2 for sealed key shares ---------------------------
+              # services/mpc-party/vault_seal.go writes each party's share to
+              # secret/openfireblocks/mpc-party/<party>/<ceremony>.
+              #
+              # `vault server -dev` mounts a KV v2 engine at secret/
+              # automatically; a real server does not. That difference was
+              # invisible for as long as this cluster ran in dev mode, and
+              # surfaced the moment it did not: DKG completed, then sealing
+              # failed with 'no handler for route "secret/data/..."' and the
+              # whole ceremony was marked failed. Anything deploying Vault
+              # for real has to create this mount -- it is not optional
+              # infrastructure, it is where the key shares live.
+              if ! vault secrets list -format=json | grep -q '"secret/"'; then
+                vault secrets enable -path=secret -version=2 kv
+              fi
+
+              # --- PKI engine -------------------------------------------
+              # Mount path matches .Values.mpcParty.mtls.autoIssue.pkiMount.
+              if ! vault secrets list -format=json | grep -q '"pki/production/"'; then
+                vault secrets enable -path=pki/production pki
+              fi
+              vault secrets tune -max-lease-ttl=87600h pki/production
+
+              # Root CA generated in-place. A real deployment uses an
+              # offline root and an intermediate signed by it; this is a
+              # throwaway cluster, so the shortcut is acceptable here and
+              # nowhere else.
+              vault read pki/production/cert/ca >/dev/null 2>&1 || \
+                vault write -field=certificate pki/production/root/generate/internal \
+                  common_name="OpenFireblocks Dev Root" ttl=87600h >/dev/null
+
+              # Names are constrained to two domains rather than left open:
+              # every requester has already proved its identity through
+              # Kubernetes auth bound to one service account in one
+              # namespace, and the names themselves are generated by the
+              # chart (party-1.internal, ...) rather than chosen by the
+              # caller.
+              #
+              # svc.cluster.local as well as .internal: certificates carry
+              # the service identity as the CN (party-1.internal) and the
+              # in-cluster DNS name as a SAN
+              # (party-1.openfireblocks.svc.cluster.local), because TLS
+              # verifies the name the peer actually dialled.
+              vault write pki/production/roles/internal-service \
+                allowed_domains=internal,openfireblocks.svc.cluster.local \
+                allow_subdomains=true \
+                allow_bare_domains=true \
+                max_ttl=72h \
+                require_cn=true \
+                client_flag=true \
+                server_flag=true
+
+              # --- policy -----------------------------------------------
+              # Issue only. A compromised pod cannot re-tune the mount,
+              # rotate the root, or read another service's secrets.
+              vault policy write internal-service - <<'POLICY'
+              path "pki/production/issue/internal-service" {
+                capabilities = ["create", "update"]
+              }
+              POLICY
+
+              # --- kubernetes auth --------------------------------------
+              if ! vault auth list -format=json | grep -q '"kubernetes/"'; then
+                vault auth enable kubernetes
+              fi
+              # token_reviewer_jwt comes from the vault-auth-reviewer Secret
+              # rather than this pod's projected token -- see that Secret for
+              # why. Its SA carries system:auth-delegator (above), which is
+              # what lets Vault call TokenReview for logging-in pods.
+              vault write auth/kubernetes/config \
+                kubernetes_host="https://$KUBERNETES_SERVICE_HOST:$KUBERNETES_SERVICE_PORT" \
+                token_reviewer_jwt=@/reviewer/token \
+                kubernetes_ca_cert=@/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+
+              # Bound to the chart's service account in this namespace
+              # only: any other pod presenting any other token is refused,
+              # which is the property that makes this better than a shared
+              # VAULT_TOKEN in a Secret.
+              vault write auth/kubernetes/role/internal-service \
+                bound_service_account_names=ofb-openfireblocks \
+                bound_service_account_namespaces=openfireblocks \
+                policies=internal-service \
+                ttl=1h
+
+              echo "VAULT PKI BOOTSTRAP COMPLETE"
+      volumes:
+        - name: reviewer
+          secret:
+            secretName: vault-auth-reviewer
+        - name: unseal
+          secret:
+            secretName: vault-unseal
+            # Optional because it does not exist until the cluster has been
+            # initialised for the first time; the script waits for it.
+            optional: true

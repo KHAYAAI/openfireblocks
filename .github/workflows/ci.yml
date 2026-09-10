@@ -15,10 +15,30 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # Every Go module in the repository. This list was previously four
+        # entries, and services/mpc-signer -- which is on it -- did not
+        # compile at all for an extended period, so treat a red matrix as
+        # something to fix rather than something to route around. Services
+        # absent from CI entirely (mpc-party, backup, the domain services)
+        # were how a non-building service reached the Helm chart.
         module:
           - services/mpc-signer
+          - services/mpc-party
           - services/policy-service
           - services/temporal-worker
+          - services/backup
+          - services/vault-pki-init
+          - services/policy
+          - services/settlement
+          - services/billing
+          - services/webhooks
+          - services/marketplace
+          - services/compliance
+          # Added when they were: a module absent from this list is a module
+          # nobody notices breaking. vault-unseal in particular holds the
+          # coordination that decides whether a Vault cluster can ever be
+          # unsealed again, and its race is only caught under -race.
+          - services/vault-unseal
           - sdks/sdk-go
     steps:
       - uses: actions/checkout@v4
@@ -28,12 +48,27 @@ jobs:
       - name: Build
         working-directory: ${{ matrix.module }}
         run: go build ./...
+      # copylocks is disabled for services/mpc-party only, and deliberately:
+      # tss-lib delivers its result over a channel whose element type embeds
+      # a protobuf MessageState (which contains a sync.Mutex), so receiving
+      # it at all trips the check. Avoiding it would mean forking tss-lib's
+      # public API. Every other analyzer stays on, for every module.
       - name: Vet
         working-directory: ${{ matrix.module }}
-        run: go vet ./...
+        run: |
+          if [ "${{ matrix.module }}" = "services/mpc-party" ]; then
+            go vet -copylocks=false ./...
+          else
+            go vet ./...
+          fi
+      # -race, because the concurrency bugs in this repo are the expensive
+      # ones. services/vault-unseal coordinates several replicas racing to
+      # initialise one Vault cluster, and a loser overwriting the winner's
+      # unseal key leaves a cluster nobody can ever open again -- a failure
+      # a serial test run would never reproduce.
       - name: Test
         working-directory: ${{ matrix.module }}
-        run: go test ./... -count=1
+        run: go test -race ./... -count=1
 
   mpc-tss:
     name: MPC threshold signing (tss tag)
@@ -97,3 +132,120 @@ jobs:
           python-version: "3.12"
       - working-directory: sdks/sdk-python
         run: python -m unittest discover -s tests -v
+
+  manifests:
+    name: Kubernetes manifests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.2
+      - name: Lint the chart
+        run: helm lint infrastructure/helm/openfireblocks
+
+      # helm template only proves the templates produce *some* YAML. This
+      # validates every rendered object against the real Kubernetes API
+      # schemas in strict mode, which rejects unknown/misspelled fields --
+      # the difference between "it rendered" and "the cluster will accept
+      # it". All 29 objects pass today.
+      - name: Install kubeconform
+        run: go install github.com/yannh/kubeconform/cmd/kubeconform@latest
+      - name: Render and validate (defaults)
+        run: |
+          helm template ci infrastructure/helm/openfireblocks \
+            | $(go env GOPATH)/bin/kubeconform -strict -summary \
+                -kubernetes-version 1.29.0
+      # The optional paths (mTLS, auto-issued certs, SSO, ingress) are where
+      # a template bug would otherwise hide until the day someone enables it.
+      - name: Render and validate (all optional features on)
+        run: |
+          helm template ci infrastructure/helm/openfireblocks \
+            --set mpcParty.mtls.enabled=true \
+            --set mpcParty.mtls.autoIssue.enabled=true \
+            --set temporalWorker.mtls.enabled=true \
+            --set temporalWorker.mtls.autoIssue.enabled=true \
+            --set workos.enabled=true \
+            --set workos.redirectUri=https://api.example/auth/sso/callback \
+            --set ingress.enabled=true \
+            | $(go env GOPATH)/bin/kubeconform -strict -summary \
+                -kubernetes-version 1.29.0
+
+      # kubeconform proves every object would be *accepted* by the API
+      # server. Each bug this checks for rendered perfectly valid YAML, was
+      # accepted by a real cluster, and then broke the platform at runtime --
+      # probes that cannot complete an mTLS handshake, an orchestrator
+      # dialling http:// against an HTTPS port, certificates that do not
+      # cover the name peers dial, a rollout that deadlocks under strict
+      # anti-affinity, and certificates nothing renews. They are only visible
+      # once the feature is switched on, which is exactly when nobody wants
+      # to find them.
+      - name: Check chart invariants
+        run: |
+          pip install pyyaml
+          python3 infrastructure/helm/test-chart-invariants.py
+
+  terraform:
+    name: Terraform
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - name: Format
+        run: terraform -chdir=infrastructure/terraform fmt -check -recursive
+      - name: Validate
+        run: |
+          terraform -chdir=infrastructure/terraform init -backend=false
+          terraform -chdir=infrastructure/terraform validate
+
+  gosec:
+    name: Go security scan
+    runs-on: ubuntu-latest
+    # Advisory for now: the existing findings are triaged in
+    # docs/security/audit-checklist.md rather than all fixed, so a failure
+    # here should be read, not merged past silently.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+      - name: Install gosec
+        run: go install github.com/securego/gosec/v2/cmd/gosec@latest
+      - name: Scan
+        run: |
+          for m in services/*/; do
+            [ -f "$m/go.mod" ] || continue
+            echo "--- $m"
+            (cd "$m" && $(go env GOPATH)/bin/gosec -quiet -severity high ./... || true)
+          done
+
+  stripe-live:
+    name: Stripe (real test API)
+    runs-on: ubuntu-latest
+    # Whether this platform can actually collect money is a question about
+    # Stripe's behaviour, not ours, and a stub cannot answer it: a stub says
+    # yes to a wrong field name, a deprecated parameter, or an idempotency
+    # key that does not deduplicate the way the docs claim.
+    #
+    # Runs only where the secret exists -- so it is silently absent on
+    # forks, and the tests themselves skip with a message saying what has
+    # therefore not been verified. `continue-on-error` is deliberately NOT
+    # set: if the secret is configured and Stripe rejects what we send, that
+    # is a broken payment path and it should be red.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+      - name: Verify against Stripe test mode
+        env:
+          STRIPE_TEST_API_KEY: ${{ secrets.STRIPE_TEST_API_KEY }}
+        run: |
+          if [ -z "${STRIPE_TEST_API_KEY}" ]; then
+            echo "::warning title=Stripe unverified::STRIPE_TEST_API_KEY is not configured."
+            echo "The payment path is proven only against a stub; whether Stripe accepts"
+            echo "what this platform sends is UNVERIFIED. Add a test-mode secret key as"
+            echo "the STRIPE_TEST_API_KEY repository secret to close this gap."
+          fi
+          cd services/billing && go test -v -run Live ./...

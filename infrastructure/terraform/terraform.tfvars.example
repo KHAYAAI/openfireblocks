@@ -1,0 +1,44 @@
+# OpenFireblocks Terraform Configuration Example
+# Copy this file to terraform.tfvars and update with your values
+
+# AWS Regions
+primary_region   = "us-east-1"
+secondary_region = "eu-west-1"
+
+# Environment
+environment = "prod"
+
+# VPC Configuration
+primary_vpc_cidr   = "10.0.0.0/16"
+secondary_vpc_cidr = "10.1.0.0/16"
+enable_vpn_gateway = false
+
+# RDS Configuration
+db_name               = "openfireblocks"
+db_username           = "postgres"
+db_password           = "ChangeMe!SecurePassword123456"  # Min 16 chars
+db_instance_class     = "db.r6i.xlarge"
+db_allocated_storage  = 100
+db_max_allocated_storage = 500
+
+# Vault Configuration
+vault_node_count   = 3
+vault_instance_type = "t3.large"
+
+# Backup Configuration
+backup_retention_days = 30
+backup_window         = "00:00-01:00"
+maintenance_window    = "sun:01:00-sun:02:00"
+
+# Monitoring Configuration
+cloudwatch_log_retention_days = 30
+enable_performance_insights   = true
+enable_enhanced_monitoring    = true
+
+# Additional Tags
+tags = {
+  Project     = "OpenFireblocks"
+  ManagedBy   = "Terraform"
+  CostCenter  = "Engineering"
+  Owner       = "Infrastructure Team"
+}
