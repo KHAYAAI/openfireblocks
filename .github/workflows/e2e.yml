@@ -138,6 +138,17 @@ jobs:
         # feature.
         run: ./infrastructure/kind/node-failure-drill.sh
 
+      - name: Report party isolation
+        # Reported, not enforced. On kind the answer is always "simulated"
+        # and always will be, so a gate here would be a permanently red
+        # check that people learn to ignore. Printing it every run keeps
+        # the gap visible instead: the drills above prove the platform
+        # works, and this says what the deployment they ran against
+        # actually is. REQUIRE=multi-account belongs in the go-live
+        # runbook, against real infrastructure.
+        if: always()
+        run: ./infrastructure/kind/party-isolation-check.sh
+
       - name: Collect diagnostics
         if: failure()
         # A red drill in CI is only useful if you can see why without
