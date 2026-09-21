@@ -52,6 +52,66 @@ func (p *PostgresDB) GetNativeTransactions(ctx context.Context, customerID, chai
 	return txs, rows.Err()
 }
 
+// GetAssetTransactions reads what each transfer actually moved.
+//
+// GetNativeTransactions above reads signing.transactions.amount, which is
+// the native value attached to the transaction -- zero for every ERC-20
+// transfer, because the money is in the calldata. These columns
+// (migration 021) carry the decoded transfer instead, so a day of
+// stablecoin activity aggregates to what moved rather than to nothing.
+//
+// A row with a NULL effective_amount is returned with a nil Amount rather
+// than skipped. The caller counts those and reports them: a transfer
+// missing from a regulatory total because nobody could decode it is a gap
+// a compliance officer needs to see, not one to be quietly excluded from
+// a number they will then rely on.
+func (p *PostgresDB) GetAssetTransactions(ctx context.Context, customerID, chain string, start, end time.Time) ([]AssetTransaction, error) {
+	rows, err := p.db.QueryContext(ctx, `
+		SELECT request_id, chain, asset_symbol, effective_amount, asset_decimals, asset_peg, created_at
+		FROM signing.transactions
+		WHERE customer_id = $1::uuid AND chain = $2 AND created_at >= $3 AND created_at < $4
+		ORDER BY created_at
+	`, customerID, chain, start, end)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query signing.transactions: %w", err)
+	}
+	defer rows.Close()
+
+	var txs []AssetTransaction
+	for rows.Next() {
+		var requestID, txChain string
+		var symbol, amountStr, peg sql.NullString
+		var decimals sql.NullInt64
+		var createdAt time.Time
+		if err := rows.Scan(&requestID, &txChain, &symbol, &amountStr, &decimals, &peg, &createdAt); err != nil {
+			return nil, fmt.Errorf("failed to scan signing.transactions row: %w", err)
+		}
+
+		tx := AssetTransaction{
+			RequestID: requestID,
+			Chain:     txChain,
+			Symbol:    symbol.String,
+			Decimals:  int(decimals.Int64),
+			Peg:       peg.String,
+			CreatedAt: createdAt,
+		}
+		if amountStr.Valid && amountStr.String != "" {
+			amount, ok := new(big.Int).SetString(amountStr.String, 10)
+			if !ok {
+				// Not silently skipped. A non-numeric amount in a
+				// regulatory aggregate is exactly the kind of gap that
+				// makes a report undercount real activity, and the whole
+				// evaluation should stop rather than produce a total that
+				// looks complete.
+				return nil, fmt.Errorf("transaction %s has non-numeric effective amount %q, cannot include in aggregate", requestID, amountStr.String)
+			}
+			tx.Amount = amount
+		}
+		txs = append(txs, tx)
+	}
+	return txs, rows.Err()
+}
+
 const regulatoryFilingColumns = `filing_id, filing_type, customer_id, related_transaction_ids, chain,
 	aggregate_amount_native, aggregate_amount_usd, usd_conversion_rate, threshold_usd,
 	detection_method, narrative, status, detected_at, filing_deadline, filed_at, filed_by, confirmation_number`

@@ -64,6 +64,10 @@ func main() {
 	mux.HandleFunc("/v1/compliance/dashboard", monitor.HandleGenerateDashboard)
 
 	mux.HandleFunc("/v1/regulatory/ctr/evaluate", regulatory.HandleEvaluateCTR)
+	// Aggregates across every asset moved, in every currency. The CTR
+	// route above reads the native value attached to each transaction,
+	// which is zero for every stablecoin transfer.
+	mux.HandleFunc("/v1/regulatory/thresholds/evaluate", regulatory.HandleEvaluateAssetThresholds)
 	mux.HandleFunc("/v1/regulatory/ctr/generate", regulatory.HandleGenerateCTR)
 	mux.HandleFunc("/v1/regulatory/structuring/detect", regulatory.HandleDetectStructuring)
 	mux.HandleFunc("/v1/regulatory/sar/generate", regulatory.HandleGenerateSAR)

@@ -23,6 +23,16 @@ external:
   temporalHostPort: temporal-frontend:7233
   temporalNamespace: default
   ethereumRpcSepolia: "" # set to enable broadcasting
+  # JSON-RPC endpoint per EVM chain id, for token verification and balance
+  # reads. A token is a different contract on each chain, and a balance
+  # read against the wrong one returns zero rather than an error -- so a
+  # chain absent from this map is one the platform reports it cannot read,
+  # not one it guesses at.
+  #
+  #   evmRpc:
+  #     "1": https://…      # Ethereum mainnet
+  #     "137": https://…    # Polygon
+  evmRpc: {}
   requiredConfirmations: "6"
   # Decides how a threshold key's public key becomes a Bitcoin address.
   # mainnet by default because a wrong value does not fail loudly -- it

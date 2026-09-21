@@ -18,6 +18,16 @@ external:
   # tests in services/temporal-worker/activities/chain_live_test.go, which
   # run against a real geth node.
   ethereumRpcSepolia: ""
+  # The in-cluster development chains. 424242 is the proof-of-authority
+  # network (geth-poa.yaml) and 1337 the single-node one (geth-dev.yaml);
+  # both are listed because a given run has one or the other, and naming a
+  # chain that is not deployed costs nothing -- the endpoint is only dialled
+  # when something asks about that chain.
+  evmRpc:
+    # Quoted, because these are name fragments rather than numbers:
+    # they become EVM_RPC_<key> in the container environment.
+    "424242": "http://geth-signer:8545"
+    "1337": "http://geth-dev:8545"
   requiredConfirmations: "6"
   # This cluster's bitcoind runs in regtest -- see bitcoind-regtest.yaml.
   # The value decides how a key's public key becomes an address, so

@@ -125,6 +125,15 @@ jobs:
       - name: A customer can send Bitcoin
         run: ./infrastructure/kind/bitcoin-api-drill.sh
 
+      - name: Stablecoin transfers are governed, not just signed
+        # Placed after chain-test because it needs the same chain, and
+        # before the node-failure drill for the same reason everything else
+        # is. Most of what it asserts are refusals: the signing half of
+        # this path worked long before any control could read it, so a
+        # drill that only showed a transfer succeeding would have passed
+        # against the bug.
+        run: ./infrastructure/kind/stablecoin-drill.sh
+
       - name: Platform activity becomes an invoice
         run: ./infrastructure/kind/billing-drill.sh
 

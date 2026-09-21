@@ -88,6 +88,18 @@ spec:
               value: http://{{ include "ofb.fullname" . }}-webhooks:{{ .Values.webhooks.port }}
             - name: ETHEREUM_RPC_SEPOLIA
               value: {{ .Values.external.ethereumRpcSepolia | quote }}
+            # One endpoint per chain, keyed by chain id.
+            #
+            # A token is a different contract on every chain it exists on,
+            # and a balance read against the wrong chain returns zero
+            # rather than an error -- which reads, to a customer, exactly
+            # like their money not being there. So there is no default
+            # here: a chain with no configured endpoint is one the
+            # platform says it cannot read, rather than one it guesses at.
+            {{- range $chainId, $url := .Values.external.evmRpc }}
+            - name: EVM_RPC_{{ $chainId }}
+              value: {{ $url | quote }}
+            {{- end }}
             - name: REDIS_URL
               value: {{ .Values.external.redisUrl | quote }}
             # Durable settlements (SettlementsController) and real DKG key
