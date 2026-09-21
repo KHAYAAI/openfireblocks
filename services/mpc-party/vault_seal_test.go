@@ -33,6 +33,13 @@ func requireVaultEnv(t *testing.T) {
 // fabricated test data that might happen to round-trip through JSON
 // without exercising the same code path production sealing uses.
 func TestSealAndLoadKeyShareRoundTrip(t *testing.T) {
+	// Parties talk over plain HTTP here, in one process, with no PKI --
+	// so there is no client certificate to bind a sender to. Peer
+	// authentication is disabled explicitly rather than implicitly: see
+	// peer_identity.go, where the production default is to refuse a
+	// protocol message that cannot be attributed to a certificate.
+	t.Setenv("TSS_ALLOW_UNAUTHENTICATED_PEERS", "1")
+
 	requireVaultEnv(t)
 	if testing.Short() {
 		t.Skip("real DKG takes real time; skipped in -short")
@@ -124,6 +131,13 @@ func TestSealAndLoadKeyShareRoundTrip(t *testing.T) {
 // rather than failing outright -- the existing behavior every other test
 // in this package (which don't set VAULT_ADDR) depends on.
 func TestSealKeyShareSkippedWithoutVaultAddr(t *testing.T) {
+	// Parties talk over plain HTTP here, in one process, with no PKI --
+	// so there is no client certificate to bind a sender to. Peer
+	// authentication is disabled explicitly rather than implicitly: see
+	// peer_identity.go, where the production default is to refuse a
+	// protocol message that cannot be attributed to a certificate.
+	t.Setenv("TSS_ALLOW_UNAUTHENTICATED_PEERS", "1")
+
 	if os.Getenv("VAULT_ADDR") != "" {
 		t.Skip("VAULT_ADDR is set in this environment; this test specifically checks the unset case")
 	}

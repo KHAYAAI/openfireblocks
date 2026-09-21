@@ -21,6 +21,13 @@ import (
 // services/mpc-signer/tss/tss_test.go applies in-process, proven here over
 // real network transport between independent processes instead.
 func TestRealMultiPartySigningOverHTTP(t *testing.T) {
+	// Parties talk over plain HTTP here, in one process, with no PKI --
+	// so there is no client certificate to bind a sender to. Peer
+	// authentication is disabled explicitly rather than implicitly: see
+	// peer_identity.go, where the production default is to refuse a
+	// protocol message that cannot be attributed to a certificate.
+	t.Setenv("TSS_ALLOW_UNAUTHENTICATED_PEERS", "1")
+
 	if testing.Short() {
 		t.Skip("real DKG + signing takes real time; skipped in -short")
 	}
@@ -176,6 +183,13 @@ func TestRealMultiPartySigningOverHTTP(t *testing.T) {
 // entirely on *which* parties are chosen. Testing only {1, 2} is what let
 // this survive.
 func TestSigningWithEveryCommittee(t *testing.T) {
+	// Parties talk over plain HTTP here, in one process, with no PKI --
+	// so there is no client certificate to bind a sender to. Peer
+	// authentication is disabled explicitly rather than implicitly: see
+	// peer_identity.go, where the production default is to refuse a
+	// protocol message that cannot be attributed to a certificate.
+	t.Setenv("TSS_ALLOW_UNAUTHENTICATED_PEERS", "1")
+
 	if testing.Short() {
 		t.Skip("real DKG + signing takes real time; skipped in -short")
 	}

@@ -133,6 +133,29 @@ spec:
               value: {{ $partyID | quote }}
             - name: PORT
               value: {{ $.Values.mpcParty.port | quote }}
+            {{- if not $.Values.mpcParty.mtls.enabled }}
+            # Sender authentication cannot be enforced without mutual TLS.
+            #
+            # A relayed tss-lib protocol message names the party it comes
+            # from, and mpc-party binds that claim to the common name of
+            # the client certificate the sender presented -- see
+            # services/mpc-party/peer_identity.go. With no client
+            # certificate there is nothing to bind to, so any party that
+            # can reach another can address messages as a third.
+            #
+            # That matters more than it looks. The security argument for
+            # t-of-n is that an attacker holding fewer than t shares can
+            # do nothing; an attacker who can forge the sender of a
+            # protocol message is no longer confined to the parties they
+            # actually hold.
+            #
+            # Set here, visibly, rather than defaulted inside the service:
+            # an operator reading their own manifest should be able to see
+            # that this check is off. Turn on mpcParty.mtls.enabled to
+            # remove it. Do not run a production deployment this way.
+            - name: TSS_ALLOW_UNAUTHENTICATED_PEERS
+              value: "1"
+            {{- end }}
             {{- if $.Values.mpcParty.vault.addr }}
             # Seals this party's DKG key share in Vault on ceremony
             # completion instead of holding it only in process memory --

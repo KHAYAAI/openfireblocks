@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"net/http/httputil"
 	"time"
@@ -147,6 +148,14 @@ func (ps *PartyServer) HandleTSSKeygenMessage(w http.ResponseWriter, r *http.Req
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
 		return
 	}
+	// The sender is whoever the client certificate says it is, not
+	// whoever the body claims. See peer_identity.go.
+	if err := authenticatePeer(r, env.FromPartyID); err != nil {
+		log.Printf("rejected a keygen message for ceremony %s: %v (%s)",
+			env.CeremonyID, err, peerCertificateSummary(r.TLS))
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": err.Error()})
+		return
+	}
 	if err := ps.tssManager.HandleIncomingMessage(env); err != nil {
 		if err == ErrCeremonyNotReady {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": err.Error()})
@@ -233,6 +242,12 @@ func (ps *PartyServer) HandleTSSSignMessage(w http.ResponseWriter, r *http.Reque
 	var env tssSignMessageEnvelope
 	if err := json.NewDecoder(r.Body).Decode(&env); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
+		return
+	}
+	if err := authenticatePeer(r, env.FromPartyID); err != nil {
+		log.Printf("rejected a signing message for session %s: %v (%s)",
+			env.SignID, err, peerCertificateSummary(r.TLS))
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": err.Error()})
 		return
 	}
 	if err := ps.tssManager.HandleIncomingSignMessage(env); err != nil {

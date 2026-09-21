@@ -20,6 +20,13 @@ import (
 // real-transport counterpart to services/mpc-signer/tss/tss_test.go's
 // TestThresholdKeygenAndSign, which proves the same protocol in-process.
 func TestRealMultiPartyKeygenOverHTTP(t *testing.T) {
+	// Parties talk over plain HTTP here, in one process, with no PKI --
+	// so there is no client certificate to bind a sender to. Peer
+	// authentication is disabled explicitly rather than implicitly: see
+	// peer_identity.go, where the production default is to refuse a
+	// protocol message that cannot be attributed to a certificate.
+	t.Setenv("TSS_ALLOW_UNAUTHENTICATED_PEERS", "1")
+
 	if testing.Short() {
 		t.Skip("real DKG prime generation takes real time; skipped in -short")
 	}
@@ -36,6 +43,13 @@ func TestRealMultiPartyKeygenOverHTTP(t *testing.T) {
 // needs no Paillier pre-parameters, so there is no safe-prime generation
 // and the ceremony finishes in a second or two rather than minutes.
 func TestRealMultiPartyEd25519KeygenOverHTTP(t *testing.T) {
+	// Parties talk over plain HTTP here, in one process, with no PKI --
+	// so there is no client certificate to bind a sender to. Peer
+	// authentication is disabled explicitly rather than implicitly: see
+	// peer_identity.go, where the production default is to refuse a
+	// protocol message that cannot be attributed to a certificate.
+	t.Setenv("TSS_ALLOW_UNAUTHENTICATED_PEERS", "1")
+
 	runKeygenOverHTTP(t, CurveEd25519)
 }
 
@@ -155,6 +169,13 @@ type sharedKey struct {
 // signer wearing the same API. If any party could produce this alone, or
 // if the parties did not converge on one key, ed25519.Verify says no.
 func TestEd25519ThresholdSignatureVerifies(t *testing.T) {
+	// Parties talk over plain HTTP here, in one process, with no PKI --
+	// so there is no client certificate to bind a sender to. Peer
+	// authentication is disabled explicitly rather than implicitly: see
+	// peer_identity.go, where the production default is to refuse a
+	// protocol message that cannot be attributed to a certificate.
+	t.Setenv("TSS_ALLOW_UNAUTHENTICATED_PEERS", "1")
+
 	key := runKeygenOverHTTP(t, CurveEd25519)
 
 	// Ed25519 signs the message itself rather than a digest of it, which
