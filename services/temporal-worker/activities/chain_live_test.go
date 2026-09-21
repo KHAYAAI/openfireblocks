@@ -22,15 +22,15 @@ package activities
 
 import (
 	"context"
+	"encoding/hex"
 	"math/big"
 	"os"
 	"testing"
 	"time"
 
-	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/ethereum/go-ethereum/ethclient"
+	"forge-crypto/temporal-worker/internal/ethcrypto"
+	"forge-crypto/temporal-worker/internal/ethrpc"
+	"forge-crypto/temporal-worker/internal/ethtypes"
 	"go.temporal.io/sdk/testsuite"
 
 	"forge-crypto/temporal-worker/workflows"
@@ -43,13 +43,12 @@ func liveChain(t *testing.T) (rpc string, key string) {
 	if rpc == "" || key == "" {
 		t.Skip("ETHEREUM_RPC and SIGNING_KEY not set; skipping live chain test")
 	}
-	client, err := ethclient.DialContext(context.Background(), rpc)
+	client, err := ethrpc.Dial(rpc)
 	if err != nil {
-		t.Skipf("no reachable Ethereum node: %v", err)
+		t.Skipf("no usable Ethereum endpoint: %v", err)
 	}
-	defer client.Close()
 	if _, err := client.ChainID(context.Background()); err != nil {
-		t.Skipf("node did not answer eth_chainId: %v", err)
+		t.Skipf("no reachable Ethereum node: %v", err)
 	}
 	return rpc, key
 }
@@ -60,30 +59,29 @@ func TestLiveChain_BroadcastAndMonitor(t *testing.T) {
 	rpc, keyHex := liveChain(t)
 	ctx := context.Background()
 
-	client, err := ethclient.DialContext(ctx, rpc)
+	client, err := ethrpc.Dial(rpc)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
-	defer client.Close()
 
 	chainID, err := client.ChainID(ctx)
 	if err != nil {
 		t.Fatalf("chain id: %v", err)
 	}
-	privKey, err := crypto.HexToECDSA(keyHex)
+	privKey, err := ethcrypto.HexToECDSA(keyHex)
 	if err != nil {
 		t.Fatalf("bad SIGNING_KEY: %v", err)
 	}
-	from := crypto.PubkeyToAddress(privKey.PublicKey)
+	from := ethcrypto.PubkeyToAddress(privKey.PublicKey)
 
-	balance, err := client.BalanceAt(ctx, from, nil)
+	balance, err := client.BalanceAt(ctx, from)
 	if err != nil {
 		t.Fatalf("balance: %v", err)
 	}
 	if balance.Sign() == 0 {
-		t.Skipf("signer %s has no funds on this chain; fund it before running", from.Hex())
+		t.Skipf("signer %s has no funds on this chain; fund it before running", from)
 	}
-	t.Logf("signer %s balance: %s wei on chain %s", from.Hex(), balance, chainID)
+	t.Logf("signer %s balance: %s wei on chain %s", from, balance, chainID)
 
 	nonce, err := client.PendingNonceAt(ctx, from)
 	if err != nil {
@@ -94,20 +92,28 @@ func TestLiveChain_BroadcastAndMonitor(t *testing.T) {
 		t.Fatalf("gas price: %v", err)
 	}
 
-	to := common.HexToAddress("0x000000000000000000000000000000000000dEaD")
+	const toHex = "0x000000000000000000000000000000000000dEaD"
+	to, err := ethcrypto.ParseAddress(toHex)
+	if err != nil {
+		t.Fatalf("parse recipient: %v", err)
+	}
 	value := big.NewInt(1_000_000_000_000_000) // 0.001 ETH
-	tx := types.NewTx(&types.LegacyTx{
-		Nonce: nonce, GasPrice: gasPrice, Gas: 21000, To: &to, Value: value,
-	})
-	signer := types.NewEIP155Signer(chainID)
-	signedTx, err := types.SignTx(tx, signer, privKey)
+	tx := &ethtypes.Transaction{
+		ChainID: chainID, Nonce: nonce, GasPrice: gasPrice, Gas: 21000, To: to, Value: value,
+	}
+	digest, err := tx.SigningHash()
+	if err != nil {
+		t.Fatalf("signing hash: %v", err)
+	}
+	sig, err := ethcrypto.Sign(digest, privKey)
 	if err != nil {
 		t.Fatalf("sign: %v", err)
 	}
-	raw, err := signedTx.MarshalBinary()
+	signedTx, err := tx.WithSignature(sig, from)
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
+	raw := signedTx.Raw
 
 	// Broadcast and monitor through the platform's OWN activities, not a
 	// bespoke path -- that is the point of this test.
@@ -117,7 +123,7 @@ func TestLiveChain_BroadcastAndMonitor(t *testing.T) {
 	env.SetTestTimeout(0)
 	env.RegisterActivity(a)
 
-	bVal, err := env.ExecuteActivity(a.BroadcastTransaction, "0x"+common.Bytes2Hex(raw))
+	bVal, err := env.ExecuteActivity(a.BroadcastTransaction, "0x"+hex.EncodeToString(raw))
 	if err != nil {
 		t.Fatalf("BroadcastTransaction failed: %v", err)
 	}
@@ -146,7 +152,7 @@ func TestLiveChain_BroadcastAndMonitor(t *testing.T) {
 	}
 
 	// Independent confirmation: the recipient's balance actually moved.
-	toBalance, err := client.BalanceAt(ctx, to, nil)
+	toBalance, err := client.BalanceAt(ctx, toHex)
 	if err != nil {
 		t.Fatalf("recipient balance: %v", err)
 	}
@@ -166,22 +172,21 @@ func TestLiveChain_SweepEmptiesAddress(t *testing.T) {
 	rpc, keyHex := liveChain(t)
 	ctx := context.Background()
 
-	client, err := ethclient.DialContext(ctx, rpc)
+	client, err := ethrpc.Dial(rpc)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
-	defer client.Close()
 
 	chainID, err := client.ChainID(ctx)
 	if err != nil {
 		t.Fatalf("chain id: %v", err)
 	}
-	privKey, err := crypto.HexToECDSA(keyHex)
+	privKey, err := ethcrypto.HexToECDSA(keyHex)
 	if err != nil {
 		t.Fatalf("bad SIGNING_KEY: %v", err)
 	}
-	from := crypto.PubkeyToAddress(privKey.PublicKey)
-	newAddress := common.HexToAddress("0x00000000000000000000000000000000000BEEF1")
+	from := ethcrypto.PubkeyToAddress(privKey.PublicKey)
+	const newAddress = "0x00000000000000000000000000000000000BEEF1"
 
 	a := NewActivities("", "", rpc, 1, nil)
 	s := &testsuite.WorkflowTestSuite{}
@@ -191,8 +196,8 @@ func TestLiveChain_SweepEmptiesAddress(t *testing.T) {
 
 	// 1. Build the sweep from real on-chain state.
 	buildVal, err := env.ExecuteActivity(a.BuildSweepTransaction, workflows.BuildSweepTransactionRequest{
-		OldAddress: from.Hex(),
-		NewAddress: newAddress.Hex(),
+		OldAddress: from,
+		NewAddress: newAddress,
 		EVMChainID: chainID.Int64(),
 	})
 	if err != nil {
@@ -212,21 +217,24 @@ func TestLiveChain_SweepEmptiesAddress(t *testing.T) {
 	//    signature from the retiring key's committee; here it is the same
 	//    hash signed with the same curve by the key that owns the address,
 	//    which is what AssembleSweepTransaction verifies against.
-	hash := common.HexToHash("0x" + built.TxHashHex)
-	sig, err := crypto.Sign(hash.Bytes(), privKey)
+	hash, err := hex.DecodeString(built.TxHashHex)
+	if err != nil {
+		t.Fatalf("the built sweep hash is not hex: %v", err)
+	}
+	sig, err := ethcrypto.Sign(hash, privKey)
 	if err != nil {
 		t.Fatalf("sign sweep hash: %v", err)
 	}
 
 	assembleVal, err := env.ExecuteActivity(a.AssembleSweepTransaction, workflows.AssembleSweepTransactionRequest{
-		NewAddress:   newAddress.Hex(),
+		NewAddress:   newAddress,
 		Nonce:        built.Nonce,
 		GasLimit:     built.GasLimit,
 		GasPriceWei:  built.GasPriceWei,
 		ValueWei:     built.ValueWei,
 		EVMChainID:   chainID.Int64(),
-		Signature:    common.Bytes2Hex(sig),
-		ExpectedFrom: from.Hex(),
+		Signature:    hex.EncodeToString(sig),
+		ExpectedFrom: from,
 	})
 	if err != nil {
 		t.Fatalf("AssembleSweepTransaction failed: %v", err)
@@ -261,11 +269,11 @@ func TestLiveChain_SweepEmptiesAddress(t *testing.T) {
 	// 4. The address must actually be drained, and the funds must have
 	//    arrived at the replacement.
 	time.Sleep(2 * time.Second)
-	oldBalance, err := client.BalanceAt(ctx, from, nil)
+	oldBalance, err := client.BalanceAt(ctx, from)
 	if err != nil {
 		t.Fatalf("old balance: %v", err)
 	}
-	newBalance, err := client.BalanceAt(ctx, newAddress, nil)
+	newBalance, err := client.BalanceAt(ctx, newAddress)
 	if err != nil {
 		t.Fatalf("new balance: %v", err)
 	}

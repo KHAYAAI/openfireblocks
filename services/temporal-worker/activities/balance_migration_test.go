@@ -6,9 +6,7 @@ import (
 	"math/big"
 	"testing"
 
-	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/crypto"
-
+	"forge-crypto/temporal-worker/internal/ethcrypto"
 	"forge-crypto/temporal-worker/workflows"
 )
 
@@ -25,12 +23,12 @@ import (
 // REAL threshold signature, not a plain-key stand-in) against real
 // mpc-party processes.
 func TestAssembleSweepTransaction_ValidSignature(t *testing.T) {
-	privKey, err := crypto.GenerateKey()
+	privKey, err := ethcrypto.GenerateKey()
 	if err != nil {
 		t.Fatalf("generate key: %v", err)
 	}
-	fromAddr := crypto.PubkeyToAddress(privKey.PublicKey)
-	toAddr := common.HexToAddress("0x4444444444444444444444444444444444444444")
+	fromAddr := ethcrypto.PubkeyToAddress(privKey.PublicKey)
+	const toAddr = "0x4444444444444444444444444444444444444444"
 
 	const (
 		nonce      = uint64(7)
@@ -40,10 +38,16 @@ func TestAssembleSweepTransaction_ValidSignature(t *testing.T) {
 	gasPrice := big.NewInt(20_000_000_000) // 20 gwei
 	value := big.NewInt(1_000_000_000_000_000)
 
-	tx, signer := newLegacySweepTx(nonce, gasPrice, value, gasLimit, toAddr, evmChainID)
-	hash := signer.Hash(tx)
+	to, err := ethcrypto.ParseAddress(toAddr)
+	if err != nil {
+		t.Fatalf("parse recipient: %v", err)
+	}
+	hash, err := newLegacySweepTx(nonce, gasPrice, value, gasLimit, to, evmChainID).SigningHash()
+	if err != nil {
+		t.Fatalf("signing hash: %v", err)
+	}
 
-	sig, err := crypto.Sign(hash.Bytes(), privKey)
+	sig, err := ethcrypto.Sign(hash, privKey)
 	if err != nil {
 		t.Fatalf("sign hash: %v", err)
 	}
@@ -53,14 +57,14 @@ func TestAssembleSweepTransaction_ValidSignature(t *testing.T) {
 
 	a := NewActivities("", "", "", 3, nil)
 	result, err := a.AssembleSweepTransaction(context.Background(), workflows.AssembleSweepTransactionRequest{
-		NewAddress:   toAddr.Hex(),
+		NewAddress:   toAddr,
 		Nonce:        nonce,
 		GasLimit:     gasLimit,
 		GasPriceWei:  gasPrice.String(),
 		ValueWei:     value.String(),
 		EVMChainID:   evmChainID,
 		Signature:    hex.EncodeToString(sig),
-		ExpectedFrom: fromAddr.Hex(),
+		ExpectedFrom: fromAddr,
 	})
 	if err != nil {
 		t.Fatalf("AssembleSweepTransaction returned an error: %v", err)
@@ -68,7 +72,7 @@ func TestAssembleSweepTransaction_ValidSignature(t *testing.T) {
 	if result.SignedTxHex == "" || result.TxHash == "" {
 		t.Fatalf("expected a non-empty signed tx and hash, got %+v", result)
 	}
-	t.Logf("assembled a real signed sweep tx recovering to %s: %s", fromAddr.Hex(), result.SignedTxHex)
+	t.Logf("assembled a real signed sweep tx recovering to %s: %s", fromAddr, result.SignedTxHex)
 }
 
 // TestAssembleSweepTransaction_RejectsWrongSigner proves the sender-recovery
@@ -76,16 +80,16 @@ func TestAssembleSweepTransaction_ValidSignature(t *testing.T) {
 // invalid transaction -- e.g. a signature from the wrong committee, or a
 // bug elsewhere in the pipeline that hashed one tx but signed another.
 func TestAssembleSweepTransaction_RejectsWrongSigner(t *testing.T) {
-	signerKey, err := crypto.GenerateKey()
+	signerKey, err := ethcrypto.GenerateKey()
 	if err != nil {
 		t.Fatalf("generate signer key: %v", err)
 	}
-	otherKey, err := crypto.GenerateKey()
+	otherKey, err := ethcrypto.GenerateKey()
 	if err != nil {
 		t.Fatalf("generate other key: %v", err)
 	}
-	claimedFrom := crypto.PubkeyToAddress(otherKey.PublicKey) // NOT the actual signer
-	toAddr := common.HexToAddress("0x5555555555555555555555555555555555555555")
+	claimedFrom := ethcrypto.PubkeyToAddress(otherKey.PublicKey) // NOT the actual signer
+	const toAddr = "0x5555555555555555555555555555555555555555"
 
 	const (
 		nonce      = uint64(1)
@@ -95,24 +99,30 @@ func TestAssembleSweepTransaction_RejectsWrongSigner(t *testing.T) {
 	gasPrice := big.NewInt(20_000_000_000)
 	value := big.NewInt(1)
 
-	tx, signer := newLegacySweepTx(nonce, gasPrice, value, gasLimit, toAddr, evmChainID)
-	hash := signer.Hash(tx)
+	to, err := ethcrypto.ParseAddress(toAddr)
+	if err != nil {
+		t.Fatalf("parse recipient: %v", err)
+	}
+	hash, err := newLegacySweepTx(nonce, gasPrice, value, gasLimit, to, evmChainID).SigningHash()
+	if err != nil {
+		t.Fatalf("signing hash: %v", err)
+	}
 
-	sig, err := crypto.Sign(hash.Bytes(), signerKey)
+	sig, err := ethcrypto.Sign(hash, signerKey)
 	if err != nil {
 		t.Fatalf("sign hash: %v", err)
 	}
 
 	a := NewActivities("", "", "", 3, nil)
 	_, err = a.AssembleSweepTransaction(context.Background(), workflows.AssembleSweepTransactionRequest{
-		NewAddress:   toAddr.Hex(),
+		NewAddress:   toAddr,
 		Nonce:        nonce,
 		GasLimit:     gasLimit,
 		GasPriceWei:  gasPrice.String(),
 		ValueWei:     value.String(),
 		EVMChainID:   evmChainID,
 		Signature:    hex.EncodeToString(sig),
-		ExpectedFrom: claimedFrom.Hex(),
+		ExpectedFrom: claimedFrom,
 	})
 	if err == nil {
 		t.Fatal("expected AssembleSweepTransaction to reject a signature that doesn't recover to ExpectedFrom, got no error")

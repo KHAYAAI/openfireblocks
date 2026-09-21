@@ -1,7 +1,7 @@
 # Licensing
 
-What the licence permits, why it was chosen, and the one dependency
-obligation that is actually binding.
+What the licence permits, why it was chosen, and what the dependency tree
+obliges you to.
 
 **None of this is legal advice.** It is an engineer's reading of the
 licence texts, written so that whoever briefs counsel can do so quickly.
@@ -62,40 +62,31 @@ licence key in this software today, so the clause is currently inert. It
 is worth knowing it is there: if you later add licence enforcement, the
 legal backing already exists.
 
-## The one binding dependency obligation
+## Dependencies
 
-`github.com/ethereum/go-ethereum` is **LGPL-3.0**, imported directly by
-nine files including `mpc-signer/signer.go` and `mpc-party/curve.go`.
-Everything else in the tree is permissive — MIT, ISC, BSD, Apache-2.0,
-one MPL-2.0 — and the 284-package JavaScript tree contains no GPL or AGPL
-at all.
+**There is no copyleft dependency.** Everything is permissive -- MIT, ISC,
+BSD, Apache-2.0, one MPL-2.0 -- and the 284-package JavaScript tree
+contains no GPL or AGPL at all.
 
-The LGPL permits selling proprietary software that links against it. What
-it requires is that whoever receives a distributed binary can relink it
-against their own modified build of the library.
+`github.com/ethereum/go-ethereum` was the exception, LGPL-3.0 and imported
+by nine files. It has been removed from every module, and CI fails any
+module that brings it back.
 
-Go links statically. There is no shared object for a recipient to
-replace, which makes this a genuinely awkward fit rather than a formality.
+That was worth doing even though it was not, strictly, blocking. The LGPL
+permits selling proprietary software that links against it; what it
+requires is that whoever receives a distributed binary can relink against
+their own build of the library, and Go links statically. Selling source
+licences for self-hosting discharged that. Shipping images without source
+would not have -- and that is precisely what a customer asks for as the
+customer count grows, at which point it becomes a question in procurement
+rather than a decision made calmly in advance.
 
-**Where that leaves each business model:**
-
-| Model | Status |
-|---|---|
-| Source licence to a self-hosting customer | **Satisfied.** They have the source; they can rebuild with a modified go-ethereum. |
-| Binary-only distribution (Docker images, no source) | **Not satisfied.** This is the case that needs fixing. |
-| SaaS you operate | **Not triggered.** The LGPL has no network clause; you are not distributing. |
-
-So the current plan — sell source licences for self-hosting — already
-discharges it. The exposure appears if you ship images without source,
-which is the natural thing to want as the customer count grows.
-
-Two ways to buy that freedom, costed in
-[engineering/GO-ETHEREUM-REMOVAL.md](engineering/GO-ETHEREUM-REMOVAL.md).
+See [engineering/GO-ETHEREUM-REMOVAL.md](engineering/GO-ETHEREUM-REMOVAL.md)
+for what replaced it and how the replacement is proven.
 
 ## Third-party inventory
 
-[NOTICE](NOTICE), which also names the exact files importing the LGPL
-dependency. It was compiled by reading `go.mod` files and the installed
+[NOTICE](NOTICE). It was compiled by reading `go.mod` files and the installed
 dependency tree — a starting point for a licence review, not the product
 of one. A buyer's diligence will run a scanner against this; better that
 it agrees with a file you wrote than surprises you.
@@ -106,8 +97,8 @@ it agrees with a file you wrote than surprises you.
    as the entity offering the terms. Unnamed, there is no identifiable
    party granting the licence.
 2. Have counsel review LICENSE, NOTICE and this document together.
-3. Decide whether the first customers get source (discharging the LGPL
-   obligation) or binaries (which does not).
+3. Decide whether the first customers get source or binaries. Either is
+   now clean; source is still the better fit for a self-hosted product.
 4. Put the commercial terms — support, warranty, liability cap, escrow —
    in a signed agreement. ELv2 governs the copyright grant and says
    nothing about any of those, and a bank will want all four.

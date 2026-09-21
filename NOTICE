@@ -24,41 +24,23 @@ This product bundles software from the projects below. Their licences
 govern those components, not this one.
 
 --------------------------------------------------------------------------------
-REQUIRES ACTION WHEN YOU DISTRIBUTE
+COPYLEFT: NONE
 --------------------------------------------------------------------------------
 
-github.com/ethereum/go-ethereum
-  GNU Lesser General Public License v3.0 (library)
-  https://github.com/ethereum/go-ethereum/blob/master/COPYING.LESSER
+There is no copyleft dependency in any Go module or in the JavaScript
+tree.
 
-  This is the only copyleft dependency in the tree, and it carries a real
-  obligation. Used directly by:
+github.com/ethereum/go-ethereum (LGPL-3.0) was one, imported by nine
+files across four modules. It has been removed, and CI fails any module
+that reintroduces it -- `go mod why` per module, which catches a
+transitive path as well as a direct import.
 
-      services/mpc-signer/signer.go
-      services/mpc-signer/vault.go
-      services/mpc-signer/tss/tss.go
-      services/mpc-signer/chains/ethereum.go
-      services/mpc-signer/chains/cosmos.go
-      services/mpc-party/curve.go
-      services/settlement/settlement.go
-      services/temporal-worker/activities/activities.go
-      services/temporal-worker/activities/balance_migration.go
+That matters commercially rather than technically: the LGPL obliges
+whoever receives a distributed binary to be able to relink it against
+their own build of the library, and Go links statically. Shipping source
+discharged it; shipping images would not have.
 
-  The LGPL permits commercial and proprietary use, including selling this
-  software. What it requires is that a recipient of a distributed binary
-  can replace go-ethereum with their own modified build of it.
-
-  Go links statically, so there is no shared library for a recipient to
-  swap. The practical discharge of that obligation is to give the
-  customer the source of the combined work, which a self-hosted source
-  licence does anyway -- so under the current business model this is
-  satisfied by what you were already shipping.
-
-  It stops being satisfied the moment you distribute binaries without
-  source, and it never applies at all to software you run yourself: the
-  LGPL has no network clause.
-
-  See docs/LICENSING.md and docs/engineering/GO-ETHEREUM-REMOVAL.md.
+See docs/engineering/GO-ETHEREUM-REMOVAL.md.
 
 --------------------------------------------------------------------------------
 PERMISSIVE

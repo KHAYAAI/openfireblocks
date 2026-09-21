@@ -5,12 +5,10 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math/big"
-	"strings"
 
-	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/common/hexutil"
-	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/ethclient"
+	"forge-crypto/temporal-worker/internal/ethcrypto"
+	"forge-crypto/temporal-worker/internal/ethrpc"
+	"forge-crypto/temporal-worker/internal/ethtypes"
 
 	"forge-crypto/temporal-worker/workflows"
 )
@@ -26,15 +24,15 @@ const sweepGasLimit = 21000
 // -- a single shared constructor so the two can never drift into hashing
 // one transaction and assembling a different one, which would silently
 // produce a signature that doesn't match the broadcast tx.
-func newLegacySweepTx(nonce uint64, gasPrice, value *big.Int, gasLimit uint64, to common.Address, evmChainID int64) (*types.Transaction, types.Signer) {
-	tx := types.NewTx(&types.LegacyTx{
+func newLegacySweepTx(nonce uint64, gasPrice, value *big.Int, gasLimit uint64, to []byte, evmChainID int64) *ethtypes.Transaction {
+	return &ethtypes.Transaction{
+		ChainID:  big.NewInt(evmChainID),
 		Nonce:    nonce,
 		GasPrice: gasPrice,
 		Gas:      gasLimit,
-		To:       &to,
+		To:       to,
 		Value:    value,
-	})
-	return tx, types.NewEIP155Signer(big.NewInt(evmChainID))
+	}
 }
 
 // BuildSweepTransaction queries the retiring address's real on-chain
@@ -44,22 +42,20 @@ func newLegacySweepTx(nonce uint64, gasPrice, value *big.Int, gasLimit uint64, t
 // sweeping (balance doesn't even cover gas) -- that's an expected outcome
 // for a key that was rotated before ever receiving funds, not a failure.
 func (a *Activities) BuildSweepTransaction(ctx context.Context, req workflows.BuildSweepTransactionRequest) (*workflows.BuildSweepTransactionResult, error) {
-	if !common.IsHexAddress(req.OldAddress) {
+	if !ethcrypto.IsHexAddress(req.OldAddress) {
 		return nil, fmt.Errorf("invalid old address: %q", req.OldAddress)
 	}
-	if !common.IsHexAddress(req.NewAddress) {
+	toAddr, err := ethcrypto.ParseAddress(req.NewAddress)
+	if err != nil {
 		return nil, fmt.Errorf("invalid new address: %q", req.NewAddress)
 	}
 
-	client, err := ethclient.DialContext(ctx, a.EthereumRPC)
+	client, err := ethrpc.Dial(a.EthereumRPC)
 	if err != nil {
 		return nil, fmt.Errorf("dial RPC: %w", err)
 	}
-	defer client.Close()
 
-	fromAddr := common.HexToAddress(req.OldAddress)
-
-	balance, err := client.BalanceAt(ctx, fromAddr, nil)
+	balance, err := client.BalanceAt(ctx, req.OldAddress)
 	if err != nil {
 		return nil, fmt.Errorf("get balance: %w", err)
 	}
@@ -75,14 +71,15 @@ func (a *Activities) BuildSweepTransaction(ctx context.Context, req workflows.Bu
 		return &workflows.BuildSweepTransactionResult{Skipped: true, BalanceWei: balance.String()}, nil
 	}
 
-	nonce, err := client.PendingNonceAt(ctx, fromAddr)
+	nonce, err := client.PendingNonceAt(ctx, req.OldAddress)
 	if err != nil {
 		return nil, fmt.Errorf("get nonce: %w", err)
 	}
 
-	toAddr := common.HexToAddress(req.NewAddress)
-	tx, signer := newLegacySweepTx(nonce, gasPrice, value, sweepGasLimit, toAddr, req.EVMChainID)
-	hash := signer.Hash(tx)
+	hash, err := newLegacySweepTx(nonce, gasPrice, value, sweepGasLimit, toAddr, req.EVMChainID).SigningHash()
+	if err != nil {
+		return nil, fmt.Errorf("compute the signing hash: %w", err)
+	}
 
 	return &workflows.BuildSweepTransactionResult{
 		BalanceWei:  balance.String(),
@@ -90,7 +87,7 @@ func (a *Activities) BuildSweepTransaction(ctx context.Context, req workflows.Bu
 		GasLimit:    sweepGasLimit,
 		GasPriceWei: gasPrice.String(),
 		ValueWei:    value.String(),
-		TxHashHex:   hex.EncodeToString(hash.Bytes()),
+		TxHashHex:   hex.EncodeToString(hash),
 	}, nil
 }
 
@@ -117,10 +114,11 @@ func (a *Activities) BuildSweepTransaction(ctx context.Context, req workflows.Bu
 // this produces has been proven cryptographically valid, not proven to
 // actually move funds on a real network.
 func (a *Activities) AssembleSweepTransaction(ctx context.Context, req workflows.AssembleSweepTransactionRequest) (*workflows.AssembleSweepTransactionResult, error) {
-	if !common.IsHexAddress(req.NewAddress) {
+	toAddr, err := ethcrypto.ParseAddress(req.NewAddress)
+	if err != nil {
 		return nil, fmt.Errorf("invalid new address: %q", req.NewAddress)
 	}
-	if !common.IsHexAddress(req.ExpectedFrom) {
+	if !ethcrypto.IsHexAddress(req.ExpectedFrom) {
 		return nil, fmt.Errorf("invalid expected sender address: %q", req.ExpectedFrom)
 	}
 
@@ -141,29 +139,18 @@ func (a *Activities) AssembleSweepTransaction(ctx context.Context, req workflows
 		return nil, fmt.Errorf("signature must be 65 bytes, got %d", len(sigBytes))
 	}
 
-	toAddr := common.HexToAddress(req.NewAddress)
-	tx, signer := newLegacySweepTx(req.Nonce, gasPrice, value, req.GasLimit, toAddr, req.EVMChainID)
+	tx := newLegacySweepTx(req.Nonce, gasPrice, value, req.GasLimit, toAddr, req.EVMChainID)
 
-	signedTx, err := tx.WithSignature(signer, sigBytes)
+	// WithSignature recovers the sender itself and refuses when it is not
+	// the address expected, so the check that used to be written out here
+	// now happens inside the one place that assembles a transaction.
+	signed, err := tx.WithSignature(sigBytes, req.ExpectedFrom)
 	if err != nil {
 		return nil, fmt.Errorf("apply signature: %w", err)
 	}
 
-	sender, err := types.Sender(signer, signedTx)
-	if err != nil {
-		return nil, fmt.Errorf("recover sender from signed sweep tx: %w", err)
-	}
-	if !strings.EqualFold(sender.Hex(), req.ExpectedFrom) {
-		return nil, fmt.Errorf("signed sweep tx recovers to %s, expected %s -- refusing to return an invalid transaction", sender.Hex(), req.ExpectedFrom)
-	}
-
-	raw, err := signedTx.MarshalBinary()
-	if err != nil {
-		return nil, fmt.Errorf("RLP-encode signed tx: %w", err)
-	}
-
 	return &workflows.AssembleSweepTransactionResult{
-		SignedTxHex: hexutil.Encode(raw),
-		TxHash:      signedTx.Hash().Hex(),
+		SignedTxHex: "0x" + hex.EncodeToString(signed.Raw),
+		TxHash:      "0x" + hex.EncodeToString(signed.Hash),
 	}, nil
 }

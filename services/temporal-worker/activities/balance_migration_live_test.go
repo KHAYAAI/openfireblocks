@@ -33,9 +33,8 @@ import (
 
 	"go.temporal.io/sdk/testsuite"
 
+	"forge-crypto/temporal-worker/internal/ethcrypto"
 	"forge-crypto/temporal-worker/workflows"
-	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/crypto"
 )
 
 func TestLiveBalanceMigrationSweep(t *testing.T) {
@@ -70,7 +69,7 @@ func TestLiveBalanceMigrationSweep(t *testing.T) {
 	oldAddress := dkgResult.ThresholdAddress
 	t.Logf("real DKG derived the 'old' threshold address to sweep from: %s", oldAddress)
 
-	newAddress := common.HexToAddress("0x6666666666666666666666666666666666666666")
+	const newAddress = "0x6666666666666666666666666666666666666666"
 	const (
 		nonce      = uint64(0)
 		gasLimit   = uint64(21000)
@@ -79,12 +78,18 @@ func TestLiveBalanceMigrationSweep(t *testing.T) {
 	gasPrice := big.NewInt(20_000_000_000)
 	value := big.NewInt(1_000_000_000_000_000) // 0.001 ETH, arbitrary for this test
 
-	tx, signer := newLegacySweepTx(nonce, gasPrice, value, gasLimit, newAddress, evmChainID)
-	hash := signer.Hash(tx)
+	to, err := ethcrypto.ParseAddress(newAddress)
+	if err != nil {
+		t.Fatalf("parse recipient: %v", err)
+	}
+	hash, err := newLegacySweepTx(nonce, gasPrice, value, gasLimit, to, evmChainID).SigningHash()
+	if err != nil {
+		t.Fatalf("signing hash: %v", err)
+	}
 
 	signReq := workflows.ThresholdSigningRequest{
 		CeremonyID:     dkgReq.CeremonyID,
-		Message:        hex.EncodeToString(hash.Bytes()),
+		Message:        hex.EncodeToString(hash),
 		PartyIDs:       []int{1, 2},
 		PartyEndpoints: []string{"http://localhost:7101", "http://localhost:7102"},
 		ChainID:        "ethereum",
@@ -103,7 +108,7 @@ func TestLiveBalanceMigrationSweep(t *testing.T) {
 	}
 
 	assembleVal, err := env.ExecuteActivity(a.AssembleSweepTransaction, workflows.AssembleSweepTransactionRequest{
-		NewAddress:   newAddress.Hex(),
+		NewAddress:   newAddress,
 		Nonce:        nonce,
 		GasLimit:     gasLimit,
 		GasPriceWei:  gasPrice.String(),
@@ -130,11 +135,10 @@ func TestLiveBalanceMigrationSweep(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to decode signature: %v", err)
 	}
-	recoveredPub, err := crypto.SigToPub(hash.Bytes(), sigBytes)
+	recoveredAddress, err := ethcrypto.RecoverAddress(hash, sigBytes)
 	if err != nil {
 		t.Fatalf("failed to recover public key from signature: %v", err)
 	}
-	recoveredAddress := crypto.PubkeyToAddress(*recoveredPub).Hex()
 	if recoveredAddress != oldAddress {
 		t.Fatalf("sweep tx signature recovers to %s, but DKG derived %s -- INVALID", recoveredAddress, oldAddress)
 	}

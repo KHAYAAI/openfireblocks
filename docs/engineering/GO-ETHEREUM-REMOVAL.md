@@ -1,129 +1,142 @@
 # Removing the LGPL dependency
 
-Scoped work to eliminate `github.com/ethereum/go-ethereum`, the only
-copyleft component in the tree.
+**Status: done.** `github.com/ethereum/go-ethereum` is gone from every Go
+module in this repository, and CI fails any module that brings it back.
 
-## Why, and why it is not urgent
+This document is kept because the reasoning still matters: it explains
+what was replaced, what was deliberately *not* hand-rolled, and how the
+replacement is proven.
 
-The LGPL permits selling proprietary software that links against it. What
-it requires is that whoever receives a distributed binary can relink it
-against their own modified build of the library. Go links statically, so
-there is nothing for a recipient to swap — which makes this an awkward
-fit rather than a formality.
+## Why
 
-Under the current model it is already discharged:
+go-ethereum's library is LGPL-3.0. It permits commercial and proprietary
+use -- selling this software was never in question -- but it requires that
+whoever receives a distributed binary can relink it against their own
+build of the library. Go links statically, so there is nothing to relink.
 
-| Model | LGPL status |
+| Model | Status under LGPL |
 |---|---|
-| Source licence to a self-hosting customer | **Satisfied** — they can rebuild |
+| Source licence to a self-hosting customer | Satisfied -- they can rebuild |
 | Binary-only distribution (images, no source) | **Not satisfied** |
-| SaaS you operate | **Not triggered** — no network clause |
+| SaaS you operate | Not triggered -- no network clause |
 
-So this is not a blocker for the first deals. It becomes one the moment a
-customer wants images without source, which is the natural thing to want
-as the customer count grows, and it is the kind of question a bank's
-procurement or a due-diligence licence scan raises at the worst possible
-moment.
+Selling source licences already discharged it. The exposure was the
+second row, which is the natural thing a customer asks for as the customer
+count grows, and it is the kind of question a bank's procurement raises at
+the worst possible moment. Removing the dependency removes the question.
 
-Do it when a deal needs it, or when there is slack. Not before the
-cryptographic audit.
+## What replaced it
 
-## What is actually used
+Three small packages, present in each module that needs them.
 
-Nine files, and the dependency is far shallower than the count suggests.
-Measured, not estimated:
-
-| Import | Files | Replaceable with |
+| Package | Replaces | What it does |
 |---|---|---|
-| `crypto` | 6 | `decred/dcrd/dcrec/secp256k1/v4` (ISC) + `golang.org/x/crypto/sha3` (BSD-3) — **both already in the module graph**, pulled in indirectly by tss-lib and btcec, so this adds no new supply-chain surface |
-| `common` | 5 | ~40 lines: a 20-byte address type and hex parsing |
-| `common/hexutil` | 4 | ~20 lines: `0x`-prefixed hex encode/decode |
-| `core/types` | 5 | the hard one — see below |
-| `ethclient` | 3 | plain JSON-RPC over `net/http` |
+| `internal/ethcrypto` | `crypto`, `common`, `common/hexutil` | Public-key encoding, address derivation, EIP-55 checksums, signing, recovery, verification |
+| `internal/ethtypes` | `core/types` | RLP, both transaction forms, signing hashes, and enough decoding to read a signed transaction back |
+| `internal/ethrpc` | `ethclient` | The eight JSON-RPC methods this platform actually calls |
 
-Four of the nine files (`mpc-party/curve.go`, `mpc-signer/tss/tss.go`,
-`mpc-signer/vault.go`, `mpc-signer/chains/cosmos.go`) use **only**
-`crypto`, and between them only ten symbols: `S256`, `FromECDSAPub`,
-`FromECDSA`, `PubkeyToAddress`, `GenerateKey`, `HexToECDSA`, `Sign`,
-`SigToPub`, `VerifySignature`, `CompressPubkey`.
+**No cryptography was reimplemented.** The curve arithmetic is btcec over
+decred's secp256k1 (ISC) and the hash is `golang.org/x/crypto/sha3`
+(BSD-3) -- both were already in the module graph via tss-lib, so this
+added no new supply-chain surface. What go-ethereum was supplying was byte
+layout.
 
-Every one of those is thin. `PubkeyToAddress` is the last 20 bytes of a
-Keccak-256 hash of the uncompressed public key. `S256` is the same curve
-`dcrec/secp256k1` already provides, and which `btcec` — already a
-dependency, ISC-licensed — wraps. There is no cryptography to reimplement
-here; it is adapter code.
+## Why the bytes were the dangerous part
 
-## The one genuinely hard part
+An encoding mistake here does not produce an error. It produces a
+signature that recovers to the correct address over a transaction nobody
+authorised, and every downstream check passes because every downstream
+check reads the same bytes.
 
-`core/types` is transaction construction, RLP encoding, and the EIP-155 /
-EIP-1559 signing hashes. `signer.go` and `chains/ethereum.go` build
-`LegacyTx` and `DynamicFeeTx` and sign them.
+The specific traps, each of which is now a named test:
 
-**This is the part not to hand-roll.** An RLP or signing-hash mistake
-produces a signature that recovers to the right address and is rejected by
-every node on the network — or worse, one that is valid for a transaction
-other than the one that was authorised. It is exactly the class of bug
-`chain-test.sh` exists to catch, and exactly the class that is expensive
-to catch any other way.
+- **Signature layout.** Ethereum orders a compact signature
+  `[R || S || V]`; btcec orders it `[V+27 || R || S]`. Hand one to the
+  other's parser and it does not fail -- it recovers a well-formed public
+  key for an account nobody controls.
+- **Zero in RLP** is the empty string, not a zero byte. `0x00` is a valid
+  one-byte string that encodes as itself, so a zero nonce written that way
+  yields a transaction with a hash no other client agrees with.
+- **EIP-155's two trailing zeroes.** Omit them and you get the
+  pre-EIP-155 signing hash, which signs a transaction valid on every EVM
+  chain simultaneously.
+- **`v = recovery + 35 + 2*chainId`.** Wrong arithmetic gives a
+  transaction every node rejects, or one a different chain accepts.
+- **Keccak-256 is not SHA3-256.** They differ in padding and produce
+  entirely different digests. Reaching for the obvious-looking
+  `sha3.New256` would give stable, well-formed addresses for accounts
+  whose keys do not exist.
+- **Contract creation is the empty string, not the zero address.** One
+  deploys a contract; the other sends the money to an account nobody
+  controls.
 
-Two honest options:
+## How it is proven
 
-**Option A — move construction to the gateway (recommended).**
-The gateway already builds and assembles Ethereum transactions in
-`eth-transaction.ts`, using `ethers` (MIT), and the token path added this
-session does the same. The Go services would sign digests and stop
-constructing transactions at all. This is also the better architecture
-independently of licensing: there would be one place that decides what
-bytes get signed, rather than two implementations that can drift.
+Not by a second reading of the specification -- that proves only that the
+same person made the same mistake twice. Every path is pinned to golden
+vectors **generated by go-ethereum itself** before it was removed, and
+committed rather than recomputed:
 
-**Option B — a small Go RLP/typed-transaction package**, ported from a
-permissive source rather than written fresh, with differential tests
-against go-ethereum in the test build only (test-only use is not
-distributed, so it carries no obligation).
+| File | Count | Covers |
+|---|---|---|
+| `testdata_vectors.json` | 44 | Key encodings and addresses, including `n-1` and short coordinates |
+| `testdata_sigvectors.json` | 25 | Signing and recovery |
+| `testdata_txvectors.json` | 15 | Both transaction types, contract creation, zero values, a uint256 maximum, 300-byte calldata, four chain ids |
 
-## Sequencing
+Signing reproduces go-ethereum **byte for byte**, because btcec's nonce is
+RFC 6979 and therefore deterministic -- so the assertion is on exact
+bytes, not on "it verifies". The transaction tests assert the signing
+hash, the full encoded transaction and the transaction hash.
 
-Bottom-up, so each step is independently shippable and testable. Nothing
-here needs a flag day.
+The first key vector derives
+`0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf` from private key 1, which is
+one of the most widely published addresses in Ethereum. A reader can
+confirm the *generator* was right without running anything.
 
-| # | Step | Files | Effort |
-|---|---|---|---|
-| 1 | `internal/ethcrypto`: address derivation, keccak, secp256k1 sign/verify/recover over `dcrec` + `x/crypto/sha3`. Differential tests against go-ethereum across thousands of random keys. | new | 3 days |
-| 2 | Cut the four `crypto`-only files over | `curve.go`, `tss/tss.go`, `vault.go`, `chains/cosmos.go` | 1 day |
-| 3 | `internal/ethtypes`: `Address`, `Hash`, hexutil equivalents | new | 1 day |
-| 4 | Replace `ethclient` with JSON-RPC over `net/http`. Exactly seven methods are called: `BalanceAt`, `ChainID`, `EstimateGas`, `PendingNonceAt`, `SendTransaction`, `SuggestGasPrice`, `TransactionReceipt` | `settlement.go`, `activities.go`, `balance_migration.go` | 2 days |
-| 5 | Transaction construction, Option A or B | `signer.go`, `chains/ethereum.go` | **A: 4 days · B: 8 days** |
-| 6 | Drop the dependency, verify with `go mod why`, update NOTICE | all | 1 day |
+## What was deliberately not done
 
-**Option A: ~12 working days. Option B: ~16.**
+The original plan recommended moving transaction construction to the
+gateway rather than writing RLP in Go, on the grounds that hand-rolled RLP
+is how you sign the wrong transaction. That recommendation was right about
+the risk and wrong about the mitigation available: with go-ethereum still
+present, differential vectors could be generated for every case that
+mattered, which converts "hand-rolled RLP" into "RLP pinned byte for byte
+to the reference implementation".
 
-One engineer, sequential. Step 1 is the only one that needs care and it is
-mostly writing differential tests; steps 2–4 are mechanical.
+Consolidating construction in the gateway is still the better
+architecture, for a reason that has nothing to do with licensing -- one
+place deciding what bytes get signed, rather than two that can drift. It
+is now a refactor that can be done on its own merits instead of under a
+licensing deadline.
 
-## How you know it worked
+## Keeping it out
 
-The proof already exists and does not need to be built:
+CI runs, per module:
 
-- `chain-test.sh` mines a threshold-signed transaction on a real
-  multi-node network. An encoding mistake fails here.
-- `stablecoin-drill.sh` does the same for ERC-20 transfers, and checks the
-  recipient's balance on chain rather than trusting the platform's account
-  of what it did.
-- `services/mpc-signer/chains/correctness_test.go` and the mpc-party suite
-  cover signature correctness directly.
-
-Add one gate at step 6:
-
-```bash
-go mod why github.com/ethereum/go-ethereum   # must report "not needed"
+```
+go mod why github.com/ethereum/go-ethereum
 ```
 
-in CI, so the dependency cannot return through a transitive path without
-somebody noticing.
+and fails unless the answer is that the module does not need it. That is
+the right question: checking `go.mod` would miss a transitive
+reintroduction, and checking imports would miss the module graph.
 
-## What this does not fix
+A dependency like this returns without anyone deciding to bring it back --
+one import of a convenient helper, or a new library that pulls it in -- and
+the obligation would be live again in a release nobody reviewed for it.
 
-The `ethereum/client-go` container image used by the kind cluster is
-**GPL-3.0** — a different licence on the same project. It is irrelevant:
-it is a test fixture that is run, not linked, and never redistributed. Do
-not let a licence scanner's report conflate the two.
+## What this does not cover
+
+- **`infrastructure/kind/btctool` and `infrastructure/kind/recover`** still
+  use it. They are developer tooling, never built into a shipped image and
+  never distributed, so no obligation attaches. They are excluded from the
+  CI gate for that reason, not by oversight.
+- **The `ethereum/client-go` container image** used by the kind cluster is
+  GPL-3.0 -- a different licence on the same project. It is a test fixture
+  that is run, not linked, and never redistributed. Do not let a licence
+  scanner conflate the two.
+- **`sdks/go`** declared go-ethereum in its `go.mod` and never imported it.
+  Removed. An unused dependency still appears in a customer's licence scan,
+  and this one was answering procurement questions for no benefit at all.
+  (That module also shares a module path with `sdks/sdk-go`; worth
+  resolving separately.)

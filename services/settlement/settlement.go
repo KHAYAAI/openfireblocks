@@ -3,19 +3,20 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
-	"github.com/ethereum/go-ethereum"
-	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/google/uuid"
+
+	"forge-crypto/settlement/internal/ethrpc"
+	"forge-crypto/settlement/internal/ethtypes"
 )
 
 // SettlementService broadcasts signed transactions to blockchains
@@ -332,14 +333,14 @@ func (s *SettlementService) HandleGetSettlement(w http.ResponseWriter, r *http.R
 // EthereumClient implements ChainClient for Ethereum
 type EthereumClient struct {
 	rpcURL string
-	client *ethclient.Client
+	client *ethrpc.Client
 }
 
 // NewEthereumClient creates a new Ethereum client
 func NewEthereumClient(rpcURL string) (*EthereumClient, error) {
-	client, err := ethclient.Dial(rpcURL)
+	client, err := ethrpc.Dial(rpcURL)
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect to Ethereum: %w", err)
+		return nil, fmt.Errorf("failed to configure the Ethereum client: %w", err)
 	}
 
 	return &EthereumClient{
@@ -358,17 +359,26 @@ func NewEthereumClient(rpcURL string) (*EthereumClient, error) {
 // funds, that is the single most dangerous stub in this codebase: it
 // doesn't just fail to work, it actively lies that money moved.
 func (e *EthereumClient) BroadcastTransaction(ctx context.Context, txData []byte) (string, error) {
-	tx := &types.Transaction{}
-	if err := tx.UnmarshalBinary(txData); err != nil {
-		return "", fmt.Errorf("failed to decode signed transaction: %w", err)
-	}
+	// The hash is computed from the bytes about to be sent rather than
+	// taken from the node's reply, so it is known before the broadcast and
+	// is still known if the broadcast times out. A transaction that was
+	// accepted by a node whose reply was lost is exactly the case where an
+	// operator needs the hash to go and look.
+	expected := "0x" + hex.EncodeToString(ethtypes.TransactionHash(txData))
 
-	if err := e.client.SendTransaction(ctx, tx); err != nil {
+	returned, err := e.client.SendRawTransaction(ctx, "0x"+hex.EncodeToString(txData))
+	if err != nil {
 		return "", fmt.Errorf("failed to broadcast transaction: %w", err)
 	}
+	// A node that reports a different hash has done something to the
+	// transaction. Worth saying out loud rather than silently preferring
+	// one of the two.
+	if !strings.EqualFold(returned, expected) {
+		log.Printf("WARNING: broadcast %s but the node reported %s", expected, returned)
+	}
 
-	log.Printf("broadcast Ethereum transaction %s (%d bytes)", tx.Hash().Hex(), len(txData))
-	return tx.Hash().Hex(), nil
+	log.Printf("broadcast Ethereum transaction %s (%d bytes)", expected, len(txData))
+	return expected, nil
 }
 
 // GetTransactionStatus checks a transaction's on-chain receipt. Used to
@@ -378,14 +388,16 @@ func (e *EthereumClient) BroadcastTransaction(ctx context.Context, txData []byte
 // settlement "confirmed" within one 5-second tick regardless of whether
 // anything real happened on-chain.
 func (e *EthereumClient) GetTransactionStatus(ctx context.Context, txHash string) (string, error) {
-	receipt, err := e.client.TransactionReceipt(ctx, common.HexToHash(txHash))
+	receipt, err := e.client.TransactionReceipt(ctx, txHash)
 	if err != nil {
-		if errors.Is(err, ethereum.NotFound) {
+		if errors.Is(err, ethrpc.ErrNotFound) {
 			return "pending", nil // mined but not yet indexed, or still in the mempool
 		}
 		return "", fmt.Errorf("failed to get transaction receipt: %w", err)
 	}
-	if receipt.Status == types.ReceiptStatusSuccessful {
+	// Status 0 means the transaction was mined and reverted: it is on
+	// chain, it paid its gas, and it moved nothing.
+	if receipt.Status == 1 {
 		return "confirmed", nil
 	}
 	return "failed", nil
@@ -400,11 +412,11 @@ func (e *EthereumClient) GetTransactionStatus(ctx context.Context, txHash string
 // transaction regardless of whether it was a transfer, a contract call, or
 // anything else.
 func (e *EthereumClient) EstimateGas(ctx context.Context, txData []byte) (uint64, error) {
-	tx := &types.Transaction{}
-	if err := tx.UnmarshalBinary(txData); err != nil {
+	info, err := ethtypes.DecodeSignedTransaction(txData)
+	if err != nil {
 		return 0, fmt.Errorf("failed to decode signed transaction: %w", err)
 	}
-	return tx.Gas(), nil
+	return info.Gas, nil
 }
 
 // BitcoinClient implements ChainClient for Bitcoin

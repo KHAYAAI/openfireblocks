@@ -22,8 +22,8 @@ import (
 
 	"go.temporal.io/sdk/testsuite"
 
+	"forge-crypto/temporal-worker/internal/ethcrypto"
 	"forge-crypto/temporal-worker/workflows"
-	"github.com/ethereum/go-ethereum/crypto"
 )
 
 func TestLiveRealDKGAndSigning(t *testing.T) {
@@ -67,7 +67,7 @@ func TestLiveRealDKGAndSigning(t *testing.T) {
 	}
 	t.Logf("real DKG (via temporal-worker's actual activity code, against 3 real separate processes) derived address %s", dkgResult.ThresholdAddress)
 
-	messageHash := crypto.Keccak256([]byte("openfireblocks live orchestration test: temporal-worker -> real mpc-party processes"))
+	messageHash := ethcrypto.Keccak256([]byte("openfireblocks live orchestration test: temporal-worker -> real mpc-party processes"))
 
 	signReq := workflows.ThresholdSigningRequest{
 		CeremonyID:     dkgReq.CeremonyID,
@@ -93,11 +93,10 @@ func TestLiveRealDKGAndSigning(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to decode signature: %v", err)
 	}
-	recoveredPub, err := crypto.SigToPub(messageHash, sigBytes)
+	recoveredAddress, err := ethcrypto.RecoverAddress(messageHash, sigBytes)
 	if err != nil {
 		t.Fatalf("failed to recover public key from signature: %v", err)
 	}
-	recoveredAddress := crypto.PubkeyToAddress(*recoveredPub).Hex()
 
 	if recoveredAddress != dkgResult.ThresholdAddress {
 		t.Fatalf("signature recovers to %s, but DKG derived %s -- INVALID", recoveredAddress, dkgResult.ThresholdAddress)

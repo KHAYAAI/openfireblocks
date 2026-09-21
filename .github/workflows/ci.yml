@@ -70,6 +70,33 @@ jobs:
         working-directory: ${{ matrix.module }}
         run: go test -race ./... -count=1
 
+      # The licence gate.
+      #
+      # go-ethereum is LGPL-3.0 and was removed from every module here (see
+      # docs/engineering/GO-ETHEREUM-REMOVAL.md). It is the kind of
+      # dependency that comes back without anyone deciding to bring it
+      # back: one import of a convenient helper, or a transitive path
+      # through a new library, and the obligation is live again in a
+      # release nobody reviewed for it.
+      #
+      # `go mod why` is the right question. Checking go.mod would miss a
+      # transitive reintroduction, and checking imports would miss the
+      # module graph -- this asks whether the built binary needs the
+      # package at all.
+      - name: No copyleft dependency
+        working-directory: ${{ matrix.module }}
+        run: |
+          if ! go mod why github.com/ethereum/go-ethereum 2>&1 | grep -q "does not need"; then
+            echo "::error::${{ matrix.module }} depends on github.com/ethereum/go-ethereum (LGPL-3.0)."
+            echo "This dependency was deliberately removed. Distributing binaries built"
+            echo "against it obliges us to let recipients relink, which Go's static"
+            echo "linking makes awkward -- see docs/LICENSING.md."
+            echo ""
+            go mod why github.com/ethereum/go-ethereum
+            exit 1
+          fi
+          echo "clean: no LGPL dependency"
+
   mpc-tss:
     name: MPC threshold signing (tss tag)
     runs-on: ubuntu-latest

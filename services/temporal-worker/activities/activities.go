@@ -4,16 +4,16 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
-	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/common/hexutil"
-	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/ethclient"
+	"forge-crypto/temporal-worker/internal/ethrpc"
+	"forge-crypto/temporal-worker/internal/ethtypes"
 	"go.temporal.io/sdk/activity"
 
 	"forge-crypto/temporal-worker/db"
@@ -135,37 +135,38 @@ func (a *Activities) SignTransaction(ctx context.Context, req workflows.Transact
 
 // BroadcastTransaction submits a raw signed transaction to the network.
 func (a *Activities) BroadcastTransaction(ctx context.Context, signedTx string) (*workflows.BroadcastResult, error) {
-	client, err := ethclient.DialContext(ctx, a.EthereumRPC)
+	client, err := ethrpc.Dial(a.EthereumRPC)
 	if err != nil {
 		return nil, fmt.Errorf("dial RPC: %w", err)
 	}
-	defer client.Close()
 
-	raw, err := hexutil.Decode(signedTx)
+	raw, err := hex.DecodeString(strings.TrimPrefix(signedTx, "0x"))
 	if err != nil {
 		return nil, fmt.Errorf("decode signed tx: %w", err)
 	}
-	tx := new(types.Transaction)
-	if err := tx.UnmarshalBinary(raw); err != nil {
+	// Decoded to confirm this is a transaction this platform recognises
+	// before it is broadcast, not to derive the hash -- the hash is the
+	// Keccak of the bytes themselves, which is true whatever they encode.
+	if _, err := ethtypes.DecodeSignedTransaction(raw); err != nil {
 		return nil, fmt.Errorf("unmarshal signed tx: %w", err)
 	}
-	if err := client.SendTransaction(ctx, tx); err != nil {
+	if _, err := client.SendRawTransaction(ctx, "0x"+hex.EncodeToString(raw)); err != nil {
 		return nil, fmt.Errorf("send tx: %w", err)
 	}
-	return &workflows.BroadcastResult{TxHash: tx.Hash().Hex()}, nil
+	return &workflows.BroadcastResult{
+		TxHash: "0x" + hex.EncodeToString(ethtypes.TransactionHash(raw)),
+	}, nil
 }
 
 // MonitorTransaction polls for the receipt until the configured number of
 // confirmations is reached. It heartbeats so Temporal can detect a stalled
 // activity, and respects the activity's context cancellation/timeout.
 func (a *Activities) MonitorTransaction(ctx context.Context, txHash string) (*workflows.MonitorResult, error) {
-	client, err := ethclient.DialContext(ctx, a.EthereumRPC)
+	client, err := ethrpc.Dial(a.EthereumRPC)
 	if err != nil {
 		return nil, fmt.Errorf("dial RPC: %w", err)
 	}
-	defer client.Close()
 
-	hash := common.HexToHash(txHash)
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
@@ -176,7 +177,7 @@ func (a *Activities) MonitorTransaction(ctx context.Context, txHash string) (*wo
 		case <-ticker.C:
 			activity.RecordHeartbeat(ctx, "polling for confirmations")
 
-			receipt, err := client.TransactionReceipt(ctx, hash)
+			receipt, err := client.TransactionReceipt(ctx, txHash)
 			if err != nil {
 				// Not mined yet (or transient): keep polling.
 				continue
@@ -185,12 +186,14 @@ func (a *Activities) MonitorTransaction(ctx context.Context, txHash string) (*wo
 			if err != nil {
 				continue
 			}
-			confirmations := int64(head) - receipt.BlockNumber.Int64() + 1
+			confirmations := int64(head) - int64(receipt.BlockNumber) + 1
 			if confirmations >= a.RequiredConfirmations {
 				return &workflows.MonitorResult{
-					BlockNumber:   receipt.BlockNumber.Int64(),
+					BlockNumber:   int64(receipt.BlockNumber),
 					Confirmations: confirmations,
-					Success:       receipt.Status == types.ReceiptStatusSuccessful,
+					// Status 0 is a transaction that was mined and
+					// reverted: on chain, gas paid, nothing moved.
+					Success: receipt.Status == 1,
 				}, nil
 			}
 		}
