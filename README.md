@@ -106,4 +106,17 @@ honest comparison against Copper and Fireblocks.
 
 ## License
 
-Apache-2.0.
+**Elastic License 2.0** ([LICENSE](LICENSE)) — source-available, not open
+source.
+
+You may read, modify, self-host and run this software for your own
+business, including in your own cloud. You may not offer it to third
+parties as a hosted or managed custody service.
+
+The client SDK in [`sdks/sdk-js/`](sdks/sdk-js/) is **Apache-2.0**, so it
+can be embedded in your applications without inheriting that restriction.
+
+Third-party components, including one LGPL dependency with an obligation
+that attaches when you distribute binaries, are inventoried in
+[NOTICE](NOTICE). What the licence means commercially is in
+[docs/LICENSING.md](docs/LICENSING.md).
