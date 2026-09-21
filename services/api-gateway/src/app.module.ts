@@ -13,6 +13,7 @@ import { IdentityModule } from './identity/identity.module';
 import { KeysModule } from './keys/keys.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
 import { TokensModule } from './tokens/tokens.module';
+import { DashboardModule } from './dashboard/dashboard.module';
 
 // Root module. Phase 1 wires multi-tenancy (CustomersModule), Prometheus
 // metrics (MetricsModule + global interceptor), the tenant-facing SignModule and
@@ -36,6 +37,7 @@ import { TokensModule } from './tokens/tokens.module';
     KeysModule,
     WebhooksModule,
     TokensModule,
+    DashboardModule,
   ],
   controllers: [AppController],
   providers: [

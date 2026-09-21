@@ -100,6 +100,27 @@ spec:
             - name: EVM_RPC_{{ $chainId }}
               value: {{ $url | quote }}
             {{- end }}
+            # The dashboard signs its session cookies with this. Unset, a
+            # random secret is generated at boot, which works and means
+            # everyone is signed out by a rolling update.
+            {{- if .Values.external.dashboardSessionSecret }}
+            - name: DASHBOARD_SESSION_SECRET
+              value: {{ .Values.external.dashboardSessionSecret | quote }}
+            {{- end }}
+            # Which chain the dashboard reads balances on when a page does
+            # not say. No default: a deployment on Polygon whose dashboard
+            # quietly read mainnet would report zero, which is
+            # indistinguishable from the customer's money not being there.
+            {{- if .Values.external.dashboardDefaultChainId }}
+            - name: DASHBOARD_DEFAULT_CHAIN_ID
+              value: {{ .Values.external.dashboardDefaultChainId | quote }}
+            {{- end }}
+            # Surfaced on the dashboard's first page. See
+            # infrastructure/kind/party-isolation-check.sh.
+            - name: PARTY_ISOLATION_LEVEL
+              value: {{ .Values.external.partyIsolationLevel | default "unknown" | quote }}
+            - name: COMPLIANCE_SERVICE_URL
+              value: http://{{ include "ofb.fullname" . }}-compliance:{{ .Values.compliance.port }}
             - name: REDIS_URL
               value: {{ .Values.external.redisUrl | quote }}
             # Durable settlements (SettlementsController) and real DKG key

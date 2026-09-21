@@ -33,6 +33,16 @@ external:
   #     "1": https://…      # Ethereum mainnet
   #     "137": https://…    # Polygon
   evmRpc: {}
+  # Dashboard. The session secret must be at least 32 characters; shorter
+  # or unset means a secret generated at boot, so sessions do not survive
+  # a restart.
+  dashboardSessionSecret: ""
+  dashboardDefaultChainId: ""
+  # What party-isolation-check.sh reports for this deployment. Shown to
+  # customers on the dashboard, because the gap between "2 of 3" and "2 of
+  # 3 protects you against a host compromise" should not live only in a
+  # runbook.
+  partyIsolationLevel: "unknown"
   requiredConfirmations: "6"
   # Decides how a threshold key's public key becomes a Bitcoin address.
   # mainnet by default because a wrong value does not fail loudly -- it

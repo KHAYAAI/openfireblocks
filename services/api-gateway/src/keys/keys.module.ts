@@ -20,5 +20,6 @@ import { TokensModule } from '../tokens/tokens.module';
   imports: [CustomersModule, PolicyModule, TokensModule],
   controllers: [KeysController],
   providers: [KeysService, KeysTemporalService, WebhookEmitter],
+  exports: [KeysService],
 })
 export class KeysModule {}
