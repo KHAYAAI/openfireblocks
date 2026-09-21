@@ -21,7 +21,7 @@ entire security claim, so it is stated per chain rather than as a list.
 
 | Chain | Signature scheme | Threshold (MPC) | Server-side build & broadcast | Proven by |
 |---|---|---|---|---|
-| Ethereum | ECDSA secp256k1 | **Yes** | Yes — `POST /keys/:id/transactions` | `chain-test.sh` against a real multi-node network |
+| Ethereum | ECDSA secp256k1 | **Yes** | Yes — `POST /keys/:id/transactions`, and `POST /keys/:id/token-transfers` for ERC-20 | `chain-test.sh` and `stablecoin-drill.sh` against a real multi-node network |
 | Bitcoin | ECDSA secp256k1 | **Yes** | Yes — `POST /keys/:id/bitcoin-transactions` | `bitcoin-api-drill.sh` against Bitcoin Core |
 | Solana | Ed25519 | **Yes** | Not yet — no API route | `TestEd25519ThresholdSignatureVerifies` |
 | Cosmos | ECDSA secp256k1 | Yes (same path as Ethereum) | Not yet — no API route | — |
@@ -45,6 +45,39 @@ this API. Cosmos is in the same position for the same reason.
 So Solana can honestly be described as MPC custody today, and cannot yet be
 described as a chain a customer can transact on. Both halves matter in a
 pitch.
+
+### Stablecoins
+
+ERC-20 stablecoins move on any EVM chain, under the same threshold signing
+as everything else, through `POST /keys/:id/token-transfers`. Rand-pegged
+tokens are first-class alongside dollar ones: they carry a `ZAR` peg, are
+held to rand limits set independently of the dollar ones, and aggregate in
+rand for threshold reporting.
+
+The signing half of this always worked — calldata has always been accepted
+and threshold-signed. What did not work was every control around it. An
+ERC-20 transfer carries its recipient and amount inside the calldata, so
+the transaction's own `to` is the token contract and its `value` is zero,
+and those are the two fields the amount limit, the counterparty whitelist
+and the regulatory aggregate all read. The limit compared zero against the
+ceiling; the whitelist compared an address identical for every transfer of
+that token; the daily aggregate summed to nothing. That is why it is worth
+stating separately from "we support ERC-20": the platform could sign a
+fifty-million-rand stablecoin transfer and no control had read it.
+
+Calldata is now decoded before policy, tokens must be registered and
+verified against their own `symbol()` and `decimals()` before they can move
+anything, and `stablecoin-drill.sh` proves the refusals on a real chain.
+
+Tokens ship registered but without contract addresses for the rand
+stablecoins — an address belongs to its issuer, not to a migration file.
+See [docs/compliance/STABLECOINS.md](compliance/STABLECOINS.md) and
+[THRESHOLD-REPORTING.md](compliance/THRESHOLD-REPORTING.md), which also
+states what the compliance side does *not* do.
+
+Not built: Solana SPL tokens (blocked on the missing Solana route), Tron,
+and fee abstraction — a key still needs the native coin for gas, so a
+customer holding only USDC cannot send it.
 
 ## Platform Architecture
 
