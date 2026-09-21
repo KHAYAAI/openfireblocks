@@ -22,7 +22,7 @@ const customer: Customer = {
   status: 'active',
   tier: 'pro',
   policies: {},
-  raw_digest_signing_enabled: false, // deliberately: this route must not need it
+  raw_digest_signing_enabled: false, arbitrary_contract_calls_enabled: false, // deliberately: this route must not need it
 };
 
 const bitcoinKey = {

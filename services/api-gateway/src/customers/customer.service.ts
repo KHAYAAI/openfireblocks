@@ -14,6 +14,11 @@ export interface Customer {
   // digest that policy cannot verify. Off by default -- see migration 017
   // and KeysService.signWithKey.
   raw_digest_signing_enabled: boolean;
+  // Allows calldata that is not a registered token transfer. Policy
+  // determines a transaction's recipient and amount by decoding the call;
+  // a call it cannot decode is one no control has read. Off by default --
+  // see migration 021 and KeysService.resolveTransferIntent.
+  arbitrary_contract_calls_enabled: boolean;
   // Only ever populated on createCustomer's return value -- the plaintext
   // key is shown exactly once and never stored or read back.
   api_key?: string;
@@ -77,7 +82,7 @@ export class CustomerService {
   async getByApiKey(apiKey: string): Promise<Customer | null> {
     const result = await this.pool.query(
       `SELECT customer_id, name, email, status, tier, policies,
-              raw_digest_signing_enabled
+              raw_digest_signing_enabled, arbitrary_contract_calls_enabled
        FROM customers WHERE api_key_hash = decode($1, 'hex') AND status = 'active'`,
       [hashApiKey(apiKey)],
     );
@@ -87,7 +92,7 @@ export class CustomerService {
   async getByCustomerId(customerId: string): Promise<Customer> {
     const result = await this.pool.query(
       `SELECT customer_id, name, email, status, tier, policies,
-              raw_digest_signing_enabled
+              raw_digest_signing_enabled, arbitrary_contract_calls_enabled
        FROM customers WHERE customer_id = $1::uuid`,
       [customerId],
     );
@@ -100,7 +105,7 @@ export class CustomerService {
   async list(): Promise<Customer[]> {
     const result = await this.pool.query(
       `SELECT customer_id, name, email, status, tier, policies,
-              raw_digest_signing_enabled
+              raw_digest_signing_enabled, arbitrary_contract_calls_enabled
        FROM customers ORDER BY created_at`,
     );
     return result.rows;

@@ -26,7 +26,7 @@ describe('KeysService.createKey', () => {
     status: 'active',
     tier: 'pro',
     policies: {},
-    raw_digest_signing_enabled: true,
+    raw_digest_signing_enabled: true, arbitrary_contract_calls_enabled: false,
   };
 
   const req: CreateKeyRequest = {
@@ -196,7 +196,7 @@ describe('KeysService.signWithKey', () => {
     status: 'active',
     tier: 'pro',
     policies: {},
-    raw_digest_signing_enabled: true,
+    raw_digest_signing_enabled: true, arbitrary_contract_calls_enabled: false,
   };
 
   const signReq = {
@@ -255,7 +255,7 @@ describe('KeysService.signWithKey', () => {
   // route is off unless a tenant has been granted it deliberately.
   it('refuses when the tenant does not have raw digest signing enabled', async () => {
     const { service, postgres, policy, temporal } = build({});
-    const ungranted: Customer = { ...customer, raw_digest_signing_enabled: false };
+    const ungranted: Customer = { ...customer, raw_digest_signing_enabled: false, arbitrary_contract_calls_enabled: false, };
 
     await expect(service.signWithKey(ungranted, 'key-1', signReq)).rejects.toThrow(
       /not enabled for this account/,
@@ -270,7 +270,7 @@ describe('KeysService.signWithKey', () => {
 
   it('points a refused caller at the route that does not have the gap', async () => {
     const { service } = build({});
-    const ungranted: Customer = { ...customer, raw_digest_signing_enabled: false };
+    const ungranted: Customer = { ...customer, raw_digest_signing_enabled: false, arbitrary_contract_calls_enabled: false, };
 
     // An error that only says "forbidden" leaves the caller to guess. The
     // whole reason this route is gated is that a better one exists.
@@ -424,7 +424,7 @@ describe('KeysService.signTransaction', () => {
     status: 'active',
     tier: 'pro',
     policies: {},
-    raw_digest_signing_enabled: true,
+    raw_digest_signing_enabled: true, arbitrary_contract_calls_enabled: false,
   };
 
   // A throwaway key used only to produce real signatures. Threshold and

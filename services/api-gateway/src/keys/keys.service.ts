@@ -28,7 +28,42 @@ import {
   assembleSignedTransaction,
   buildUnsignedTransaction,
 } from './eth-transaction';
-import { v4 as uuidv4 } from 'uuid';
+import { v4 as uuidv4, v5 as uuidv5 } from 'uuid';
+import {
+  Erc20Call,
+  Erc20DecodeError,
+  decodeErc20Call,
+  encodeTransfer,
+  encodeBalanceOf,
+  formatUnits,
+  hasCalldata,
+  parseUnits,
+} from './erc20';
+import { TokenRegistryService } from '../tokens/token-registry.service';
+import { EvmRpcService } from '../tokens/evm-rpc.service';
+import { TokenTransferDto } from './dto/token-transfer.dto';
+
+// What a transaction moves, as opposed to what it looks like on the wire.
+//
+// policyTo and assetAmount are what the controls evaluate; effectiveTo and
+// effectiveAmount are what gets recorded against the transaction so that a
+// later reader -- a regulatory aggregate, an auditor, a customer's own
+// reconciliation -- can answer "who received how much of what" without an
+// ABI decoder. They are null when the platform could not tell, which is a
+// truthful answer and a better one than a guess.
+interface TransferIntent {
+  policyTo: string;
+  asset: string;
+  assetAmount: string;
+  assetDecimals: number;
+  pegCurrency?: string;
+  isAllowance?: boolean;
+  effectiveTo: string | null;
+  effectiveAmount: string | null;
+  contractAddress?: string;
+  method?: string;
+  unreadable?: string;
+}
 
 // Derives each party's endpoint from MPC_PARTY_ENDPOINT_TEMPLATE (default
 // http://party-{id}:7000, matching infrastructure/helm/openfireblocks's
@@ -46,6 +81,28 @@ function derivePartyEndpoints(totalParties: number): {
   return { partyIds, partyEndpoints };
 }
 
+// A UUID for a row keyed by a caller-supplied idempotency key.
+//
+// signing.transactions.request_id is a UUID column; an idempotency key is
+// a free string the customer chose. Generating a fresh UUID per call would
+// make a retry insert a second row, so one logical transfer would appear
+// twice in the aggregate that decides whether a regulatory filing is due
+// -- and over-reporting is as much a defect as under-reporting when the
+// number is what a filing is based on. Deriving it instead makes retries
+// land on the same row.
+//
+// A caller-supplied key that already is a UUID is used as-is, so existing
+// rows keep their identity.
+const REQUEST_ID_NAMESPACE = '6d3a1b5e-1f0f-4a3a-9f1a-9b0f0f0d0c0b';
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+export function stableUuid(requestId: string): string {
+  return UUID_PATTERN.test(requestId)
+    ? requestId
+    : uuidv5(requestId, REQUEST_ID_NAMESPACE);
+}
+
 @Injectable()
 export class KeysService {
   private readonly logger = new Logger(KeysService.name);
@@ -61,7 +118,140 @@ export class KeysService {
     // emitter means no announcements, which is the same as a deployment
     // without the webhooks service.
     private readonly webhooks?: WebhookEmitter,
+    // Optional for the same reason as the emitter: the existing tests
+    // construct this service directly and none of them transact tokens. A
+    // missing registry means no token is transactable, which is the
+    // correct behaviour for a deployment that has not configured one.
+    private readonly tokens?: TokenRegistryService,
+    private readonly rpc?: EvmRpcService,
   ) {}
+
+  // Works out what a transaction actually moves, before anything decides
+  // whether it is allowed.
+  //
+  // This is the whole fix. An ERC-20 transfer carries its recipient and
+  // amount inside the calldata; the transaction's own `to` is the token
+  // contract and its `value` is zero. Handing those two fields to the
+  // policy engine -- which is what happened before this existed -- means
+  // the amount limit compares zero against the ceiling and the
+  // counterparty whitelist sees an address that is identical for every
+  // transfer of that token. Neither control could deny anything, and
+  // nothing about the system looked different.
+  //
+  // Three outcomes, and the third is the interesting one:
+  //
+  //   no calldata          -- a native transfer, governed as before
+  //   a registered token   -- governed on the decoded recipient and amount
+  //   anything else        -- refused, unless the tenant has explicitly
+  //                           accepted that policy cannot read it
+  private async resolveTransferIntent(
+    customer: Customer,
+    chainId: number,
+    to: string,
+    value: string,
+    data: string | undefined,
+  ): Promise<TransferIntent> {
+    if (!hasCalldata(data)) {
+      return {
+        policyTo: to,
+        asset: 'NATIVE',
+        assetAmount: value,
+        assetDecimals: 18,
+        effectiveTo: to,
+        effectiveAmount: value,
+      };
+    }
+
+    let call: Erc20Call | null;
+    try {
+      call = decodeErc20Call(data);
+    } catch (err) {
+      // Undecodable calldata. The platform cannot say who gets paid or how
+      // much, so it cannot claim any control evaluated this transaction.
+      return this.unreadableCalldata(customer, to, value, (err as Error).message);
+    }
+    if (!call) {
+      // hasCalldata said yes and the decoder said no calldata. Not
+      // reachable, but returning a native intent here would mean treating
+      // a contract call as a payment to the contract.
+      throw new BadRequestException('calldata could not be interpreted');
+    }
+
+    if (!this.tokens) {
+      throw new ServiceUnavailableException(
+        'the token registry is not configured, so token transfers cannot be governed or signed',
+      );
+    }
+
+    const token = await this.tokens.byContract(chainId, to);
+    if (!token || token.status !== 'verified') {
+      // A token transfer to a contract nobody registered. The calldata
+      // decoded, so the recipient and amount are known -- but the asset is
+      // not, which means its decimals are not, which means the amount is a
+      // number with no unit. A limit cannot be applied to that.
+      return this.unreadableCalldata(
+        customer,
+        to,
+        value,
+        token
+          ? `${token.symbol} on chain ${chainId} is registered but not verified (${token.status})`
+          : `no token is registered at ${to} on chain ${chainId}`,
+      );
+    }
+
+    return {
+      policyTo: call.recipient,
+      asset: token.symbol,
+      assetAmount: call.amount,
+      assetDecimals: token.decimals,
+      pegCurrency: token.pegCurrency ?? undefined,
+      isAllowance: call.isAllowance,
+      effectiveTo: call.recipient,
+      effectiveAmount: call.amount,
+      contractAddress: token.contractAddress ?? to,
+      method: call.method,
+    };
+  }
+
+  // Calldata the platform cannot account for.
+  //
+  // Refused by default. The tenant-level escape hatch mirrors
+  // raw_digest_signing_enabled and carries the same warning: with it on,
+  // the to and value that policy evaluates are the contract and zero, so
+  // the amount limit and the whitelist are not evaluating this
+  // transaction's payment at all. Calling a contract that is not an ERC-20
+  // is a real requirement and there is no other route for it, so the
+  // capability exists -- turning it on is a decision somebody makes on the
+  // record, not a default.
+  private unreadableCalldata(
+    customer: Customer,
+    to: string,
+    value: string,
+    why: string,
+  ): TransferIntent {
+    if (!customer.arbitrary_contract_calls_enabled) {
+      throw new BadRequestException(
+        `this transaction carries calldata the platform cannot account for: ${why}. ` +
+          'Policy determines the recipient and amount by decoding the call, and it cannot ' +
+          'decode this one -- so signing it would mean no control had read what it does. ' +
+          'To send a token, register and verify it and use POST /keys/:keyId/token-transfers. ' +
+          'To call a contract that is not an ERC-20, arbitrary contract calls must be ' +
+          'enabled for this account explicitly.',
+      );
+    }
+    return {
+      policyTo: to,
+      // Not given a symbol. An unnamed asset with no peg is escalated for
+      // approval by the policy engine rather than held to a limit it has
+      // no units for.
+      asset: 'UNKNOWN',
+      assetAmount: value,
+      assetDecimals: 18,
+      effectiveTo: null,
+      effectiveAmount: null,
+      unreadable: why,
+    };
+  }
 
   // Announce, without ever letting the announcement affect the work.
   //
@@ -288,12 +478,29 @@ export class KeysService {
       throw err;
     }
 
-    // The same to/value/chainId that went into the bytes just hashed.
+    // What the transaction actually moves, decoded from the same calldata
+    // that just went into the bytes -- not the envelope's own to/value,
+    // which for a token transfer are the contract and zero.
+    const intent = await this.resolveTransferIntent(
+      customer,
+      req.chainId,
+      req.to,
+      req.value,
+      req.data,
+    );
+
+    // The same fields that went into the bytes just hashed, read through
+    // the calldata rather than around it.
     await this.enforcePolicy(customer, requestId, {
-      to: req.to,
+      to: intent.policyTo,
       value: req.value,
       chainId: req.chainId,
       country: req.country,
+      asset: intent.asset,
+      assetAmount: intent.assetAmount,
+      assetDecimals: intent.assetDecimals,
+      pegCurrency: intent.pegCurrency,
+      isAllowance: intent.isAllowance,
     });
 
     const signed = await this.runSigningCeremony(
@@ -319,12 +526,205 @@ export class KeysService {
       throw new ServiceUnavailableException((err as Error).message);
     }
 
+    await this.recordTransfer(customer, requestId, req.chainId, key.blockchain, {
+      to: req.to,
+      value: req.value,
+      data: req.data ?? null,
+      gasLimit: req.gasLimit,
+      gasPrice: req.gasPrice ?? null,
+      nonce: req.nonce,
+      signedTx: assembled.raw,
+      txHash: assembled.hash,
+      intent,
+    });
+
     return {
       request_id: requestId,
       key_id: keyId,
       from: assembled.from,
       to: req.to,
       value: req.value,
+      chain_id: req.chainId,
+      nonce: req.nonce,
+      // What this transaction actually moves, as the platform understands
+      // it. For a native transfer these repeat to/value; for a token they
+      // are the only place the real recipient and amount appear.
+      asset: intent.asset,
+      recipient: intent.effectiveTo,
+      amount: intent.effectiveAmount,
+      signing_hash: built.signingHash,
+      raw_transaction: assembled.raw,
+      transaction_hash: assembled.hash,
+      signature: signed.signature,
+      parties: signed.parties,
+      threshold: key.threshold,
+      total_parties: signed.totalParties,
+    };
+  }
+
+  // Sends a registered token from a threshold key.
+  //
+  // The stablecoin route, and the reason it is separate from
+  // signTransaction: here the customer names a token, a recipient and an
+  // amount, and the platform encodes the ERC-20 call. Nothing the caller
+  // sends is bytes, so there is no encoding for the platform's
+  // understanding and the signed transaction to differ about.
+  //
+  // The amount is in the token's own units -- "100.50" -- and converted
+  // with the decimals the registry holds and a node has confirmed. That
+  // conversion is the single most dangerous arithmetic in this file: USDC
+  // is six decimals and DAI is eighteen, so using one for the other is a
+  // factor of a million million, in either direction, on a number that is
+  // about to move money.
+  async sendToken(customer: Customer, keyId: string, req: TokenTransferDto) {
+    const requestId = req.idempotencyKey ?? uuidv4();
+
+    if (!this.tokens) {
+      throw new ServiceUnavailableException(
+        'the token registry is not configured, so token transfers cannot be signed',
+      );
+    }
+
+    const key = await this.loadSignableKey(keyId, customer.customer_id);
+    if (key.blockchain === 'bitcoin' || key.blockchain === 'solana') {
+      throw new BadRequestException(
+        `key ${keyId} is a ${key.blockchain} key; this route sends ERC-20 tokens on EVM chains`,
+      );
+    }
+
+    // Resolved before anything else: an unregistered or unverified token
+    // must fail here, with an explanation, rather than after a signing
+    // ceremony has run.
+    const token = await this.tokens.requireTransactable(req.chainId, req.token);
+    if (!token.contractAddress) {
+      throw new BadRequestException(
+        `${token.symbol} on chain ${req.chainId} has no contract address recorded`,
+      );
+    }
+
+    let baseUnits: string;
+    let data: string;
+    try {
+      baseUnits = parseUnits(req.amount, token.decimals);
+      data = encodeTransfer(req.recipient, baseUnits);
+    } catch (err) {
+      if (err instanceof Erc20DecodeError) {
+        throw new BadRequestException((err as Error).message);
+      }
+      throw err;
+    }
+
+    // An ERC-20 transfer is around 65,000 gas. Defaulting rather than
+    // making the caller supply it: a caller reusing the 21,000 of a native
+    // send produces a transaction that runs out of gas, fails, and still
+    // pays the fee.
+    const gasLimit = req.gasLimit ?? Number(process.env.ERC20_TRANSFER_GAS_LIMIT ?? 100_000);
+
+    let built: BuiltTx;
+    try {
+      built = buildUnsignedTransaction({
+        to: token.contractAddress,
+        // Zero, always. The money is in the calldata; attaching ether to
+        // an ERC-20 transfer sends it to the token contract, where most
+        // contracts will reject it and some will simply keep it.
+        value: '0',
+        data,
+        gasLimit,
+        nonce: req.nonce,
+        chainId: req.chainId,
+        gasPrice: req.gasPrice,
+        maxFeePerGas: req.maxFeePerGas,
+        maxPriorityFeePerGas: req.maxPriorityFeePerGas,
+      });
+    } catch (err) {
+      if (err instanceof TransactionBuildError) {
+        throw new BadRequestException((err as Error).message);
+      }
+      throw err;
+    }
+
+    // The recipient and amount policy sees are the ones just encoded into
+    // the bytes about to be hashed -- not the transaction's own to and
+    // value, which are the token contract and zero.
+    await this.enforcePolicy(customer, requestId, {
+      to: req.recipient,
+      value: '0',
+      chainId: req.chainId,
+      country: req.country,
+      asset: token.symbol,
+      assetAmount: baseUnits,
+      assetDecimals: token.decimals,
+      pegCurrency: token.pegCurrency ?? undefined,
+      isAllowance: false,
+    });
+
+    const signed = await this.runSigningCeremony(
+      key,
+      keyId,
+      customer.customer_id,
+      requestId,
+      built.signingHash,
+    );
+
+    let assembled: SignedTx;
+    try {
+      assembled = assembleSignedTransaction(built, signed.signature, key.address);
+    } catch (err) {
+      this.logger.error(
+        `assembling the signed token transfer for key ${keyId} failed: ${(err as Error).message}`,
+      );
+      throw new ServiceUnavailableException((err as Error).message);
+    }
+
+    const intent: TransferIntent = {
+      policyTo: req.recipient,
+      asset: token.symbol,
+      assetAmount: baseUnits,
+      assetDecimals: token.decimals,
+      pegCurrency: token.pegCurrency ?? undefined,
+      effectiveTo: req.recipient,
+      effectiveAmount: baseUnits,
+      contractAddress: token.contractAddress,
+      method: 'transfer',
+    };
+    await this.recordTransfer(customer, requestId, req.chainId, key.blockchain, {
+      to: token.contractAddress,
+      value: '0',
+      data,
+      gasLimit,
+      gasPrice: req.gasPrice ?? null,
+      nonce: req.nonce,
+      signedTx: assembled.raw,
+      txHash: assembled.hash,
+      intent,
+    });
+
+    this.announce(customer.customer_id, 'signature.created', {
+      key_id: keyId,
+      request_id: requestId,
+      asset: token.symbol,
+      amount: req.amount,
+      recipient: req.recipient,
+    });
+
+    return {
+      request_id: requestId,
+      key_id: keyId,
+      from: assembled.from,
+      token: {
+        symbol: token.symbol,
+        contract_address: token.contractAddress,
+        decimals: token.decimals,
+        peg_currency: token.pegCurrency,
+      },
+      recipient: req.recipient,
+      // Both forms, deliberately. The decimal amount is what the customer
+      // asked for and what their reconciliation will compare against; the
+      // base units are what is actually in the signed bytes. Returning
+      // only one leaves the other to be re-derived by whoever needs it,
+      // with the decimals conversion done a second time somewhere else.
+      amount: req.amount,
+      amount_base_units: baseUnits,
       chain_id: req.chainId,
       nonce: req.nonce,
       signing_hash: built.signingHash,
@@ -335,6 +735,71 @@ export class KeysService {
       threshold: key.threshold,
       total_parties: signed.totalParties,
     };
+  }
+
+  // Records what was signed, so a later reader can answer "who received
+  // how much of what" without an ABI decoder.
+  //
+  // Never allowed to fail the request. The signature exists and the
+  // customer holds a transaction they can broadcast by the time this runs;
+  // refusing to return it because an audit row did not insert would be a
+  // worse outcome than an audit row that did not insert. Logged loudly
+  // instead, because a gap here is a gap in a regulatory aggregate.
+  private async recordTransfer(
+    customer: Customer,
+    requestId: string,
+    chainId: number,
+    blockchain: string,
+    tx: {
+      to: string;
+      value: string;
+      data: string | null;
+      gasLimit?: number | null;
+      gasPrice?: string | null;
+      nonce?: number | null;
+      signedTx: string;
+      txHash: string;
+      intent: TransferIntent;
+    },
+  ): Promise<void> {
+    try {
+      await this.postgres.recordTransfer({
+        // request_id is a UUID column and an idempotency key is a free
+        // string the customer chose. Deriving a stable UUID rather than
+        // generating a fresh one: a retry with the same idempotency key
+        // has to land on the same row, or one logical transfer appears
+        // twice in the aggregate that decides whether a filing is due.
+        rowId: stableUuid(requestId),
+        requestId,
+        customerId: customer.customer_id,
+        chain: blockchain,
+        to: tx.to,
+        data: tx.data,
+        value: tx.value,
+        gasLimit: tx.gasLimit ?? null,
+        gasPrice: tx.gasPrice ?? null,
+        nonce: tx.nonce ?? null,
+        signedTx: tx.signedTx,
+        txHash: tx.txHash,
+        status: 'signed',
+        assetSymbol: tx.intent.asset,
+        assetContract: tx.intent.contractAddress ?? null,
+        assetDecimals: tx.intent.assetDecimals,
+        // Copied onto the row rather than joined from the registry later:
+        // a token's peg is a fact about the transfer at the time it
+        // happened, and a later registry edit must not rewrite what a
+        // historical filing was based on.
+        assetPeg: tx.intent.pegCurrency ?? null,
+        effectiveTo: tx.intent.effectiveTo,
+        effectiveAmount: tx.intent.effectiveAmount,
+      });
+    } catch (err) {
+      this.logger.error(
+        `recording transfer ${requestId} for customer ${customer.customer_id} failed: ` +
+          `${(err as Error).message}. The signature was returned; this transfer will be ` +
+          'missing from regulatory aggregates until the row is reconciled.',
+      );
+    }
   }
 
   // Where to send money so this key can spend it.
@@ -365,6 +830,108 @@ export class KeysService {
         addresses: { preferred: key.address },
       };
     }
+    return this.bitcoinDepositAddresses(keyId, key);
+  }
+
+  // What a key holds, in each registered token as well as the native coin.
+  //
+  // Separate from getDepositAddresses because it is a different kind of
+  // answer -- that one is derivable from the public key alone and always
+  // succeeds, this one is a set of live chain reads, any of which can be
+  // slow or fail. Conflating them would make "where do I deposit" depend
+  // on an RPC endpoint being up.
+  //
+  // A customer holding two million USDC saw a zero balance before this
+  // existed, because nothing in the platform had ever read an ERC-20
+  // balance. That reads, to them, exactly like their money not being
+  // there.
+  async getBalances(customer: Customer, keyId: string, chainId: number) {
+    const key = await this.postgres.getKey(keyId, customer.customer_id);
+    if (!key) {
+      throw new NotFoundException(`no key ${keyId}`);
+    }
+    if (!key.address) {
+      throw new ConflictException(
+        `key ${keyId} is ${key.status}; it has no address until its DKG ceremony completes`,
+      );
+    }
+    if (!this.rpc || !this.tokens) {
+      throw new ServiceUnavailableException(
+        'balance reads need a token registry and a JSON-RPC endpoint, and one is not configured',
+      );
+    }
+    if (!this.rpc.configured(chainId)) {
+      throw new BadRequestException(
+        `no JSON-RPC endpoint is configured for chain ${chainId}, so balances there cannot be read`,
+      );
+    }
+
+    const tokens = (await this.tokens.list(chainId)).filter((t) => t.status === 'verified');
+
+    // Read concurrently, and let one token's failure be that token's
+    // failure. A single unresponsive contract must not blank out every
+    // other balance -- a customer looking at an incomplete list with a
+    // named error on one row can act on it; one looking at an error page
+    // cannot tell whether their money is gone.
+    const balances = await Promise.all(
+      tokens.map(async (token) => {
+        try {
+          const raw = await this.rpc!.call(
+            chainId,
+            token.contractAddress!,
+            encodeBalanceOf(key.address),
+          );
+          // An empty reply means the call reverted or the address holds no
+          // contract. Reporting that as zero would be a lie with the same
+          // shape as the truth.
+          if (!raw || raw === '0x') {
+            throw new Error('the contract returned no balance');
+          }
+          const baseUnits = BigInt(raw).toString(10);
+          return {
+            symbol: token.symbol,
+            contract_address: token.contractAddress,
+            decimals: token.decimals,
+            peg_currency: token.pegCurrency,
+            balance: formatUnits(baseUnits, token.decimals),
+            balance_base_units: baseUnits,
+          };
+        } catch (err) {
+          return {
+            symbol: token.symbol,
+            contract_address: token.contractAddress,
+            decimals: token.decimals,
+            peg_currency: token.pegCurrency,
+            balance: null,
+            balance_base_units: null,
+            error: (err as Error).message,
+          };
+        }
+      }),
+    );
+
+    let native: string | null = null;
+    let nativeError: string | undefined;
+    try {
+      native = (await this.rpc.provider(chainId).getBalance(key.address)).toString();
+    } catch (err) {
+      nativeError = (err as Error).message;
+    }
+
+    return {
+      key_id: keyId,
+      chain_id: chainId,
+      address: key.address,
+      native: {
+        balance_wei: native,
+        balance: native === null ? null : formatUnits(native, 18),
+        ...(nativeError ? { error: nativeError } : {}),
+      },
+      tokens: balances,
+    };
+  }
+
+  private async bitcoinDepositAddresses(keyId: string, key: { public_key: string }) {
 
     const network = process.env.BITCOIN_NETWORK ?? 'mainnet';
     let derived;
@@ -561,7 +1128,17 @@ export class KeysService {
   private async enforcePolicy(
     customer: Customer,
     requestId: string,
-    intent: { to: string; value: string; chainId: number; country?: string },
+    intent: {
+      to: string;
+      value: string;
+      chainId: number;
+      country?: string;
+      asset?: string;
+      assetAmount?: string;
+      assetDecimals?: number;
+      pegCurrency?: string;
+      isAllowance?: boolean;
+    },
   ) {
     const overrides = (customer.policies ?? {}) as Record<string, unknown>;
     const decision = await this.policy.evaluate({
@@ -569,6 +1146,11 @@ export class KeysService {
       customerTier: customer.tier,
       to: intent.to,
       value: intent.value,
+      asset: intent.asset,
+      assetAmount: intent.assetAmount,
+      assetDecimals: intent.assetDecimals,
+      pegCurrency: intent.pegCurrency,
+      isAllowance: intent.isAllowance,
       // A number, not key.blockchain (a name like "ethereum"):
       // policy-service's PolicyRequest.ChainID is an int and rejects the
       // name with 400.

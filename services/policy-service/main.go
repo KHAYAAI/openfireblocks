@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"math/big"
 	"net/http"
 	"os"
@@ -31,11 +32,46 @@ var policyFS embed.FS
 
 // PolicyRequest mirrors the api-gateway PolicyService client payload.
 type PolicyRequest struct {
-	CustomerID       string   `json:"customerId"`
-	CustomerTier     string   `json:"customerTier"`
-	To               string   `json:"to"`
-	Value            string   `json:"value"` // wei, base-10 string
-	ChainID          int      `json:"chainId"`
+	CustomerID   string `json:"customerId"`
+	CustomerTier string `json:"customerTier"`
+
+	// To is who receives the value, which for a token transfer is the
+	// ERC-20 recipient decoded out of the calldata -- NOT the transaction's
+	// own `to`, which is the token contract and is identical for every
+	// transfer of that token. Sending the contract address here is what
+	// made a counterparty whitelist meaningless for stablecoins: it either
+	// allowed every transfer of that token or none of them.
+	To string `json:"to"`
+
+	// Value is the native value attached to the transaction, in wei. For a
+	// token transfer this is legitimately "0" -- the money is in the
+	// calldata -- so the amount rules that read it are not the ones that
+	// govern a stablecoin.
+	Value   string `json:"value"`
+	ChainID int    `json:"chainId"`
+
+	// What actually moves. Asset is "NATIVE" for an ordinary transfer, or a
+	// registry symbol such as USDC or ZARP.
+	//
+	// These exist because the wei-denominated limits above cannot govern a
+	// token: 50,000 USDC is 50,000,000,000 base units, which compared
+	// against a hundred-ETH ceiling expressed in wei (1e20) passes without
+	// coming close. The units are not comparable and treating them as if
+	// they were is worse than having no limit, because it looks like one.
+	Asset         string `json:"asset"`
+	AssetAmount   string `json:"assetAmount"`
+	AssetDecimals int    `json:"assetDecimals"`
+
+	// PegCurrency is the ISO code a pegged token claims to track, empty for
+	// anything unpegged. When set, the amount is evaluated in that currency
+	// against limits denominated in it.
+	PegCurrency string `json:"pegCurrency"`
+
+	// IsAllowance marks an approve() call: nothing moves now, and the
+	// spender may move AssetAmount whenever they choose. Evaluated as the
+	// exposure it is rather than as a zero-value call.
+	IsAllowance bool `json:"isAllowance"`
+
 	Whitelist        []string `json:"whitelist"`
 	BlockedCountries []string `json:"blockedCountries"`
 	Country          string   `json:"country"`
@@ -96,6 +132,22 @@ func (e *evaluator) evaluate(ctx context.Context, req *PolicyRequest) (*PolicyDe
 		return nil, err
 	}
 
+	asset := req.Asset
+	if asset == "" {
+		asset = "NATIVE"
+	}
+
+	// The amount in the peg currency, for the rules that work in money.
+	//
+	// Only computed for a pegged token. An unpegged one has no currency
+	// value this service can assert, and inventing one -- by pretending the
+	// base units are dollars, say -- would produce a limit check that reads
+	// as authoritative and is arbitrary.
+	pegged, havePegged, err := peggedAmount(req)
+	if err != nil {
+		return nil, err
+	}
+
 	input := map[string]interface{}{
 		"value_wei":         valueWei,
 		"customer_tier":     req.CustomerTier,
@@ -103,6 +155,12 @@ func (e *evaluator) evaluate(ctx context.Context, req *PolicyRequest) (*PolicyDe
 		"whitelist":         req.Whitelist,
 		"blocked_countries": req.BlockedCountries,
 		"country":           req.Country,
+		"asset":             asset,
+		"is_token":          asset != "NATIVE",
+		"is_allowance":      req.IsAllowance,
+		"peg_currency":      req.PegCurrency,
+		"has_pegged_value":  havePegged,
+		"pegged_value":      pegged,
 	}
 
 	rs, err := e.query.Eval(ctx, rego.EvalInput(input))
@@ -147,6 +205,54 @@ func weiToFloat(s string) (float64, error) {
 	}
 	f, _ := new(big.Float).SetInt(bi).Float64()
 	return f, nil
+}
+
+// peggedAmount converts a token amount in base units into its peg currency.
+//
+// Returns ok=false when there is nothing to convert: a native transfer, or
+// a token with no peg. Those are governed by other rules, and a zero here
+// must not be mistaken for "worth nothing" -- hence the separate flag
+// rather than a sentinel value.
+//
+// Done in big.Float, not by dividing float64s. A token amount is an exact
+// integer of base units and 10^18 is well beyond what a float64 holds
+// exactly, so converting first and dividing second loses the low digits of
+// every large amount -- precisely the amounts a limit exists to catch.
+// The result is narrowed to a float64 only at the end, because rego
+// compares JSON numbers; at that point the value is a quantity of currency
+// rather than of base units, and a float64 is exact to the cent well past
+// any limit a custody platform would set.
+func peggedAmount(req *PolicyRequest) (float64, bool, error) {
+	if req.PegCurrency == "" || req.AssetAmount == "" {
+		return 0, false, nil
+	}
+	if req.AssetDecimals < 0 || req.AssetDecimals > 36 {
+		return 0, false, fmt.Errorf("implausible decimals %d for asset %q", req.AssetDecimals, req.Asset)
+	}
+
+	units, ok := new(big.Int).SetString(req.AssetAmount, 10)
+	if !ok {
+		// Not silently treated as zero. An unparseable amount that
+		// evaluated to zero would pass every limit in this file, which is
+		// the exact bypass the gateway's own amount parser was hardened
+		// against.
+		return 0, false, fmt.Errorf("invalid asset amount: %q", req.AssetAmount)
+	}
+	if units.Sign() < 0 {
+		return 0, false, fmt.Errorf("negative asset amount: %q", req.AssetAmount)
+	}
+
+	scale := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(req.AssetDecimals)), nil)
+	value := new(big.Float).SetPrec(256).Quo(
+		new(big.Float).SetPrec(256).SetInt(units),
+		new(big.Float).SetPrec(256).SetInt(scale),
+	)
+
+	f, _ := value.Float64()
+	if math.IsInf(f, 0) || math.IsNaN(f) {
+		return 0, false, fmt.Errorf("asset amount %q does not convert to a finite value", req.AssetAmount)
+	}
+	return f, true, nil
 }
 
 func toStringSlice(v interface{}) []string {

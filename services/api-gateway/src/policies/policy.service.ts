@@ -5,9 +5,32 @@ import { lastValueFrom } from 'rxjs';
 export interface PolicyInput {
   customerId: string;
   customerTier: string;
+
+  // Who receives the value. For a token transfer this is the ERC-20
+  // recipient decoded out of the calldata, NOT the transaction's own `to`
+  // -- that is the token contract, which is the same address for every
+  // transfer of that token and made the counterparty whitelist incapable
+  // of distinguishing one recipient from another.
   to: string;
-  value: string; // wei
+
+  // The native value attached to the transaction, in wei. Legitimately "0"
+  // for a token transfer.
+  value: string;
   chainId: number;
+
+  // What actually moves. 'NATIVE' for a plain transfer, otherwise a
+  // registry symbol. The wei-denominated rules cannot govern a token --
+  // the units are not comparable -- so the policy service applies limits
+  // denominated in the peg currency to these instead.
+  asset?: string;
+  assetAmount?: string; // base units
+  assetDecimals?: number;
+  pegCurrency?: string; // 'USD', 'ZAR', absent when unpegged
+
+  // An approve() call: nothing moves now, and the spender may move
+  // assetAmount at any later time.
+  isAllowance?: boolean;
+
   whitelist?: string[];
   blockedCountries?: string[];
   country?: string;

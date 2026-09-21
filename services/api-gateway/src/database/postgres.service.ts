@@ -58,6 +58,78 @@ export class PostgresService {
     }
   }
 
+  // Records what a threshold-signed transaction actually moves.
+  //
+  // signing.transactions was written only by the legacy single-key path
+  // (POST /sign -> mpc-signer). Everything signed through a real threshold
+  // ceremony -- which is the whole product -- went into signing_requests,
+  // whose columns are a digest and a blob: no recipient, no amount, no
+  // asset. So the daily aggregate that decides whether a regulatory filing
+  // is due has been summing a table that the platform's main signing route
+  // never wrote to.
+  //
+  // Written after the signature exists rather than before: this is a
+  // record of what was signed, and a row for a ceremony that failed would
+  // put money in the aggregate that never moved.
+  async recordTransfer(tx: {
+    rowId: string;
+    requestId: string;
+    customerId: string;
+    chain: string;
+    to: string;
+    data: string | null;
+    value: string;
+    gasLimit?: number | null;
+    gasPrice?: string | null;
+    nonce?: number | null;
+    signedTx?: string | null;
+    txHash?: string | null;
+    status: string;
+    assetSymbol: string | null;
+    assetContract: string | null;
+    assetDecimals: number | null;
+    assetPeg: string | null;
+    effectiveTo: string | null;
+    effectiveAmount: string | null;
+  }) {
+    await this.withTenant(tx.customerId, (client) =>
+      client.query(
+        `INSERT INTO signing.transactions (
+           request_id, customer_id, chain, to_address, amount, data,
+           gas_limit, gas_price, nonce, signed_tx, tx_hash, status,
+           asset_symbol, asset_contract, asset_decimals, asset_peg,
+           effective_to, effective_amount
+         ) VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
+                   $13, $14, $15, $16, $17, $18)
+         ON CONFLICT (request_id) DO UPDATE SET
+           signed_tx = EXCLUDED.signed_tx,
+           tx_hash = EXCLUDED.tx_hash,
+           status = EXCLUDED.status,
+           updated_at = NOW()`,
+        [
+          tx.rowId,
+          tx.customerId,
+          tx.chain,
+          tx.to,
+          tx.value,
+          tx.data,
+          tx.gasLimit ?? null,
+          tx.gasPrice ?? null,
+          tx.nonce ?? null,
+          tx.signedTx ?? null,
+          tx.txHash ?? null,
+          tx.status,
+          tx.assetSymbol,
+          tx.assetContract,
+          tx.assetDecimals,
+          tx.assetPeg,
+          tx.effectiveTo,
+          tx.effectiveAmount,
+        ],
+      ),
+    );
+  }
+
   // Upserts a transaction keyed by request_id so retries update in place.
   async saveTransaction(tx: TransactionRecord) {
     const query = `

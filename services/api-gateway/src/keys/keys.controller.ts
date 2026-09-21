@@ -4,6 +4,7 @@ import {
   Post,
   Body,
   Param,
+  Query,
   HttpCode,
   HttpStatus,
   NotFoundException,
@@ -18,6 +19,7 @@ import { Customer } from '../customers/customer.service';
 import { ThresholdSignRequestDto } from './dto/threshold-sign.dto';
 import { SignTransactionDto } from './dto/sign-transaction.dto';
 import { BitcoinTransactionDto } from './dto/bitcoin-transaction.dto';
+import { TokenTransferDto } from './dto/token-transfer.dto';
 
 @Controller('keys')
 @UseGuards(ApiKeyGuard)
@@ -95,6 +97,43 @@ export class KeysController {
     @Param('keyId') keyId: string,
   ) {
     return this.keysService.getDepositAddresses(customer, keyId);
+  }
+
+  // Send a registered token -- a stablecoin, in practice -- from a
+  // threshold key.
+  //
+  // Separate from :keyId/transactions for the same reason the Bitcoin
+  // route is: there the caller supplies calldata and the platform decodes
+  // it to find out what it does, which is sound but rests entirely on the
+  // decoder being right about every encoding a caller might produce. Here
+  // the caller supplies a token, a recipient and an amount, and the
+  // platform encodes the call -- so there is nothing for the caller's
+  // claim and the signed bytes to disagree about.
+  @Post(':keyId/token-transfers')
+  @HttpCode(HttpStatus.OK)
+  async sendToken(
+    @CurrentCustomer() customer: Customer,
+    @Param('keyId') keyId: string,
+    @Body() req: TokenTransferDto,
+  ) {
+    return this.keysService.sendToken(customer, keyId, req);
+  }
+
+  // What this key holds, in every registered token as well as the native
+  // coin. Separate from :keyId/addresses because that answer is derived
+  // from the public key and always available, while this one is a set of
+  // live chain reads.
+  @Get(':keyId/balances')
+  async getBalances(
+    @CurrentCustomer() customer: Customer,
+    @Param('keyId') keyId: string,
+    @Query('chainId') chainId: string,
+  ) {
+    const parsed = Number(chainId);
+    if (!Number.isInteger(parsed) || parsed < 1) {
+      throw new BadRequestException('chainId is required and must be a positive integer');
+    }
+    return this.keysService.getBalances(customer, keyId, parsed);
   }
 
   // Send Bitcoin from a threshold key.

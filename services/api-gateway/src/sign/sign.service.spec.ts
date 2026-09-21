@@ -41,7 +41,7 @@ describe('SignService', () => {
     status: 'active',
     tier: 'pro',
     policies: {},
-    raw_digest_signing_enabled: true,
+    raw_digest_signing_enabled: true, arbitrary_contract_calls_enabled: false,
   };
 
   const validReq: SignRequestDto = {

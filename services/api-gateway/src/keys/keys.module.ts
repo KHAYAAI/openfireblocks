@@ -5,6 +5,7 @@ import { KeysTemporalService } from './keys-temporal.service';
 import { CustomersModule } from '../customers/customers.module';
 import { PolicyModule } from '../policies/policy.module';
 import { WebhookEmitter } from '../webhooks/webhooks.service';
+import { TokensModule } from '../tokens/tokens.module';
 
 // Threshold key lifecycle: creation (kicks off a real DKG ceremony via
 // KeysTemporalService -> ProvisionKeyWorkflow), listing, share-distribution
@@ -16,7 +17,7 @@ import { WebhookEmitter } from '../webhooks/webhooks.service';
 // ceremony lookup and Temporal client. PolicyModule is imported so that
 // path is gated by the same fail-closed policy evaluation.
 @Module({
-  imports: [CustomersModule, PolicyModule],
+  imports: [CustomersModule, PolicyModule, TokensModule],
   controllers: [KeysController],
   providers: [KeysService, KeysTemporalService, WebhookEmitter],
 })
