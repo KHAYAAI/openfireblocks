@@ -55,10 +55,54 @@ In rough order of how quickly they close:
 | **Banks and regulated institutions** | Data residency, no counterparty risk, board-level comfort | Slowest, largest, needs SOC 2 |
 | **Other CASPs building a custody offering** | Buying the engine rather than building it | Watch the ELv2 non-compete boundary |
 
-**Do not chase banks first.** They will ask for SOC 2 on the first call
-and the answer is a year out. Sell to the fintechs who will say yes in a
-quarter, use their names and their volume to make the bank conversation
-credible, and let SOC 2 catch up.
+### Do not chase banks first
+
+This is the sequencing mistake that costs a year, so it is worth stating
+in full rather than as an aside.
+
+A bank asks four questions on the first call, and today three of them have
+bad answers:
+
+| They ask | You say |
+|---|---|
+| "SOC 2 Type II?" | Not yet — the observation window has not started |
+| "Who audited the cryptography?" | Nobody, yet |
+| "What insurance?" | None — you hold the keys, your policy responds |
+| "Show me dual control." | The policy engine flags it; no approver workflow |
+
+None of those is fatal on its own. Together, on a first call, they end the
+conversation — and worse, they end it in a way you cannot reopen. A bank
+that has said no once does not re-evaluate for twelve to eighteen months,
+because the internal cost of restarting a vendor review is higher than the
+cost of waiting. **You get one first call per institution, and spending it
+early is the most expensive mistake available to you.**
+
+There is a second cost that is easy to miss. A bank pilot consumes an
+enormous amount of engineering time in security questionnaires,
+architecture reviews and procurement, all of it before any revenue. Three
+months spent that way is three months not spent on the audit and the key
+refresh that would have made the answers good.
+
+**The order that works:**
+
+1. **Crypto-native fintechs and payment companies** (now). They have
+   engineers, they already pay a custodian, they can evaluate the source
+   themselves, and they can sign in a quarter. They will not ask for SOC 2
+   because they do not have it either.
+2. **Larger fintechs and exchanges** (post-audit). The audit report is the
+   artefact that makes this group possible. Reference customers from
+   step 1 do the rest.
+3. **Banks** (post-SOC 2, or with a fintech reference and a named
+   sponsor). By then all four answers are good, and you arrive with
+   production references rather than a pitch.
+
+**The one exception worth taking:** a bank that approaches *you*, with a
+named internal sponsor and a specific problem. Inbound interest with a
+sponsor is a different conversation from outbound prospecting — the
+sponsor absorbs the internal cost of the gaps. Even then, be the one to
+volunteer the four answers on the first call. A gap you name yourself is a
+roadmap item; the same gap found by their security team in month three is
+a failed evaluation.
 
 ---
 
@@ -175,9 +219,24 @@ Requires the audit, the three signing parties on genuinely separate
 infrastructure (`party-isolation-check.sh` must report `multi-account`,
 not `simulated`), and a dashboard.
 
-**The dashboard is the quiet blocker.** API-only is fine for a fintech
-with a platform team and disqualifying for everyone else. A compliance
-officer will not use curl. Budget six to eight weeks.
+**The dashboard was the quiet blocker, and it is now built.** A read-only
+web console ships inside the API gateway — overview, keys with balances
+and signing history, a transaction history showing decoded recipients and
+amounts, per-currency threshold reporting, and webhook status. Server-
+rendered, no build step, nothing extra for a customer to deploy.
+
+It closes the disqualifying gap: the platform can now be evaluated by
+someone who is not an engineer, which is most of the people who decide.
+It does not close the competitive gap — Fireblocks' console is years of
+work — and two things are still missing that a bank will ask for
+specifically:
+
+- **An approval workflow.** The policy engine emits `requiresApproval` and
+  nothing consumes it. Dual control is the reason a control function signs
+  off, and it is roughly three weeks including the console screens.
+- **Mobile approvals.** Dual control is not real if the second approver
+  has to open a laptop. Four weeks, and only worth it once the workflow
+  above exists.
 
 ### Month 9 → Month 24: SOC 2 Type II
 
