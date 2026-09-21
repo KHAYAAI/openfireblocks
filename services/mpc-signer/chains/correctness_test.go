@@ -9,12 +9,12 @@ import (
 	"strings"
 	"testing"
 
+	"forge-crypto/mpc-signer/internal/ethcrypto"
 	"github.com/btcsuite/btcd/btcec"
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcutil"
 	"github.com/btcsuite/btcutil/base58"
 	"github.com/btcsuite/btcutil/bech32"
-	"github.com/ethereum/go-ethereum/crypto"
 	"golang.org/x/crypto/ripemd160" //nolint:staticcheck // matching the implementation under test
 )
 
@@ -238,8 +238,8 @@ func TestCosmos_SignRecoverRoundTrip(t *testing.T) {
 		t.Fatalf("RecoverAddress failed: %v", err)
 	}
 
-	privKey, _ := crypto.HexToECDSA(testPrivKey)
-	want, err := CosmosAddressFromPubKey(crypto.CompressPubkey(&privKey.PublicKey), DefaultCosmosPrefix)
+	privKey, _ := ethcrypto.HexToECDSA(testPrivKey)
+	want, err := CosmosAddressFromPubKey(ethcrypto.CompressPubkey(privKey.PublicKey.X, privKey.PublicKey.Y), DefaultCosmosPrefix)
 	if err != nil {
 		t.Fatalf("failed to derive expected address: %v", err)
 	}

@@ -8,8 +8,9 @@ import (
 	"fmt"
 
 	"github.com/btcsuite/btcutil/bech32"
-	"github.com/ethereum/go-ethereum/crypto"
 	"golang.org/x/crypto/ripemd160" //nolint:staticcheck // Cosmos address derivation is defined in terms of RIPEMD160; there is no alternative.
+
+	"forge-crypto/mpc-signer/internal/ethcrypto"
 )
 
 // DefaultCosmosPrefix is the Bech32 human-readable part for the Cosmos Hub.
@@ -49,12 +50,12 @@ func (c *CosmosSigner) SignMessage(ctx context.Context, messageHash []byte, priv
 	}
 	privKeyHex = strip0x(privKeyHex)
 
-	privKey, err := crypto.HexToECDSA(privKeyHex)
+	privKey, err := ethcrypto.HexToECDSA(privKeyHex)
 	if err != nil {
 		return nil, fmt.Errorf("invalid private key: %w", err)
 	}
 
-	signature, err := crypto.Sign(messageHash, privKey)
+	signature, err := ethcrypto.Sign(messageHash, privKey)
 	if err != nil {
 		return nil, fmt.Errorf("signing failed: %w", err)
 	}
@@ -86,7 +87,7 @@ func (c *CosmosSigner) VerifySignature(ctx context.Context, messageHash []byte, 
 	if len(sigBytes) < 64 {
 		return false, fmt.Errorf("signature must be at least 64 bytes, got %d", len(sigBytes))
 	}
-	return crypto.VerifySignature(pubKeyBytes, messageHash, sigBytes[:64]), nil
+	return ethcrypto.VerifySignature(pubKeyBytes, messageHash, sigBytes[:64]), nil
 }
 
 // RecoverAddress recovers the bech32 Cosmos address of the signer.
@@ -102,12 +103,12 @@ func (c *CosmosSigner) RecoverAddress(ctx context.Context, messageHash []byte, s
 		return "", fmt.Errorf("signature must be 65 bytes to recover, got %d", len(sigBytes))
 	}
 
-	pubKey, err := crypto.SigToPub(messageHash, sigBytes)
+	x, y, err := ethcrypto.SigToPub(messageHash, sigBytes)
 	if err != nil {
 		return "", fmt.Errorf("recovery failed: %w", err)
 	}
 
-	return CosmosAddressFromPubKey(crypto.CompressPubkey(pubKey), DefaultCosmosPrefix)
+	return CosmosAddressFromPubKey(ethcrypto.CompressPubkey(x, y), DefaultCosmosPrefix)
 }
 
 // CosmosAddressFromPubKey derives a bech32 Cosmos address from a COMPRESSED

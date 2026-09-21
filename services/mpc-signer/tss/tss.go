@@ -25,7 +25,8 @@ import (
 	"github.com/bnb-chain/tss-lib/v2/ecdsa/keygen"
 	"github.com/bnb-chain/tss-lib/v2/ecdsa/signing"
 	"github.com/bnb-chain/tss-lib/v2/tss"
-	"github.com/ethereum/go-ethereum/crypto"
+
+	"forge-crypto/mpc-signer/internal/ethcrypto"
 )
 
 // KeyShares holds the per-party save data produced by distributed key
@@ -40,7 +41,7 @@ type KeyShares struct {
 
 // Address returns the Ethereum address controlled by the threshold key.
 func (k *KeyShares) Address() string {
-	return crypto.PubkeyToAddress(*k.PublicKey).Hex()
+	return ethcrypto.PubkeyToAddress(*k.PublicKey)
 }
 
 // Keygen runs distributed key generation for n parties with the given threshold
@@ -100,7 +101,7 @@ func Keygen(ctx context.Context, n, threshold int) (*KeyShares, error) {
 	}
 
 	pk := &ecdsa.PublicKey{
-		Curve: crypto.S256(),
+		Curve: ethcrypto.S256(),
 		X:     saves[0].ECDSAPub.X(),
 		Y:     saves[0].ECDSAPub.Y(),
 	}

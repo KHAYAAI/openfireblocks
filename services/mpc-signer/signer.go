@@ -3,13 +3,13 @@ package main
 import (
 	"context"
 	"crypto/ecdsa"
+	"encoding/hex"
 	"fmt"
 	"math/big"
+	"strings"
 
-	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/common/hexutil"
-	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/crypto"
+	"forge-crypto/mpc-signer/internal/ethcrypto"
+	"forge-crypto/mpc-signer/internal/ethtypes"
 )
 
 // signer.go holds the actual Ethereum transaction signing logic.
@@ -33,7 +33,7 @@ type SignedTransaction struct {
 // MPCSigner owns the signing key material.
 type MPCSigner struct {
 	privKey *ecdsa.PrivateKey
-	address common.Address
+	address string
 }
 
 // NewMPCSigner loads the shared signing key.
@@ -52,33 +52,33 @@ func NewMPCSigner(privKeyHex string) (*MPCSigner, error) {
 		if len(privKeyHex) >= 2 && privKeyHex[:2] == "0x" {
 			privKeyHex = privKeyHex[2:]
 		}
-		privKey, err = crypto.HexToECDSA(privKeyHex)
+		privKey, err = ethcrypto.HexToECDSA(privKeyHex)
 		if err != nil {
 			return nil, fmt.Errorf("invalid MPC_SIGNER_PRIVATE_KEY: %w", err)
 		}
 	} else {
-		privKey, err = crypto.GenerateKey()
+		privKey, err = ethcrypto.GenerateKey()
 		if err != nil {
 			return nil, fmt.Errorf("failed to generate signing key: %w", err)
 		}
 	}
 
-	addr := crypto.PubkeyToAddress(privKey.PublicKey)
+	addr := ethcrypto.PubkeyToAddress(privKey.PublicKey)
 	return &MPCSigner{privKey: privKey, address: addr}, nil
 }
 
 // Address returns the signer's Ethereum address.
 func (m *MPCSigner) Address() string {
-	return m.address.Hex()
+	return m.address
 }
 
 // SignTransaction builds an Ethereum transaction from the request (legacy or
 // EIP-1559 depending on the fee fields) and signs it with the shared key.
 func (m *MPCSigner) SignTransaction(ctx context.Context, req *SignRequest) (*SignedTransaction, error) {
-	if !common.IsHexAddress(req.To) {
+	to, err := ethcrypto.ParseAddress(req.To)
+	if err != nil {
 		return nil, fmt.Errorf("invalid 'to' address: %q", req.To)
 	}
-	toAddr := common.HexToAddress(req.To)
 
 	value, err := parseBig(req.Value, true)
 	if err != nil {
@@ -90,93 +90,55 @@ func (m *MPCSigner) SignTransaction(ctx context.Context, req *SignRequest) (*Sig
 		return nil, err
 	}
 
-	chainID := big.NewInt(int64(req.ChainID))
-	useDynamic := req.MaxFeePerGas != "" && req.MaxPriorityFeePerGas != ""
-
-	var (
-		tx     *types.Transaction
-		signer types.Signer
-	)
-	if useDynamic {
-		maxFee, err := parseBig(req.MaxFeePerGas, false)
-		if err != nil {
-			return nil, fmt.Errorf("invalid maxFeePerGas: %w", err)
-		}
-		tip, err := parseBig(req.MaxPriorityFeePerGas, false)
-		if err != nil {
-			return nil, fmt.Errorf("invalid maxPriorityFeePerGas: %w", err)
-		}
-		tx = types.NewTx(&types.DynamicFeeTx{
-			ChainID:   chainID,
-			Nonce:     req.Nonce,
-			GasTipCap: tip,
-			GasFeeCap: maxFee,
-			Gas:       req.GasLimit,
-			To:        &toAddr,
-			Value:     value,
-			Data:      data,
-		})
-		signer = types.NewLondonSigner(chainID)
-	} else {
-		gasPrice, err := parseBig(req.GasPrice, false)
-		if err != nil {
-			return nil, fmt.Errorf("invalid gasPrice: %w", err)
-		}
-		tx = types.NewTx(&types.LegacyTx{
-			Nonce:    req.Nonce,
-			GasPrice: gasPrice,
-			Gas:      req.GasLimit,
-			To:       &toAddr,
-			Value:    value,
-			Data:     data,
-		})
-		signer = types.NewEIP155Signer(chainID)
+	tx := &ethtypes.Transaction{
+		ChainID: big.NewInt(int64(req.ChainID)),
+		Nonce:   req.Nonce,
+		Gas:     req.GasLimit,
+		To:      to,
+		Value:   value,
+		Data:    data,
 	}
 
-	signedTx, err := types.SignTx(tx, signer, m.privKey)
+	if req.MaxFeePerGas != "" && req.MaxPriorityFeePerGas != "" {
+		if tx.MaxFee, err = parseBig(req.MaxFeePerGas, false); err != nil {
+			return nil, fmt.Errorf("invalid maxFeePerGas: %w", err)
+		}
+		if tx.Tip, err = parseBig(req.MaxPriorityFeePerGas, false); err != nil {
+			return nil, fmt.Errorf("invalid maxPriorityFeePerGas: %w", err)
+		}
+	} else {
+		if tx.GasPrice, err = parseBig(req.GasPrice, false); err != nil {
+			return nil, fmt.Errorf("invalid gasPrice: %w", err)
+		}
+	}
+
+	// Sign the digest this service computed, rather than handing the
+	// transaction to a library that computes its own. The two must agree,
+	// and the only way to be sure is for there to be one of them.
+	digest, err := tx.SigningHash()
+	if err != nil {
+		return nil, err
+	}
+	sig, err := ethcrypto.Sign(digest, m.privKey)
 	if err != nil {
 		return nil, fmt.Errorf("signing failed: %w", err)
 	}
 
-	rawTx, err := signedTx.MarshalBinary()
-	if err != nil {
-		return nil, fmt.Errorf("failed to RLP-encode signed tx: %w", err)
-	}
-
-	// Canonical 65-byte [R || S || recovery] signature for the audit trail.
-	// Derived by trying both recovery ids and keeping the one that recovers the
-	// signer address — correct for legacy (EIP-155 v) and 1559 (yParity) alike.
-	sig, err := m.compactSignature(signer.Hash(tx), signedTx)
+	// WithSignature recovers the sender and refuses if it is not this key.
+	// Redundant here, where the same process just signed with its own key,
+	// and not redundant at all in the threshold path where the signature
+	// comes back over the network from a committee.
+	signed, err := tx.WithSignature(sig, m.address)
 	if err != nil {
 		return nil, err
 	}
 
 	return &SignedTransaction{
-		RawTx:     hexutil.Encode(rawTx),
-		Signature: hexutil.Encode(sig),
-		Hash:      signedTx.Hash().Hex(),
-		From:      m.address.Hex(),
+		RawTx:     "0x" + hex.EncodeToString(signed.Raw),
+		Signature: "0x" + hex.EncodeToString(sig),
+		Hash:      "0x" + hex.EncodeToString(signed.Hash),
+		From:      signed.From,
 	}, nil
-}
-
-// compactSignature returns the 65-byte [R || S || V] signature where V is the
-// 0/1 recovery id, independent of the transaction's encoded V convention.
-func (m *MPCSigner) compactSignature(hash common.Hash, signedTx *types.Transaction) ([]byte, error) {
-	_, r, s := signedTx.RawSignatureValues()
-	sig := make([]byte, 65)
-	r.FillBytes(sig[0:32])
-	s.FillBytes(sig[32:64])
-	for v := byte(0); v <= 1; v++ {
-		sig[64] = v
-		pub, err := crypto.SigToPub(hash.Bytes(), sig)
-		if err != nil {
-			continue
-		}
-		if crypto.PubkeyToAddress(*pub) == m.address {
-			return sig, nil
-		}
-	}
-	return nil, fmt.Errorf("failed to derive recovery id for signature")
 }
 
 // parseBig parses a base-10 integer string. When zeroOK, "" and "0" yield 0.
@@ -199,7 +161,7 @@ func decodeData(s string) ([]byte, error) {
 	if s == "" || s == "0x" {
 		return nil, nil
 	}
-	decoded, err := hexutil.Decode(s)
+	decoded, err := hex.DecodeString(strings.TrimPrefix(s, "0x"))
 	if err != nil {
 		return nil, fmt.Errorf("invalid data: %w", err)
 	}

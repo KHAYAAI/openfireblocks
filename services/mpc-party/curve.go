@@ -1,7 +1,6 @@
 package main
 
 import (
-	"crypto/ecdsa"
 	"crypto/elliptic"
 	"encoding/hex"
 	"encoding/json"
@@ -12,7 +11,8 @@ import (
 	tsscommon "github.com/bnb-chain/tss-lib/v2/tss"
 	"github.com/btcsuite/btcutil/base58"
 	"github.com/decred/dcrd/dcrec/edwards/v2"
-	"github.com/ethereum/go-ethereum/crypto"
+
+	"openfireblocks.com/services/mpc-party/internal/ethcrypto"
 )
 
 // Which curve a key lives on.
@@ -112,12 +112,8 @@ func (k *KeyShare) PublicKey() (publicKeyHex string, address string, err error) 
 		if k.ECDSA == nil || k.ECDSA.ECDSAPub == nil {
 			return "", "", fmt.Errorf("secp256k1 share carries no public key")
 		}
-		pub := &ecdsa.PublicKey{
-			Curve: crypto.S256(),
-			X:     k.ECDSA.ECDSAPub.X(),
-			Y:     k.ECDSA.ECDSAPub.Y(),
-		}
-		return hex.EncodeToString(crypto.FromECDSAPub(pub)), crypto.PubkeyToAddress(*pub).Hex(), nil
+		x, y := k.ECDSA.ECDSAPub.X(), k.ECDSA.ECDSAPub.Y()
+		return hex.EncodeToString(ethcrypto.MarshalPubkey(x, y)), ethcrypto.Address(x, y), nil
 
 	case CurveEd25519:
 		if k.EdDSA == nil || k.EdDSA.EDDSAPub == nil {

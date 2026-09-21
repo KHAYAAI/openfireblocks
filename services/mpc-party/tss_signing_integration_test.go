@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/gorilla/mux"
+	"openfireblocks.com/services/mpc-party/internal/ethcrypto"
 )
 
 // TestRealMultiPartySigningOverHTTP proves the full production shape end to
@@ -148,11 +148,10 @@ func TestRealMultiPartySigningOverHTTP(t *testing.T) {
 		t.Fatalf("expected 65-byte signature, got %d bytes", len(sigBytes))
 	}
 
-	recoveredPub, err := crypto.SigToPub(messageHash[:], sigBytes)
+	recoveredAddress, err := ethcrypto.RecoverAddress(messageHash[:], sigBytes)
 	if err != nil {
 		t.Fatalf("failed to recover public key from signature: %v", err)
 	}
-	recoveredAddress := crypto.PubkeyToAddress(*recoveredPub).Hex()
 
 	if recoveredAddress != sharedAddress {
 		t.Fatalf("signature recovers to %s, but DKG derived address %s -- signature is INVALID", recoveredAddress, sharedAddress)
@@ -291,11 +290,10 @@ func TestSigningWithEveryCommittee(t *testing.T) {
 			if err != nil {
 				t.Fatalf("signature is not hex: %v", err)
 			}
-			pub, err := crypto.SigToPub(messageHash[:], raw)
+			got, err := ethcrypto.RecoverAddress(messageHash[:], raw)
 			if err != nil {
 				t.Fatalf("committee %v produced an unrecoverable signature: %v", committee, err)
 			}
-			got := crypto.PubkeyToAddress(*pub).Hex()
 			if got != sharedAddress {
 				t.Fatalf("committee %v signed for %s, but the key is %s", committee, got, sharedAddress)
 			}

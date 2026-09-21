@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"math/big"
 
-	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/common/hexutil"
-	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/crypto"
+	"strings"
+
+	"forge-crypto/mpc-signer/internal/ethcrypto"
+	"forge-crypto/mpc-signer/internal/ethtypes"
 )
 
 // EthereumSigner implements ChainSigner for Ethereum.
@@ -22,12 +22,12 @@ func NewEthereumSigner() ChainSigner {
 
 // SignMessage signs a message hash for Ethereum.
 func (e *EthereumSigner) SignMessage(ctx context.Context, messageHash []byte, privKeyHex string) (*Signature, error) {
-	privKey, err := crypto.HexToECDSA(privKeyHex)
+	privKey, err := ethcrypto.HexToECDSA(privKeyHex)
 	if err != nil {
 		return nil, fmt.Errorf("invalid private key: %w", err)
 	}
 
-	signature, err := crypto.Sign(messageHash, privKey)
+	signature, err := ethcrypto.Sign(messageHash, privKey)
 	if err != nil {
 		return nil, fmt.Errorf("signing failed: %w", err)
 	}
@@ -53,7 +53,7 @@ func (e *EthereumSigner) VerifySignature(ctx context.Context, messageHash []byte
 		return false, fmt.Errorf("invalid signature: %w", err)
 	}
 
-	recovered := crypto.VerifySignature(pubKeyBytes, messageHash, sigBytes[:64])
+	recovered := ethcrypto.VerifySignature(pubKeyBytes, messageHash, sigBytes[:64])
 	return recovered, nil
 }
 
@@ -64,13 +64,13 @@ func (e *EthereumSigner) RecoverAddress(ctx context.Context, messageHash []byte,
 		return "", fmt.Errorf("invalid signature: %w", err)
 	}
 
-	pubKey, err := crypto.SigToPub(messageHash, sigBytes)
+	x, y, err := ethcrypto.SigToPub(messageHash, sigBytes)
 	if err != nil {
 		return "", fmt.Errorf("recovery failed: %w", err)
 	}
 
-	addr := crypto.PubkeyToAddress(*pubKey)
-	return addr.Hex(), nil
+	addr := ethcrypto.Address(x, y)
+	return addr, nil
 }
 
 // BuildTransaction builds an Ethereum transaction ready for signing.
@@ -80,36 +80,40 @@ func (e *EthereumSigner) BuildTransaction(ctx context.Context, txData interface{
 		return nil, fmt.Errorf("invalid transaction type for Ethereum")
 	}
 
-	if !common.IsHexAddress(req.To) {
+	to, err := ethcrypto.ParseAddress(req.To)
+	if err != nil {
 		return nil, fmt.Errorf("invalid 'to' address: %q", req.To)
 	}
 
-	to := common.HexToAddress(req.To)
-	value := new(big.Int)
-	value.SetString(req.Value, 10)
-
-	gasPrice := new(big.Int)
-	gasPrice.SetString(req.GasPrice, 10)
-
-	data, err := hexutil.Decode(req.Data)
-	if err != nil {
-		return nil, fmt.Errorf("invalid data: %w", err)
+	value, ok := new(big.Int).SetString(req.Value, 10)
+	if !ok {
+		return nil, fmt.Errorf("value is not a base-10 integer: %q", req.Value)
+	}
+	gasPrice, ok := new(big.Int).SetString(req.GasPrice, 10)
+	if !ok {
+		return nil, fmt.Errorf("gasPrice is not a base-10 integer: %q", req.GasPrice)
 	}
 
-	// Build legacy (EIP-155) transaction
-	tx := types.NewTx(&types.LegacyTx{
+	var data []byte
+	if trimmed := strings.TrimPrefix(req.Data, "0x"); trimmed != "" {
+		data, err = hex.DecodeString(trimmed)
+		if err != nil {
+			return nil, fmt.Errorf("invalid data: %w", err)
+		}
+	}
+
+	tx := &ethtypes.Transaction{
+		ChainID:  big.NewInt(int64(req.ChainID)),
 		Nonce:    req.Nonce,
 		GasPrice: gasPrice,
 		Gas:      req.GasLimit,
-		To:       &to,
+		To:       to,
 		Value:    value,
 		Data:     data,
-	})
+	}
 
-	// Return RLP-encoded transaction hash for signing
-	signer := types.NewEIP155Signer(big.NewInt(int64(req.ChainID)))
-	hash := signer.Hash(tx)
-	return hash[:], nil
+	// The EIP-155 signing hash: what actually gets signed.
+	return tx.SigningHash()
 }
 
 // BroadcastTransaction broadcasts a signed Ethereum transaction (stub).
