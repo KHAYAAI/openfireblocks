@@ -208,7 +208,8 @@ rpc eth_sendTransaction \
 # whole supply.
 fund_tokens() {
   local token="$1" amount_hex="$2"
-  local data="0xa9059cbb$(python3 -c "print('${FROM}'[2:].lower().rjust(64,'0'))")$(python3 -c "print(format(${amount_hex}, '064x'))")"
+  local data
+  data="0xa9059cbb$(python3 -c "print('${FROM}'[2:].lower().rjust(64,'0'))")$(python3 -c "print(format(${amount_hex}, '064x'))")"
   rpc eth_sendTransaction \
     "[{\"from\":\"${COINBASE}\",\"to\":\"${token}\",\"data\":\"${data}\",\"gas\":\"0x30000\"}]" >/dev/null
 }

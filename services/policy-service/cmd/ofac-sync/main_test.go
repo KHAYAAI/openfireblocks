@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // A cut-down SDN.XML in the real schema.
@@ -219,5 +220,58 @@ func TestWritingTwiceReplacesRatherThanAccumulates(t *testing.T) {
 	}
 	if len(parsed.Addresses) != 1 || parsed.Addresses[0] != "0xccc" {
 		t.Fatalf("the second write did not replace the first: %v", parsed.Addresses)
+	}
+}
+
+// --file must be equivalent to a fetch of the same bytes, minus the
+// network.
+//
+// It is the mode an air-gapped deployment uses and the mode an operator
+// uses to check this tool understands today's SDN.XML. If it diverged
+// from the fetch path, the check would verify something the sync does not
+// do.
+func TestReadingFromAFileIsEquivalentToFetchingTheSameBytes(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "SDN.XML")
+	if err := os.WriteFile(path, []byte(sdnFixture), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	fromFile, err := read("http://unused.invalid", path, time.Second)
+	if err != nil {
+		t.Fatalf("reading from a file: %v", err)
+	}
+	if string(fromFile) != sdnFixture {
+		t.Fatal("the file path did not return the file's bytes")
+	}
+
+	// And the whole sync works off it, recording where it came from.
+	out := filepath.Join(dir, "sanctions.json")
+	if err := syncOnce("http://unused.invalid", path, out, time.Second, 3); err != nil {
+		t.Fatalf("syncOnce from a file: %v", err)
+	}
+	raw, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var written output
+	if err := json.Unmarshal(raw, &written); err != nil {
+		t.Fatal(err)
+	}
+	if len(written.Addresses) != 4 {
+		t.Fatalf("wrote %d addresses, want 4", len(written.Addresses))
+	}
+	// The provenance must say it was a file. A list whose source claims
+	// to be Treasury when a human put it there by hand is a trail that
+	// lies to whoever reads it next.
+	if written.Source != "file:"+path {
+		t.Errorf("source recorded as %q; it should name the file it came from", written.Source)
+	}
+}
+
+// A missing file is an error, not a silent fall back to the network.
+func TestAMissingFileIsAnErrorRatherThanAQuietFetch(t *testing.T) {
+	if _, err := read("http://unused.invalid", "/nonexistent/SDN.XML", time.Second); err == nil {
+		t.Fatal("a missing --file fell through to the network")
 	}
 }

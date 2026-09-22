@@ -277,6 +277,60 @@ jobs:
           fi
           cd services/billing && go test -v -run Live ./...
 
+  shell:
+    name: Drill scripts lint clean
+    runs-on: ubuntu-latest
+    # The drills are the only executable proof of several claims in
+    # docs/, and they are shell -- a language where an unquoted expansion
+    # or a masked return value fails silently and turns a red drill into a
+    # green one. Two of the last three bugs found in this repository's
+    # drills were in the scripts rather than in what they test.
+    #
+    # -S warning, not -S error: the errors were already clean, and the
+    # warnings are where SC2155 (a failing command substitution hidden by
+    # `local`) lives.
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y shellcheck
+          shellcheck --version
+          shellcheck -S warning infrastructure/kind/*.sh infrastructure/local/*.sh
+      - name: Every drill parses
+        run: |
+          for f in infrastructure/kind/*.sh infrastructure/local/*.sh; do
+            bash -n "$f" || exit 1
+          done
+
+  stripe-spec:
+    name: Our requests match Stripe's published API
+    runs-on: ubuntu-latest
+    # Between the two tests that already exist and neither of which can
+    # answer this. stripe_test.go pins the request against itself, so it
+    # catches accidental change but never established correctness.
+    # stripe-live needs a secret and skips without one. This fetches the
+    # machine-readable spec Stripe publishes and checks every parameter we
+    # send is one Stripe documents -- Stripe ignores unknown parameters
+    # rather than rejecting them, so a typo is otherwise discovered by a
+    # customer being charged in the wrong currency.
+    #
+    # Not vendored: 8MB, changes weekly, and a stale copy would assert
+    # conformance to a version nobody runs.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+      - name: Fetch Stripe's OpenAPI spec
+        run: |
+          curl -fsSL -o "${RUNNER_TEMP}/stripe-spec.json" \
+            https://raw.githubusercontent.com/stripe/openapi/master/openapi/spec3.json
+      - name: Check our requests against it
+        working-directory: services/billing
+        env:
+          STRIPE_OPENAPI_SPEC: ${{ runner.temp }}/stripe-spec.json
+        run: go test -v -run 'Spec|ApiVersion' ./...
+
   key-recovery:
     name: A key survives losing every party
     runs-on: ubuntu-latest

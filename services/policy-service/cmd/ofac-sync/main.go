@@ -106,10 +106,49 @@ func main() {
 		// runtime image is distroless and has no shell. A sidecar running
 		// `sh -c "while true; ..."` against it does not start at all.
 		interval = flag.Duration("interval", 0, "when set, keep running and re-sync on this interval")
+		// Read a local SDN.XML instead of fetching one.
+		//
+		// Two reasons, and the second is the one that made this worth a
+		// flag. An air-gapped deployment cannot reach Treasury at all and
+		// has to move the file in by hand. And an operator who wants to
+		// know whether this tool understands today's SDN.XML -- rather
+		// than the fixture its tests use -- can download the file with
+		// anything and point this at it, which is a check that needs no
+		// credentials, writes nothing, and takes a second.
+		from = flag.String("file", "", "parse this local SDN.XML instead of fetching one")
+		// Parse and report without writing. The verification mode.
+		check = flag.Bool("check", false, "parse the source and report what was found, without writing")
 	)
 	flag.Parse()
 
-	if err := syncOnce(*source, *out, *timeout, *minimum); err != nil {
+	if *check {
+		raw, err := read(*source, *from, *timeout)
+		if err != nil {
+			fail("%v", err)
+		}
+		addresses, published, err := parse(raw)
+		if err != nil {
+			fail("parsing: %v", err)
+		}
+		fmt.Printf("parsed %d digital-currency addresses (published %s)\n",
+			len(addresses), orNone(published))
+		if len(addresses) < *minimum {
+			fail("that is below the floor of %d; this tool does not understand what it was given",
+				*minimum)
+		}
+		// A sample, so an operator can eyeball that these look like
+		// addresses rather than like fragments of prose the regex caught.
+		for i, a := range addresses {
+			if i == 5 {
+				fmt.Printf("  ... and %d more\n", len(addresses)-5)
+				break
+			}
+			fmt.Printf("  %s\n", a)
+		}
+		return
+	}
+
+	if err := syncOnce(*source, *from, *out, *timeout, *minimum); err != nil {
 		fail("%v", err)
 	}
 	if *interval <= 0 {
@@ -125,20 +164,36 @@ func main() {
 	// into a visible warning and then a refusal, which is the right way
 	// for this to surface.
 	for range time.Tick(*interval) {
-		if err := syncOnce(*source, *out, *timeout, *minimum); err != nil {
+		if err := syncOnce(*source, *from, *out, *timeout, *minimum); err != nil {
 			fmt.Fprintf(os.Stderr,
 				"ofac-sync: %v\nthe previous list is still in place and will age into a warning\n", err)
 		}
 	}
 }
 
-func syncOnce(source, out string, timeout time.Duration, minimum int) error {
+// read gets the SDN list, from a file when one is named and from the
+// network otherwise.
+func read(source, from string, timeout time.Duration) ([]byte, error) {
+	if from != "" {
+		raw, err := os.ReadFile(from)
+		if err != nil {
+			return nil, fmt.Errorf("reading %s: %w", from, err)
+		}
+		return raw, nil
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-
 	raw, err := fetch(ctx, source)
 	if err != nil {
-		return fmt.Errorf("fetching %s: %w", source, err)
+		return nil, fmt.Errorf("fetching %s: %w", source, err)
+	}
+	return raw, nil
+}
+
+func syncOnce(source, from, out string, timeout time.Duration, minimum int) error {
+	raw, err := read(source, from, timeout)
+	if err != nil {
+		return err
 	}
 
 	addresses, published, err := parse(raw)
@@ -161,9 +216,13 @@ func syncOnce(source, out string, timeout time.Duration, minimum int) error {
 			len(addresses), minimum, source)
 	}
 
+	origin := source
+	if from != "" {
+		origin = "file:" + from
+	}
 	body, err := json.MarshalIndent(output{
 		FetchedAt:   time.Now().UTC(),
-		Source:      source,
+		Source:      origin,
 		PublishedAt: published,
 		Addresses:   addresses,
 	}, "", "  ")

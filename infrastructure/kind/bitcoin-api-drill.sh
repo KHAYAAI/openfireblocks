@@ -55,6 +55,10 @@ customer=$("${CURL[@]}" -X POST "${API}/admin/customers" \
   -H 'Content-Type: application/json' -H "x-admin-key: ${ADMIN_KEY}" \
   -d "{\"email\":\"btcapi-${S}@example.com\",\"name\":\"btcapi-${S}\",\"tier\":\"enterprise\"}")
 api_key=$(echo "${customer}" | jqp 'd["api_key"]')
+# Read but not used further: the drill works through the api key below.
+# Kept as a named extraction so a malformed response fails here rather
+# than somewhere less obvious.
+# shellcheck disable=SC2034
 customer_id=$(echo "${customer}" | jqp 'd["customer_id"]')
 
 # Note what is NOT done here: no call to /admin/customers/<id>/raw-digest-signing.

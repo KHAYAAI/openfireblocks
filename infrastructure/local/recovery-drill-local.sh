@@ -204,7 +204,8 @@ sign_once() {
   # Declared separately: bash expands every word of a `local` statement
   # before performing any of its assignments, so referring to `label` in
   # the same statement that defines it reads an unset variable.
-  local sign_id="drill-${label}-$(date +%s%N)"
+  local sign_id
+  sign_id="drill-${label}-$(date +%s%N)"
   for id in 1 2; do
     "${CURL[@]}" -o /dev/null -X POST "$(url_for "${id}")/tss/sign/start" \
       -H 'Content-Type: application/json' \

@@ -216,19 +216,36 @@ trains people to re-run rather than look. The verifier is now
 
 ### 2.6 What is half-built, stated as such
 
-- **The kind recovery drill has never executed.** Every assumption in it
-  was checked against the chart, and the same procedure passes repeatedly
-  as real processes locally — but its first real run will be in CI.
-- **The OFAC sync has never reached Treasury.** The parser is proven
-  against a fixture in the real SDN schema and the tool is proven
-  end-to-end over HTTP against a local server, but `ofac.treas.gov` is
-  blocked from the environment this was built in. The first real fetch
-  will be in a deployment.
-- **Payment collection has never charged a real card.** The decision
+- **The kind recovery drill has never executed.** Its first real run will
+  be in CI. Attempting it locally got as far as a four-node cluster
+  image and then failed on `runc`: this build environment mounts
+  `/sys/fs/cgroup` as tmpfs rather than cgroup2, so no nested container
+  runtime can start. That is a property of the sandbox, not of the
+  drill. What *is* proven: the same recovery procedure passes repeatedly
+  against real processes and a real Vault
+  (`infrastructure/local/recovery-drill-local.sh`), the authorisation the
+  drill sends is accepted by the party's real verifier, the request body
+  it builds decodes into the handler's type, and every drill script is
+  shellcheck-clean — which is where two of the last three drill bugs
+  were.
+- **The OFAC sync has never reached Treasury.** `ofac.treas.gov` is
+  denied by this environment's egress policy, and going around a policy
+  denial to fetch the same data from a mirror would be the wrong kind of
+  resourceful. The parser is proven against a fixture in the real SDN
+  schema, and the tool is proven end-to-end over HTTP against a local
+  server. `ofac-sync --check --file SDN.XML` is the one-second check an
+  operator runs against a real download, in any environment, with no
+  credentials and nothing written.
+- **Payment collection has never charged a real card.** Three layers now,
+  and it is worth being precise about which answers what. The decision
   logic — what gets marked paid, what gets retried, what a human must
-  chase — is covered by tests. Whether Stripe accepts what we send is
-  proven separately by `stripe_live_test.go`, which needs a test-mode key
-  and skips without one.
+  chase — is covered by unit tests. Every parameter we send is checked
+  against **Stripe's own published OpenAPI spec** in CI, which catches the
+  failure mode that otherwise reaches a customer: Stripe ignores unknown
+  parameters rather than rejecting them, so a one-character typo in
+  `currency` silently charges in the account default. Whether Stripe
+  *accepts a charge* still needs `stripe_live_test.go` and a test-mode
+  key.
 - **`docs/PHASE3-BACKUP-RECOVERY-PROCEDURES.md` is partly a target
   design**, and says so in its own banner. Key recovery is real and
   drilled; the surrounding infrastructure backup story is not all built.

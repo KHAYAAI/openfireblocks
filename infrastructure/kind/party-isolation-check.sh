@@ -76,7 +76,7 @@ echo "==> what is underneath those nodes"
 # together rather than trusting any one: a provider id is authoritative
 # where it exists, a zone label is set by the cloud controller and can be
 # forged by hand, and kind sets none of them.
-declare -A ZONES REGIONS PROVIDERS KERNELS INSTANCE_IDS
+declare -A ZONES REGIONS PROVIDERS KERNELS
 for node in "${NODES[@]}"; do
   # Pipe-separated, not space-separated. Most of these labels are absent
   # on a local cluster, and with spaces the empty fields collapse -- the
