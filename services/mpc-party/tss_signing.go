@@ -103,6 +103,10 @@ func (m *TSSPartyManager) StartSigning(signID, keygenCeremonyID string, messageH
 	fullSortedIDs := keygenCeremony.sortedIDs
 	fullPeers := keygenCeremony.peers
 	threshold := keygenCeremony.threshold
+	// Which refresh epoch this key's shares belong to. A proactive refresh
+	// re-evaluates the secret at new x-coordinates, so the committee's
+	// tss-lib identities move with it -- see tss_resharing.go.
+	epoch := keygenCeremony.epoch
 	keygenCeremony.mu.Unlock()
 
 	if len(committeePartyIDs) != threshold+1 {
@@ -128,7 +132,11 @@ func (m *TSSPartyManager) StartSigning(signID, keygenCeremonyID string, messageH
 	unsorted := make(tsscommon.UnSortedPartyIDs, 0, len(committeePartyIDs))
 	peers := make(map[int]string, len(committeePartyIDs))
 	for _, sortedID := range fullSortedIDs {
-		id := int(sortedID.KeyInt().Int64())
+		// Mapped back through the epoch stride rather than read as a bare
+		// integer: after a proactive refresh the committee's tss-lib keys
+		// carry an epoch, and a raw KeyInt would no longer be a party
+		// number. See committeeKey in tss_resharing.go.
+		id, _ := nodeForPartyKey(sortedID)
 		if wanted[id] {
 			unsorted = append(unsorted,
 				tsscommon.NewPartyID(sortedID.Id, sortedID.Moniker, sortedID.KeyInt()))
@@ -140,7 +148,7 @@ func (m *TSSPartyManager) StartSigning(signID, keygenCeremonyID string, messageH
 		return fmt.Errorf("one or more requested committee party IDs were not part of the original DKG ceremony %s", keygenCeremonyID)
 	}
 
-	self := findPartyID(committee, m.partyID)
+	self := findPartyIDByKey(committee, committeeKey(m.partyID, epoch))
 	if self == nil {
 		return fmt.Errorf("failed to resolve own party ID %d within signing committee", m.partyID)
 	}
@@ -350,7 +358,7 @@ func (m *TSSPartyManager) HandleIncomingSignMessage(env tssSignMessageEnvelope) 
 		return ErrSigningNotReady
 	}
 
-	from := findPartyID(committee, env.FromPartyID)
+	from := findPartyIDByNode(committee, env.FromPartyID)
 	if from == nil {
 		return fmt.Errorf("unknown sender party %d for signing ceremony %s", env.FromPartyID, env.SignID)
 	}

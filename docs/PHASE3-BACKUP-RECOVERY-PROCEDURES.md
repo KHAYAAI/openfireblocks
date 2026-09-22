@@ -2,6 +2,14 @@
 
 **Status:** Implementation Guide for RTO ≤ 4 hours, RPO ≤ 1 hour
 
+> **Looking for key recovery? This is not that document.**
+> `docs/deployment/KEY-RECOVERY.md` is the procedure for recovering the MPC
+> key shares — the part where the customer's money is — and it is executed
+> on every change by `infrastructure/kind/recovery-drill.sh` in CI. It is
+> the one to give a risk committee. This document covers the surrounding
+> infrastructure (Postgres, Temporal, Vault's storage) and, as the banner
+> below says, is still partly a target design.
+
 > ## ⚠️ Reality check (added after auditing this document against the actual codebase)
 > This document reads as an operational runbook for a system that is running
 > in production. It is not — treat everything below as a **target design**,

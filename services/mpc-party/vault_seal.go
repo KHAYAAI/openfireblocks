@@ -57,7 +57,30 @@ func vaultShareConfigFromEnv(getenv func(string) string, partyID int, ceremonyID
 // at rest by Vault's storage backend and never written to disk in
 // plaintext by this process. Returns (false, nil) if VAULT_ADDR isn't set
 // -- not an error, just "sealing wasn't configured for this run."
+// CeremonyContext is everything other than the share that a party needs to
+// sign again after a restart.
+//
+// Sealed alongside the share, and the reason is the gap this closes: a
+// share on its own is not enough to sign. tss-lib needs the committee's
+// party identities, the threshold, and -- since proactive refresh -- which
+// epoch the share's coordinates belong to. Without those, a party that
+// restarts holds a perfectly good share it cannot use, and a recovery
+// procedure that restores shares recovers nothing.
+type CeremonyContext struct {
+	Threshold    int    `json:"threshold"`
+	TotalParties int    `json:"total_parties"`
+	Curve        string `json:"curve"`
+	Epoch        int    `json:"epoch"`
+	PublicKeyHex string `json:"public_key_hex"`
+	Address      string `json:"address"`
+}
+
 func SealKeyShare(ctx context.Context, getenv func(string) string, partyID int, ceremonyID string, share *KeyShare) (bool, error) {
+	return SealKeyShareWithContext(ctx, getenv, partyID, ceremonyID, share, nil)
+}
+
+// SealKeyShareWithContext seals the share and the context needed to use it.
+func SealKeyShareWithContext(ctx context.Context, getenv func(string) string, partyID int, ceremonyID string, share *KeyShare, cc *CeremonyContext) (bool, error) {
 	cfg, configured := vaultShareConfigFromEnv(getenv, partyID, ceremonyID)
 	if !configured {
 		return false, nil
@@ -81,13 +104,22 @@ func SealKeyShare(ctx context.Context, getenv func(string) string, partyID int, 
 		return false, fmt.Errorf("marshal key share: %w", err)
 	}
 
-	kv := client.KVv2(cfg.mount)
-	if _, err := kv.Put(ctx, cfg.keyPath, map[string]interface{}{
+	payload := map[string]interface{}{
 		"party_id":    partyID,
 		"ceremony_id": ceremonyID,
 		"curve":       string(share.Curve),
 		"save_data":   string(raw),
-	}); err != nil {
+	}
+	if cc != nil {
+		ccRaw, err := json.Marshal(cc)
+		if err != nil {
+			return false, fmt.Errorf("marshal ceremony context: %w", err)
+		}
+		payload["ceremony_context"] = string(ccRaw)
+	}
+
+	kv := client.KVv2(cfg.mount)
+	if _, err := kv.Put(ctx, cfg.keyPath, payload); err != nil {
 		return false, fmt.Errorf("vault write %s: %w", cfg.keyPath, err)
 	}
 	return true, nil
@@ -138,4 +170,55 @@ func orDefaultVault(v, def string) string {
 		return def
 	}
 	return v
+}
+
+// LoadSealedShare reads back both the share and the context needed to use
+// it.
+//
+// Separate from LoadKeyShare, which predates curve tagging and returns a
+// bare ECDSA save-data. This is the one a restore path uses: it refuses a
+// share whose curve tag is missing rather than guessing, for the same
+// reason UnmarshalShare does -- a mis-tagged share unmarshals cleanly into
+// the wrong package's struct and produces a party that cannot sign, found
+// out at signing time on a key holding money.
+func LoadSealedShare(ctx context.Context, getenv func(string) string, partyID int, ceremonyID string) (*KeyShare, *CeremonyContext, error) {
+	cfg, configured := vaultShareConfigFromEnv(getenv, partyID, ceremonyID)
+	if !configured {
+		return nil, nil, fmt.Errorf("VAULT_ADDR not set; there is nothing sealed to restore from")
+	}
+
+	client, err := vault.NewClient(&vault.Config{Address: cfg.addr})
+	if err != nil {
+		return nil, nil, fmt.Errorf("vault client: %w", err)
+	}
+	if cfg.token != "" {
+		client.SetToken(cfg.token)
+	}
+
+	secret, err := client.KVv2(cfg.mount).Get(ctx, cfg.keyPath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("vault read %s: %w", cfg.keyPath, err)
+	}
+	if secret == nil || secret.Data == nil {
+		return nil, nil, fmt.Errorf("no sealed key share at %s", cfg.keyPath)
+	}
+
+	raw, ok := secret.Data["save_data"].(string)
+	if !ok || raw == "" {
+		return nil, nil, fmt.Errorf("the sealed share at %s is malformed", cfg.keyPath)
+	}
+	share, err := UnmarshalShare([]byte(raw))
+	if err != nil {
+		return nil, nil, fmt.Errorf("sealed share at %s: %w", cfg.keyPath, err)
+	}
+
+	var cc *CeremonyContext
+	if ccRaw, ok := secret.Data["ceremony_context"].(string); ok && ccRaw != "" {
+		var parsed CeremonyContext
+		if err := json.Unmarshal([]byte(ccRaw), &parsed); err != nil {
+			return nil, nil, fmt.Errorf("sealed ceremony context at %s is malformed: %w", cfg.keyPath, err)
+		}
+		cc = &parsed
+	}
+	return share, cc, nil
 }

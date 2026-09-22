@@ -81,6 +81,7 @@ func runKeygenOverHTTP(t *testing.T, curve Curve) *sharedKey {
 		ps := &PartyServer{partyID: i, tssManager: mgr}
 		router.HandleFunc("/tss/keygen/message", ps.HandleTSSKeygenMessage).Methods(http.MethodPost)
 		router.HandleFunc("/tss/sign/message", ps.HandleTSSSignMessage).Methods(http.MethodPost)
+		router.HandleFunc("/tss/reshare/message", ps.HandleTSSReshareMessage).Methods(http.MethodPost)
 		server := httptest.NewServer(router)
 		servers[i] = server
 		peers[i] = server.URL

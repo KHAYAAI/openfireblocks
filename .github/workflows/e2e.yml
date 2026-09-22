@@ -147,6 +147,18 @@ jobs:
         # feature.
         run: ./infrastructure/kind/node-failure-drill.sh
 
+      - name: A key survives losing every party
+        # After the node-failure drill, because it is the same question
+        # asked at the limit: that one loses a party of three, this one
+        # loses all three at once and rebuilds them from what was sealed.
+        #
+        # It runs here rather than in a runbook because
+        # docs/deployment/KEY-RECOVERY.md tells a buyer's risk committee
+        # that the recovery procedure is executed on every change. That
+        # sentence is either true in this file or it should not be in the
+        # document.
+        run: ./infrastructure/kind/recovery-drill.sh
+
       - name: Report party isolation
         # Reported, not enforced. On kind the answer is always "simulated"
         # and always will be, so a gate here would be a permanently red

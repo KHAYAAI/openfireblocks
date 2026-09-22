@@ -240,6 +240,24 @@ customer holding only USDC cannot send it.
   - Point-in-time recovery (PITR) for 30-day window
   - Vault snapshot recovery with unseal keys
   - Quarterly DR testing with measured RTO/RPO
+
+- **Key recovery** — `docs/deployment/KEY-RECOVERY.md`
+  - Shares sealed per party with the context needed to use them: the
+    committee, the threshold, the curve and the refresh epoch
+  - `POST /tss/keygen/restore` rebuilds a party from sealed material; a
+    restarted party holds nothing until an operator asks for it
+  - `infrastructure/kind/recovery-drill.sh` destroys every party with no
+    grace period, requires signing to fail, restores from Vault and proves
+    the signature recovers to the original address — in CI, every change
+  - No step of it contacts the vendor, which is the answer to the only
+    question a risk committee asks about a small custody vendor
+
+- **Proactive key refresh** — `services/mpc-party/tss_resharing.go`
+  - Same key, same committee, new shares: share compromise stops being
+    cumulative across refresh intervals
+  - The refresh proves the public key did not change before it records
+    anything, and re-seals each share with its new epoch — so a refreshed
+    key stays recoverable
   
 - **Compliance Certifications**
   - **SOC 2 Type II**: 20+ trust service criteria (CC, A, C, P, S)

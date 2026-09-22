@@ -52,7 +52,11 @@ type tssKeygenCeremony struct {
 	// Which curve this ceremony ran on, and the share it produced. Both
 	// are needed: the save-data types come from different packages and
 	// share no interface, so the curve is what says which pointer is set.
-	curve        Curve
+	curve Curve
+	// Which refresh epoch this key's shares belong to. Zero at DKG, and
+	// incremented by each proactive refresh -- see tss_resharing.go, where
+	// the reason the identities have to move is that the shares do.
+	epoch        int
 	saveData     *KeyShare
 	publicKeyHex string
 	address      string
@@ -67,6 +71,11 @@ type TSSPartyManager struct {
 
 	mu         sync.Mutex
 	ceremonies map[string]*tssKeygenCeremony
+	// Key refreshes, kept separate from ceremonies deliberately: a refresh
+	// operates on a key that already exists and may already hold money,
+	// and sharing a map with fresh ceremonies would make it possible to
+	// write a refresh result into a slot a keygen reads.
+	resharings map[string]*tssResharingCeremony
 
 	signMu   sync.Mutex
 	signings map[string]*tssSigningCeremony
@@ -88,6 +97,7 @@ func NewTSSPartyManager(partyID int, client *http.Client) *TSSPartyManager {
 		partyID:    partyID,
 		client:     client,
 		ceremonies: make(map[string]*tssKeygenCeremony),
+		resharings: make(map[string]*tssResharingCeremony),
 		signings:   make(map[string]*tssSigningCeremony),
 		preParams:  pool,
 	}
@@ -350,7 +360,11 @@ func relayTSSMessage(selfPartyID int, peers map[int]string, sortedIDs tsscommon.
 func peerIndexByKey(sorted tsscommon.SortedPartyIDs) map[int]*tsscommon.PartyID {
 	out := make(map[int]*tsscommon.PartyID, len(sorted))
 	for _, id := range sorted {
-		out[int(id.KeyInt().Int64())] = id
+		// Through the epoch stride, not a bare KeyInt. After a proactive
+		// refresh the committee's tss-lib keys carry an epoch and a raw
+		// integer is no longer a party number.
+		node, _ := nodeForPartyKey(id)
+		out[node] = id
 	}
 	return out
 }
@@ -387,7 +401,20 @@ func (m *TSSPartyManager) completeCeremony(ceremonyID string, ceremony *tssKeyge
 	// (see vault_seal.go); if it IS configured, a sealing failure fails
 	// the whole ceremony rather than silently reporting "completed" with
 	// nothing durable to show for it.
-	sealed, err := SealKeyShare(context.Background(), os.Getenv, ceremony.selfPartyID, ceremonyID, share)
+	// Sealed with the context needed to use it. A share on its own is not
+	// enough to sign: tss-lib needs the committee's identities, the
+	// threshold and -- since proactive refresh -- the epoch the share's
+	// coordinates belong to. Sealing the share without them produces a
+	// backup that restores something unusable.
+	sealed, err := SealKeyShareWithContext(context.Background(), os.Getenv,
+		ceremony.selfPartyID, ceremonyID, share, &CeremonyContext{
+			Threshold:    ceremony.threshold,
+			TotalParties: len(ceremony.sortedIDs),
+			Curve:        string(ceremony.curve),
+			Epoch:        ceremony.epoch,
+			PublicKeyHex: pubKeyHex,
+			Address:      address,
+		})
 	if err != nil {
 		m.failCeremony(ceremonyID, fmt.Errorf("keygen succeeded but sealing the key share in Vault failed: %w", err))
 		return

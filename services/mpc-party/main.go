@@ -19,6 +19,10 @@ type PartyServer struct {
 	partyID    int
 	config     *PartyConfig
 	tssManager *TSSPartyManager // real network-driven tss-lib DKG, see tss_party.go
+	// A key that must co-sign every ceremony request, held somewhere this
+	// deployment's own hosts cannot reach. nil when none is configured --
+	// see authorizer.go for why that is allowed and what it costs.
+	authorizer *Authorizer
 }
 
 // Prometheus metrics
@@ -51,8 +55,25 @@ func init() {
 }
 
 // NewPartyServer creates a new DKG party server.
+//
+// A misconfigured authoriser is fatal rather than ignored. The failure
+// mode of "the public key did not parse, so carry on without checking
+// authorisations" is a deployment that believes it has a second factor and
+// does not, which is worse than one that knows it has none.
 func NewPartyServer(partyID int) *PartyServer {
-	return &PartyServer{partyID: partyID}
+	authorizer, err := AuthorizerFromEnv(os.Getenv)
+	if err != nil {
+		log.Fatalf("ceremony authoriser is configured but unusable: %v", err)
+	}
+	if authorizer == nil {
+		log.Printf("no ceremony authoriser configured: any caller that can reach this " +
+			"party can ask it to take part in a ceremony. Set CEREMONY_AUTHORIZER_PUBKEY " +
+			"to require a second signature from a key this host cannot reach.")
+	} else {
+		log.Printf("ceremony authoriser enabled (%s); ceremonies without a valid "+
+			"authorisation signature will be refused", authorizer.algorithm)
+	}
+	return &PartyServer{partyID: partyID, authorizer: authorizer}
 }
 
 // HandleHealth returns the party's health status.
@@ -134,6 +155,18 @@ func main() {
 	// still reachable; deleted rather than documented.
 	router.HandleFunc("/tss/keygen/start", ps.HandleTSSKeygenStart).Methods(http.MethodPost)
 	router.HandleFunc("/tss/keygen/message", ps.HandleTSSKeygenMessage).Methods(http.MethodPost)
+	// Reload a completed ceremony from sealed material. The step that turns
+	// docs/deployment/KEY-RECOVERY.md from a description into a procedure:
+	// a party that restarts holds nothing until this is called, and calling
+	// it is an operator's decision rather than a side effect of a pod being
+	// rescheduled.
+	router.HandleFunc("/tss/keygen/restore", ps.HandleTSSRestore).Methods(http.MethodPost)
+	// Proactive key refresh. Same committee, same threshold, same key --
+	// new shares. See tss_resharing.go for why a system without this has
+	// a weaker threshold claim than it appears to.
+	router.HandleFunc("/tss/reshare/start", ps.HandleTSSReshareStart).Methods(http.MethodPost)
+	router.HandleFunc("/tss/reshare/message", ps.HandleTSSReshareMessage).Methods(http.MethodPost)
+	router.HandleFunc("/tss/reshare/{reshareId}/status", ps.HandleTSSReshareStatus).Methods(http.MethodGet)
 	router.HandleFunc("/tss/keygen/status", ps.HandleTSSKeygenStatus).Methods(http.MethodGet)
 
 	// Real, network-driven tss-lib threshold SIGNING (see tss_signing.go) --

@@ -8,6 +8,8 @@ import (
 	"log"
 	"net/http"
 	"net/http/httputil"
+
+	"github.com/gorilla/mux"
 	"time"
 )
 
@@ -94,6 +96,11 @@ type tssKeygenStartRequest struct {
 	// Which curve to generate on. Absent means secp256k1, which is what
 	// every key generated before this field existed is.
 	Curve string `json:"curve,omitempty"`
+	// A signature over this request from a key the platform's own hosts
+	// cannot reach. Required only when this party has an authoriser
+	// configured -- see authorizer.go.
+	Authorization          string `json:"authorization,omitempty"`
+	AuthorizationSignature string `json:"authorization_signature,omitempty"`
 }
 
 func (ps *PartyServer) HandleTSSKeygenStart(w http.ResponseWriter, r *http.Request) {
@@ -131,6 +138,12 @@ func (ps *PartyServer) HandleTSSKeygenStart(w http.ResponseWriter, r *http.Reque
 		curve = CurveSecp256k1
 	}
 
+	if err := ps.requireAuthorization("keygen", req.CeremonyID, "",
+		req.Authorization, req.AuthorizationSignature); err != nil {
+		log.Printf("refused keygen %s: %v", req.CeremonyID, err)
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": err.Error()})
+		return
+	}
 	if err := ps.tssManager.StartKeygen(req.CeremonyID, req.Threshold, peers, curve); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -204,6 +217,11 @@ type tssSignStartRequest struct {
 	KeygenCeremonyID  string `json:"keygen_ceremony_id"`
 	MessageHashHex    string `json:"message_hash_hex"` // 32 bytes, hex-encoded
 	CommitteePartyIDs []int  `json:"committee_party_ids"`
+	// A signature over this request from a key the platform's own hosts
+	// cannot reach. Required only when this party has an authoriser
+	// configured -- see authorizer.go.
+	Authorization          string `json:"authorization,omitempty"`
+	AuthorizationSignature string `json:"authorization_signature,omitempty"`
 }
 
 func (ps *PartyServer) HandleTSSSignStart(w http.ResponseWriter, r *http.Request) {
@@ -227,6 +245,12 @@ func (ps *PartyServer) HandleTSSSignStart(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	if err := ps.requireAuthorization("sign", req.SignID, req.MessageHashHex,
+		req.Authorization, req.AuthorizationSignature); err != nil {
+		log.Printf("refused signing %s: %v", req.SignID, err)
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": err.Error()})
+		return
+	}
 	if err := ps.tssManager.StartSigning(req.SignID, req.KeygenCeremonyID, hash, req.CommitteePartyIDs); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -270,6 +294,153 @@ func (ps *PartyServer) HandleTSSSignStatus(w http.ResponseWriter, r *http.Reques
 	status, err := ps.tssManager.GetSigningStatus(signID)
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, status)
+}
+
+// tssReshareMessageEnvelope is the wire format for relaying one tss-lib
+// resharing message. Structurally the same as the keygen and signing
+// envelopes and kept as its own type for the same reason: a refresh
+// message delivered to the keygen endpoint would be fed to the wrong state
+// machine, and the compiler should be the thing that prevents it.
+type tssReshareMessageEnvelope struct {
+	ReshareID   string `json:"reshare_id"`
+	FromPartyID int    `json:"from_party_id"`
+	IsBroadcast bool   `json:"is_broadcast"`
+	WireBytes   string `json:"wire_bytes"` // base64
+	// Which of the receiving node's two local parties this message is for,
+	// and which of the sender's two it came from. Both are needed: a node
+	// runs an old-committee and a new-committee party at once, and a
+	// message delivered to the wrong one is never accounted for.
+	ToOldCommittee   bool `json:"to_old_committee"`
+	FromOldCommittee bool `json:"from_old_committee"`
+}
+
+func postReshareEnvelope(client *http.Client, baseURL string, env tssReshareMessageEnvelope) error {
+	return postTSSEnvelope(client, baseURL, "/tss/reshare/message", env)
+}
+
+// tssReshareStartRequest is the body for POST /tss/reshare/start.
+type tssReshareStartRequest struct {
+	ReshareID        string         `json:"reshare_id"`
+	SourceCeremonyID string         `json:"source_ceremony_id"`
+	Peers            map[int]string `json:"peers"`
+	// A signature over this request from a key the platform's own hosts
+	// cannot reach. Required only when this party has an authoriser
+	// configured -- see authorizer.go.
+	Authorization          string `json:"authorization,omitempty"`
+	AuthorizationSignature string `json:"authorization_signature,omitempty"`
+}
+
+// HandleTSSReshareStart begins a proactive key refresh.
+func (ps *PartyServer) HandleTSSReshareStart(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	var req tssReshareStartRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
+		return
+	}
+	if req.ReshareID == "" || req.SourceCeremonyID == "" {
+		writeJSON(w, http.StatusBadRequest,
+			map[string]string{"error": "reshare_id and source_ceremony_id are required"})
+		return
+	}
+	if err := ps.requireAuthorization("reshare", req.ReshareID, "",
+		req.Authorization, req.AuthorizationSignature); err != nil {
+		log.Printf("refused resharing %s: %v", req.ReshareID, err)
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": err.Error()})
+		return
+	}
+	if err := ps.tssManager.StartResharing(req.ReshareID, req.SourceCeremonyID, req.Peers); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]string{
+		"reshare_id": req.ReshareID,
+		"status":     "in_progress",
+	})
+}
+
+// HandleTSSReshareMessage receives one relayed refresh message.
+func (ps *PartyServer) HandleTSSReshareMessage(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	var env tssReshareMessageEnvelope
+	if err := json.NewDecoder(r.Body).Decode(&env); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
+		return
+	}
+	// Same sender binding as keygen and signing: a refresh message is fed
+	// to a state machine holding a live key, so who sent it matters at
+	// least as much there as anywhere else.
+	if err := authenticatePeer(r, env.FromPartyID); err != nil {
+		log.Printf("rejected a resharing message for %s: %v (%s)",
+			env.ReshareID, err, peerCertificateSummary(r.TLS))
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": err.Error()})
+		return
+	}
+	if err := ps.tssManager.HandleIncomingReshareMessage(env); err != nil {
+		if err == ErrResharingNotReady {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "accepted"})
+}
+
+// HandleTSSReshareStatus reports how a refresh went.
+func (ps *PartyServer) HandleTSSReshareStatus(w http.ResponseWriter, r *http.Request) {
+	reshareID := mux.Vars(r)["reshareId"]
+	status, err := ps.tssManager.GetResharingStatus(reshareID)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, status)
+}
+
+// tssRestoreRequest is the body for POST /tss/keygen/restore.
+type tssRestoreRequest struct {
+	CeremonyID string         `json:"ceremony_id"`
+	Peers      map[int]string `json:"peers"`
+	// Authorised like any other ceremony operation: restoring a key into a
+	// signing party is exactly as sensitive as generating one.
+	Authorization          string `json:"authorization,omitempty"`
+	AuthorizationSignature string `json:"authorization_signature,omitempty"`
+}
+
+// HandleTSSRestore reloads a completed ceremony from sealed material.
+func (ps *PartyServer) HandleTSSRestore(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	var req tssRestoreRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
+		return
+	}
+	if err := ps.requireAuthorization("restore", req.CeremonyID, "",
+		req.Authorization, req.AuthorizationSignature); err != nil {
+		log.Printf("refused restore of %s: %v", req.CeremonyID, err)
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": err.Error()})
+		return
+	}
+	if err := ps.tssManager.RestoreCeremony(req.CeremonyID, req.Peers); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	status, err := ps.tssManager.GetStatus(req.CeremonyID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
 	writeJSON(w, http.StatusOK, status)
