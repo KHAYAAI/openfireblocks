@@ -31,6 +31,17 @@ COPY . .
 # static binary is what the distroless/static runtime below can execute.
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags='-s -w' -o /out/policy-service .
 
+# ofac-sync ships in the same image rather than its own.
+#
+# It has to run somewhere that can write the volume this service reads,
+# which in practice means the same pod, and a second image to build, scan,
+# sign and keep in step for one 200-line tool is cost without a benefit.
+# It is a separate ENTRYPOINT, not a second process in this one: the sync
+# runs as an initContainer and a CronJob, and a screening service that
+# also reaches out to Treasury on its own would be a larger thing to
+# reason about than it needs to be.
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags='-s -w' -o /out/ofac-sync ./cmd/ofac-sync
+
 # Runtime stage.
 #
 # distroless/static rather than alpine:3.18: no package manager to invoke at
@@ -41,6 +52,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags='-s -w' -o /out/policy-
 FROM gcr.io/distroless/static-debian12:nonroot
 
 COPY --from=build /out/policy-service /usr/local/bin/policy-service
+COPY --from=build /out/ofac-sync /usr/local/bin/ofac-sync
 
 # Any non-root uid works -- the binary is world-readable and writes nothing
 # to the filesystem. The chart overrides this with runAsUser: 1000.

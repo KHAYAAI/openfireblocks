@@ -30,6 +30,18 @@ stringData:
   app-password: app-dev-password
   app-admin-password: app-admin-dev-password
   vault-root-token: dev-root-token
+  # The ceremony authoriser's PRIVATE key, for the kind deployment only.
+  #
+  # Deliberately a published, deterministic dev key: derived from
+  # sha256("openfireblocks-dev-ceremony-authorizer-do-not-use-in-production"),
+  # so it is reproducible, greppable, and unmistakably not a secret. Its
+  # public half is in infrastructure/kind/values-kind.yaml.
+  #
+  # In a real deployment this Secret should not exist at all -- set
+  # ceremonyAuthorizer.signerUrl and keep the key on infrastructure this
+  # platform does not administer. That is the whole point of the control;
+  # a key in this namespace is readable by anyone with root on the node.
+  authorizer-key: d3eb80d5aa9292f3fad02c6753243fc62f1b133fa54e47809c0c5cfa9e937149
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim

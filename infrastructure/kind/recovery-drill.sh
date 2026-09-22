@@ -62,6 +62,7 @@ done
 fail() { echo "FAIL: $*" >&2; exit 1; }
 jqp() { python3 -c "import sys,json;d=json.load(sys.stdin);print($1)"; }
 
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 WORKDIR="$(mktemp -d)"
 PIDS=()
 cleanup() {
@@ -340,12 +341,56 @@ echo "    every party returns 404 for the ceremony, and signing fails"
 # Step 6 -- restore
 # ---------------------------------------------------------------------------
 
+# With ceremonyAuthorizer enabled -- which values-kind.yaml does -- a
+# party refuses any ceremony request without a signature from the
+# authorising key. Every other drill goes through the API gateway, so the
+# temporal worker signs for it; this one calls the parties directly,
+# because restoring a key is an operator action with no gateway route.
+#
+# The key is read from the same Secret the worker mounts. In a real
+# deployment it would not be readable at all -- that is the point of
+# ceremonyAuthorizer.signerUrl -- and an operator restoring a key would
+# obtain the signature from whoever holds the authorising key, which is
+# the control working rather than an inconvenience.
+AUTHORIZATION=""
+AUTHORIZATION_SIGNATURE=""
+authorize_restore() {
+  local key
+  key=$(kubectl -n "${NS}" get secret dev-dependency-credentials \
+    -o jsonpath='{.data.authorizer-key}' 2>/dev/null | base64 -d || true)
+  if [[ -z "${key}" ]]; then
+    echo "    no authorising key in the cluster; assuming ceremony authorisation is off"
+    return
+  fi
+  local out
+  out=$(cd "${ROOT}/infrastructure/kind/authorize" && go run . "${key}" restore "${CEREMONY_ID}") \
+    || fail "could not produce a ceremony authorisation"
+  AUTHORIZATION=$(echo "${out}" | sed -n '1p')
+  AUTHORIZATION_SIGNATURE=$(echo "${out}" | sed -n '2p')
+  echo "    signed a restore authorisation with the cluster's authorising key"
+}
+
+restore_body() {
+  local peers="$1"
+  if [[ -z "${AUTHORIZATION}" ]]; then
+    printf '{"ceremony_id":"%s","peers":%s}' "${CEREMONY_ID}" "${peers}"
+    return
+  fi
+  # The authorisation travels as a JSON *string*, not a nested object --
+  # the field is a string on both sides. Encoded with python rather than
+  # by hand, because getting the escaping wrong produces a 400 that reads
+  # like a rejected signature.
+  AUTH="${AUTHORIZATION}" SIG="${AUTHORIZATION_SIGNATURE}" CID="${CEREMONY_ID}" PEERS="${peers}" \
+    python3 -c 'import json,os; print(json.dumps({"ceremony_id":os.environ["CID"],"peers":json.loads(os.environ["PEERS"]),"authorization":os.environ["AUTH"],"authorization_signature":os.environ["SIG"]}))'
+}
+
 echo "==> restoring each party from sealed material"
 PEERS=$(peers_json)
+authorize_restore
 for id in $(seq 1 "${PARTY_COUNT}"); do
   restored=$(party_curl "${id}" -X POST \
     -H 'Content-Type: application/json' \
-    -d "{\"ceremony_id\":\"${CEREMONY_ID}\",\"peers\":${PEERS}}" \
+    -d "$(restore_body "${PEERS}")" \
     "$(party_url "${id}" "/tss/keygen/restore")")
   address=$(echo "${restored}" | jqp 'd.get("address","")') \
     || fail "party ${id} refused to restore: ${restored}"

@@ -88,6 +88,10 @@ type PolicyDecision struct {
 // evaluator holds a prepared OPA query reused across requests.
 type evaluator struct {
 	query rego.PreparedEvalQuery
+	// Where the screening list came from and how old it is. Held so
+	// /evaluate can refuse once it is too stale to mean anything, and so
+	// /health can say so before it gets there. See sanctions_source.go.
+	sanctions *sanctionsSource
 }
 
 func newEvaluator(ctx context.Context) (*evaluator, error) {
@@ -105,12 +109,23 @@ func newEvaluator(ctx context.Context) (*evaluator, error) {
 		modules[name] = string(content)
 	}
 
-	// Load the sanctions list as OPA data (data.sanctions.addresses).
-	var sanctions map[string]interface{}
-	if err := json.Unmarshal(sanctionsJSON, &sanctions); err != nil {
-		return nil, fmt.Errorf("invalid sanctions.json: %w", err)
+	// The sanctions list, from the synced file when one is configured and
+	// from the build-time copy otherwise. Loading through sanctionsSource
+	// rather than unmarshalling here is what makes the list's age a thing
+	// this service knows about instead of a thing nobody can see.
+	source, err := loadSanctionsSource(os.Getenv, sanctionsJSON)
+	if err != nil {
+		return nil, err
 	}
-	store := inmem.NewFromObject(map[string]interface{}{"sanctions": sanctions})
+	// Lowercased at load (normaliseList), so the Rego comparison is
+	// against normalised data and cannot be defeated by casing.
+	addresses := make([]interface{}, 0, len(source.list.Addresses))
+	for _, a := range source.list.Addresses {
+		addresses = append(addresses, a)
+	}
+	store := inmem.NewFromObject(map[string]interface{}{
+		"sanctions": map[string]interface{}{"addresses": addresses},
+	})
 
 	opts := []func(*rego.Rego){rego.Query("data.policies"), rego.Store(store)}
 	for name, src := range modules {
@@ -121,7 +136,7 @@ func newEvaluator(ctx context.Context) (*evaluator, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to prepare policy query: %w", err)
 	}
-	return &evaluator{query: pq}, nil
+	return &evaluator{query: pq, sanctions: source}, nil
 }
 
 // evaluate converts the request into rego input, runs the policies and folds the
@@ -272,11 +287,18 @@ func toStringSlice(v interface{}) []string {
 
 func main() {
 	ctx := context.Background()
-	eval, err := newEvaluator(ctx)
+	initial, err := newEvaluator(ctx)
 	if err != nil {
 		log.Fatalf("failed to init policy evaluator: %v", err)
 	}
 	log.Print("policy engine loaded")
+
+	// Held behind a swap so the sanctions list can be re-read without a
+	// restart -- a CronJob rewrites the file daily, and a process that
+	// only reads it at boot would refuse transactions over a file that
+	// had in fact been updated. See sanctions_reload.go.
+	live := newLiveEvaluator(initial)
+	startSanctionsWatcher(ctx, live)
 
 	mux := http.NewServeMux()
 
@@ -290,6 +312,26 @@ func main() {
 			http.Error(w, "invalid request body", http.StatusBadRequest)
 			return
 		}
+		// Screening stops being screening once the list is old enough,
+		// and this is where that becomes a decision rather than a
+		// silently weaker check. Deliberately before evaluate(): a
+		// deny produced here must not be confused with one produced by
+		// the policies, because they mean opposite things to an
+		// operator -- "this transaction is not allowed" versus "this
+		// platform can no longer tell you whether it is".
+		eval := live.get()
+		if st := eval.sanctions.status(time.Now()); !st.OK {
+			log.Printf("refusing to evaluate: %s", st.Reason)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_ = json.NewEncoder(w).Encode(&PolicyDecision{
+				Approved: false,
+				Denials:  []string{"sanctions_list_stale"},
+				Reason:   "sanctions screening unavailable: " + st.Reason,
+			})
+			return
+		}
+
 		decision, err := eval.evaluate(r.Context(), &req)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -300,8 +342,23 @@ func main() {
 	})
 
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		// Reports the screening list's age whether or not it is a
+		// problem yet. A control whose freshness can only be discovered
+		// by it failing is one nobody notices decaying.
+		status := "ok"
+		eval := live.get()
+		st := eval.sanctions.status(time.Now())
+		if !st.OK {
+			status = "degraded"
+		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+		if !st.OK {
+			w.WriteHeader(http.StatusServiceUnavailable)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"status":    status,
+			"sanctions": eval.sanctions.describe(time.Now()),
+		})
 	})
 
 	port := os.Getenv("PORT")

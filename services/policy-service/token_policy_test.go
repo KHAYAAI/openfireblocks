@@ -103,10 +103,10 @@ func TestTierCeilingsApplyToStablecoins(t *testing.T) {
 		amount       string // USDC base units
 		wantApproved bool
 	}{
-		{"free", "9000000000", true},       // 9,000 USDC, under the 10,000 free ceiling
-		{"free", "20000000000", false},     // 20,000 USDC, over it
-		{"pro", "20000000000", true},       // fine on pro
-		{"pro", "200000000000", false},     // 200,000 USDC, over the pro ceiling
+		{"free", "9000000000", true},   // 9,000 USDC, under the 10,000 free ceiling
+		{"free", "20000000000", false}, // 20,000 USDC, over it
+		{"pro", "20000000000", true},   // fine on pro
+		{"pro", "200000000000", false}, // 200,000 USDC, over the pro ceiling
 		{"enterprise", "200000000000", true},
 	}
 

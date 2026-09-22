@@ -171,6 +171,22 @@ spec:
                   name: {{ $.Values.mpcParty.vault.tokenSecret }}
                   key: vault-token
             {{- end }}
+            {{- if $.Values.ceremonyAuthorizer.enabled }}
+            # This party will refuse to join any ceremony whose request
+            # does not carry a valid signature from this key. See
+            # services/mpc-party/authorizer.go; the signing side is on the
+            # temporal worker.
+            #
+            # A misconfigured value here is fatal at startup rather than
+            # ignored: a deployment that believes it has a second factor
+            # and does not is worse off than one that knows it has none.
+            - name: CEREMONY_AUTHORIZER_PUBKEY
+              value: {{ required "ceremonyAuthorizer.publicKey is required when ceremonyAuthorizer.enabled" $.Values.ceremonyAuthorizer.publicKey | quote }}
+            - name: CEREMONY_AUTHORIZER_ALG
+              value: {{ $.Values.ceremonyAuthorizer.algorithm | quote }}
+            - name: CEREMONY_AUTHORIZER_MAX_AGE_SECONDS
+              value: {{ $.Values.ceremonyAuthorizer.maxAgeSeconds | quote }}
+            {{- end }}
             {{- if $.Values.mpcParty.mtls.enabled }}
             # Mutual TLS for the DKG/signing transport -- both this
             # party's server side (incoming /tss/keygen|sign/message from

@@ -215,6 +215,57 @@ PAID=$(psql_admin "SELECT status FROM invoices WHERE invoice_id = '${INVOICE_ID}
   || fail "the invoice is marked ${PAID} after a charge that never happened"
 echo "    refused with ${CHARGE_STATUS}, and the invoice is still unpaid"
 
+# ---------------------------------------------------------------------------
+# Collection
+# ---------------------------------------------------------------------------
+
+# The sweep that turns invoices into money. Until recently it did not
+# exist: invoices were raised on a schedule and nothing ever charged them,
+# which is an accounts-receivable spreadsheet rather than a billing system.
+#
+# Stripe is still not configured here and must not be faked, so what this
+# proves is the half that does not need a processor: that the sweep finds
+# the outstanding invoice, reports it rather than dropping it, and leaves
+# it unpaid. Whether Stripe accepts what we send is a different claim,
+# proven by services/billing/stripe_live_test.go against a test-mode key.
+
+echo "==> the collection sweep finds the outstanding invoice"
+collect=$(billing POST /v1/billing/collect '')
+COLLECT_STATUS=$(echo "${collect}" | status_of)
+[[ "${COLLECT_STATUS}" == "200" || "${COLLECT_STATUS}" == "207" ]] \
+  || fail "the collection sweep answered ${COLLECT_STATUS}: ${collect}"
+
+body=$(echo "${collect}" | body_of)
+ATTEMPTED=$(echo "${body}" | jqp 'd["attempted"]')
+[[ "${ATTEMPTED}" -ge 1 ]] \
+  || fail "the sweep considered ${ATTEMPTED} invoices; the one just raised is outstanding"
+
+# It must appear somewhere -- collected, skipped or failed. An invoice
+# that vanishes from the sweep's own report is one nobody will chase.
+echo "${body}" | grep -q "${INVOICE_ID}" \
+  || fail "invoice ${INVOICE_ID} is outstanding but absent from the sweep's report: ${body}"
+echo "    considered ${ATTEMPTED}, and reported ${INVOICE_ID} by name"
+
+STILL=$(psql_admin "SELECT status FROM invoices WHERE invoice_id = '${INVOICE_ID}';" | tr -d '[:space:]')
+[[ "${STILL}" == "unpaid" ]] \
+  || fail "the sweep marked the invoice ${STILL} with no payment processor configured"
+
+# Every attempt leaves a row, including the ones that took no money. A
+# trail that records only successes cannot answer "why was this customer
+# never charged", which is the question actually asked, months later, by
+# somebody reconciling.
+TRAIL=$(psql_admin "SELECT count(*) FROM invoice_charges WHERE invoice_id = '${INVOICE_ID}';" | tr -d '[:space:]')
+[[ "${TRAIL}" -ge 1 ]] \
+  || fail "the collection attempt left no row in invoice_charges"
+echo "    still unpaid, and the attempt is recorded in invoice_charges"
+
+# Idempotent, like the invoicing sweep. Schedules fire twice.
+billing POST /v1/billing/collect '' >/dev/null
+AFTER=$(psql_admin "SELECT status FROM invoices WHERE invoice_id = '${INVOICE_ID}';" | tr -d '[:space:]')
+[[ "${AFTER}" == "unpaid" ]] \
+  || fail "a second collection sweep changed the invoice to ${AFTER}"
+echo "    running it twice changed nothing"
+
 echo
 echo "PASS: a customer subscribed, provisioned a key, produced ${SIGNATURES} signatures,"
 echo "      and billing counted exactly that -- from the same rows that form"
@@ -223,4 +274,6 @@ echo "      plus $((SIGNATURES - 2)) signatures of overage at \$7.00, with no ch
 echo "      key that was inside its allowance. Running generation again"
 echo "      returned the same invoice rather than billing the month twice,"
 echo "      and charging it with no payment processor configured was refused"
-echo "      without marking anything paid."
+echo "      without marking anything paid. The collection sweep then found"
+echo "      that invoice, reported it by name, recorded the attempt, and"
+echo "      left it unpaid -- twice."

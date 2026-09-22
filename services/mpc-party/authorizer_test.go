@@ -8,6 +8,10 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/hex"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -284,5 +288,104 @@ func TestAnAbsentMessageHashStillOccupiesItsField(t *testing.T) {
 	const want = "openfireblocks-authorization-v1\nkeygen\nc1\n\n42"
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+// The gate, exercised through the HTTP handler with the exact key the
+// kind deployment uses.
+//
+// Everything else in this file tests Verify directly. This tests the
+// thing a deployment actually depends on: that a ceremony request
+// carrying no authorisation is refused, and one carrying a good
+// signature is accepted, at the route.
+//
+// The key is the published dev keypair from
+// infrastructure/kind/dependencies.yaml, so a failure here also catches
+// the chart and the test drifting apart.
+func TestTheCeremonyGateRefusesAndAcceptsAtTheRoute(t *testing.T) {
+	t.Setenv("TSS_ALLOW_UNAUTHENTICATED_PEERS", "1")
+
+	const devSeedHex = "d3eb80d5aa9292f3fad02c6753243fc62f1b133fa54e47809c0c5cfa9e937149"
+	const devPubHex = "f137c293a32763ac84ca293a59fa62f5b8117d9513605788f5f2e9b9b2b3e659"
+
+	seed, err := hex.DecodeString(devSeedHex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	priv := ed25519.NewKeyFromSeed(seed)
+	if got := hex.EncodeToString(priv.Public().(ed25519.PublicKey)); got != devPubHex {
+		t.Fatalf("the dev keypair in infrastructure/kind no longer matches: public half is %s, "+
+			"values-kind.yaml says %s", got, devPubHex)
+	}
+
+	authorizer, err := AuthorizerFromEnv(func(k string) string {
+		switch k {
+		case "CEREMONY_AUTHORIZER_PUBKEY":
+			return devPubHex
+		case "CEREMONY_AUTHORIZER_ALG":
+			return "ed25519"
+		}
+		return ""
+	})
+	if err != nil {
+		t.Fatalf("building the authorizer: %v", err)
+	}
+	if authorizer == nil {
+		t.Fatal("no authorizer was built from a configured public key")
+	}
+
+	ps := &PartyServer{partyID: 1, tssManager: NewTSSPartyManager(1, nil), authorizer: authorizer}
+
+	// Unauthorised: refused before anything is contributed.
+	body := `{"ceremony_id":"gated","threshold":1,"curve":"ed25519",` +
+		`"peers":{"1":"http://a","2":"http://b","3":"http://c"}}`
+	rec := httptest.NewRecorder()
+	ps.HandleTSSKeygenStart(rec, httptest.NewRequest(http.MethodPost, "/tss/keygen/start", strings.NewReader(body)))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("an unauthorised keygen returned HTTP %d, want 403: %s", rec.Code, rec.Body.String())
+	}
+
+	// Authorised: the same request, carrying what the worker would send.
+	req := AuthorizationRequest{
+		Operation:  "keygen",
+		CeremonyID: "gated",
+		IssuedAt:   time.Now().Unix(),
+	}
+	authJSON, err := MarshalAuthorization(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sig := hex.EncodeToString(ed25519.Sign(priv, CanonicalAuthorizationBytes(req)))
+
+	// The authorisation travels as a JSON *string*, not a nested object --
+	// the field is `Authorization string` on both sides, so the worker
+	// marshals the request and the escaped result becomes the value. Got
+	// this wrong writing the test and the party answered 400 rather than
+	// 403, which is the correct answer to a body it cannot parse.
+	authorised := fmt.Sprintf(
+		`{"ceremony_id":"gated","threshold":1,"curve":"ed25519",`+
+			`"peers":{"1":"http://a","2":"http://b","3":"http://c"},`+
+			`"authorization":%q,"authorization_signature":%q}`,
+		string(authJSON), sig)
+	rec = httptest.NewRecorder()
+	ps.HandleTSSKeygenStart(rec, httptest.NewRequest(http.MethodPost, "/tss/keygen/start", strings.NewReader(authorised)))
+	// Asserted exactly, not "anything but 403". A body the party cannot
+	// parse also is not a 403, and a test that accepts every other status
+	// passes while proving nothing.
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("a correctly authorised keygen returned HTTP %d, want 202: %s",
+			rec.Code, rec.Body.String())
+	}
+
+	// And an authorisation for a different ceremony must not transfer.
+	replayed := fmt.Sprintf(
+		`{"ceremony_id":"some-other-ceremony","threshold":1,"curve":"ed25519",`+
+			`"peers":{"1":"http://a","2":"http://b","3":"http://c"},`+
+			`"authorization":%q,"authorization_signature":%q}`,
+		string(authJSON), sig)
+	rec = httptest.NewRecorder()
+	ps.HandleTSSKeygenStart(rec, httptest.NewRequest(http.MethodPost, "/tss/keygen/start", strings.NewReader(replayed)))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("an authorisation for one ceremony was accepted for another (HTTP %d)", rec.Code)
 	}
 }

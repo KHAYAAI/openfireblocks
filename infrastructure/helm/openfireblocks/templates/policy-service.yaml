@@ -20,6 +20,37 @@ spec:
       serviceAccountName: {{ include "ofb.fullname" . }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- if .Values.policyService.ofacSync.enabled }}
+      initContainers:
+        # Fetch the sanctions list before the service starts, not after.
+        #
+        # As an initContainer rather than a sidecar racing startup: the
+        # service reads the list once at boot and refuses to serve an
+        # empty or unreadable one, so a replica that came up before its
+        # first sync would crash-loop until the sidecar happened to win.
+        # This way the pod is not Ready until it has a list.
+        #
+        # A failure here fails the pod, deliberately. A replica that
+        # cannot reach Treasury has no current screening list, and the
+        # alternative -- starting anyway on the embedded fixture -- is a
+        # replica that screens against nothing while reporting healthy.
+        - name: ofac-sync
+          image: {{ include "ofb.image" (dict "root" . "image" .Values.policyService.image "tag" .Values.policyService.tag) }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          command: ["/usr/local/bin/ofac-sync"]
+          args:
+            - "--source={{ .Values.policyService.ofacSync.sourceUrl }}"
+            - "--out=/var/lib/openfireblocks/sanctions.json"
+            - "--min-addresses={{ .Values.policyService.ofacSync.minAddresses }}"
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          volumeMounts:
+            - name: sanctions
+              mountPath: /var/lib/openfireblocks
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits: { cpu: 500m, memory: 256Mi }
+      {{- end }}
       containers:
         - name: policy-service
           image: {{ include "ofb.image" (dict "root" . "image" .Values.policyService.image "tag" .Values.policyService.tag) }}
@@ -46,6 +77,25 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.external.databaseAdminUrlSecret }}
                   key: database-admin-url
+            {{- if .Values.policyService.ofacSync.enabled }}
+            # Screen against the synced file, not the build-time fixture.
+            # A file this names but cannot use is fatal at startup rather
+            # than a silent fallback -- see sanctions_source.go.
+            - name: SANCTIONS_FILE
+              value: /var/lib/openfireblocks/sanctions.json
+            - name: SANCTIONS_WARN_AFTER
+              value: {{ .Values.policyService.ofacSync.warnAfter | quote }}
+            - name: SANCTIONS_DENY_AFTER
+              value: {{ .Values.policyService.ofacSync.denyAfter | quote }}
+            - name: SANCTIONS_RELOAD_INTERVAL
+              value: {{ .Values.policyService.ofacSync.reloadInterval | quote }}
+            {{- end }}
+          {{- if .Values.policyService.ofacSync.enabled }}
+          volumeMounts:
+            - name: sanctions
+              mountPath: /var/lib/openfireblocks
+              readOnly: true
+          {{- end }}
           livenessProbe:
             httpGet: { path: /health, port: http }
             initialDelaySeconds: 3
@@ -56,6 +106,42 @@ spec:
             periodSeconds: 5
           resources:
             {{- toYaml .Values.policyService.resources | nindent 12 }}
+        {{- if .Values.policyService.ofacSync.enabled }}
+        # Refreshes the list in place on a schedule. The service re-reads
+        # it (SANCTIONS_RELOAD_INTERVAL) rather than restarting, so a new
+        # designation takes effect without dropping in-flight evaluations.
+        #
+        # A sidecar rather than a CronJob because the volume is this pod's
+        # emptyDir: a Job in another pod could not write it. The cost is
+        # one Treasury request per replica per day.
+        - name: ofac-refresh
+          image: {{ include "ofb.image" (dict "root" . "image" .Values.policyService.image "tag" .Values.policyService.tag) }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          # No shell: the runtime image is distroless, so a
+          # `sh -c "while true"` sidecar would not start at all. ofac-sync
+          # does its own looping with --interval.
+          command: ["/usr/local/bin/ofac-sync"]
+          args:
+            - "--source={{ .Values.policyService.ofacSync.sourceUrl }}"
+            - "--out=/var/lib/openfireblocks/sanctions.json"
+            - "--min-addresses={{ .Values.policyService.ofacSync.minAddresses }}"
+            - "--interval={{ .Values.policyService.ofacSync.refreshInterval }}"
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          volumeMounts:
+            - name: sanctions
+              mountPath: /var/lib/openfireblocks
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { cpu: 500m, memory: 256Mi }
+        {{- end }}
+      {{- if .Values.policyService.ofacSync.enabled }}
+      volumes:
+        # Per-replica, not shared. ReadWriteMany is not available on every
+        # cluster and the list is a few hundred kilobytes.
+        - name: sanctions
+          emptyDir: {}
+      {{- end }}
 ---
 apiVersion: v1
 kind: Service

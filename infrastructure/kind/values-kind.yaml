@@ -139,3 +139,24 @@ ingress:
   enabled: false
 serviceMonitor:
   enabled: false
+
+# Ceremony authorisation, on.
+#
+# On here specifically because the feature is worthless untested: both
+# halves existed and passed their own unit tests for a while, and nothing
+# exercised them against each other in a running deployment. With this
+# enabled, every drill in .github/workflows/e2e.yml that provisions a key
+# or signs a transaction is also proving that the worker's signature is
+# one the parties accept -- and a mismatch in the canonical form, which is
+# duplicated across two Go modules that cannot import each other, fails
+# the whole suite instead of reaching a customer.
+#
+# The key lives in a Secret here, which is the weaker of the two supported
+# arrangements and fine for kind. A production deployment sets signerUrl
+# instead; see the comment in the chart's values.yaml.
+ceremonyAuthorizer:
+  enabled: true
+  algorithm: ed25519
+  # Public half of the published dev key in dependencies.yaml.
+  publicKey: f137c293a32763ac84ca293a59fa62f5b8117d9513605788f5f2e9b9b2b3e659
+  keySecret: dev-dependency-credentials

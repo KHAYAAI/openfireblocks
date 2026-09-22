@@ -100,6 +100,39 @@ policyService:
   resources:
     requests: { cpu: 100m, memory: 128Mi }
     limits: { cpu: 500m, memory: 256Mi }
+  # The OFAC sanctions feed.
+  #
+  # Off means the service screens against the list compiled into its
+  # binary, which is a fixture: it is exactly as current as the last time
+  # somebody rebuilt this image. OFAC designates new addresses
+  # continuously, so that list develops a slowly widening hole and nothing
+  # reports it. GET /health says so in that state.
+  #
+  # On, each replica fetches the list into its own emptyDir at startup and
+  # refreshes it on a schedule. Per-replica rather than a shared volume
+  # because ReadWriteMany is not available on every cluster and a screening
+  # list is small; the cost is one Treasury request per replica per day.
+  #
+  # The service refuses to evaluate once the list passes denyAfter, and
+  # warns from warnAfter. Those two thresholds are the trade between
+  # missing a new designation and taking the platform down over a feed
+  # outage -- see services/policy-service/sanctions_source.go, which
+  # explains why neither default is obviously right for every deployment.
+  ofacSync:
+    enabled: false
+    # Treasury has moved this more than once. A URL that 404s becomes a
+    # silently stale list, so it is overridable without a release.
+    sourceUrl: https://sanctionslistservice.ofac.treas.gov/api/PublicationPreview/exports/SDN.XML
+    # How often the sidecar re-fetches. Daily matches OFAC's own
+    # publication cadence; more often is wasted requests to Treasury.
+    refreshInterval: 24h
+    warnAfter: 24h
+    denyAfter: 72h
+    reloadInterval: 1h
+    # Refuse to overwrite a good list with a tiny one. If the source moves
+    # and returns an error page, parsing yields almost nothing, and writing
+    # that replaces real screening with none while looking healthy.
+    minAddresses: 100
 
 temporalWorker:
   enabled: true
@@ -190,6 +223,56 @@ mpcParty:
     addr: "" # e.g. http://vault.vault:8200 -- empty disables key-share sealing, see vault_seal.go
     tokenSecret: openfireblocks-secrets # secret holding key "vault-token"
 
+# Ceremony authorisation: a second signature, from a key this deployment's
+# own hosts cannot reach, without which a party will not join a ceremony.
+#
+# The gap it closes is the one a threshold does not. A threshold protects
+# against a minority of PARTIES being compromised; it says nothing about
+# the orchestrator. An attacker holding the temporal worker's credentials
+# can ask every party, correctly and in the right format, to sign whatever
+# they like -- every party behaves correctly, and the money leaves.
+#
+# Off by default, deliberately. It needs external infrastructure (a KMS, an
+# approval service) and a platform that refused to start without one would
+# be unusable for every deployment that has not built one yet. The state is
+# reported by GET /info so "off" is visible rather than assumed.
+#
+# Two ways to supply the signing side, and they are not equivalent:
+#
+#   signerUrl  -- the strong one. A service the CUSTOMER runs, holding the
+#                 cloud credentials, on infrastructure this platform does
+#                 not administer. It can apply its own checks (a second
+#                 approver, a business-hours window, a rate limit) before
+#                 it signs. Compromising every host here still does not
+#                 produce a ceremony.
+#   keySecret  -- the weaker one. The private key lives in a Secret in this
+#                 namespace, so an attacker with root on the worker's node
+#                 has it. Still worth having: compromising the gateway, the
+#                 database or a party no longer yields ceremonies. But it
+#                 does not deliver the property the feature exists for.
+#
+# See services/mpc-party/authorizer.go (verify) and
+# services/temporal-worker/activities/ceremony_authorization.go (sign).
+ceremonyAuthorizer:
+  enabled: false
+  # ed25519 or ecdsa-p256. ed25519 unless a KMS forces the other; secp256k1
+  # is deliberately unsupported, being the curve the platform's own keys
+  # use -- an authorising key from the same family invites someone to reuse
+  # one for the other.
+  algorithm: ed25519
+  # The PUBLIC key every party verifies against, hex or base64. For
+  # ecdsa-p256 this is DER/SPKI, which is what a cloud KMS hands back.
+  publicKey: ""
+  # How old an authorisation may be. Bounds how long a captured one stays
+  # useful; the party checks in both directions, so a clock skewed forward
+  # cannot mint long-lived ones.
+  maxAgeSeconds: 300
+  # The customer-run signer. Preferred; wins over keySecret when both are set.
+  signerUrl: ""
+  signerTokenSecret: "" # optional; secret holding key "signer-token"
+  # Fallback: a Secret in this namespace holding key "authorizer-key".
+  keySecret: ""
+
 # policyApi is services/policy (customer-facing policy CRUD + evaluate
 # API) -- distinct from policyService (services/policy-service, the
 # OPA/Rego sanctions-screening engine, already templated above). Same
@@ -229,6 +312,11 @@ billing:
     # period ends. A monthly cron would bill some customers up to 30 days
     # late.
     cron: "0 2 * * *"
+    # Collection, an hour after invoicing, so tonight's invoices are
+    # included. It does not depend on the invoicing job having succeeded:
+    # it collects whatever is outstanding, which is also the right
+    # behaviour on a night when invoicing failed.
+    collectCron: "0 3 * * *"
     timeZone: "UTC"
   image: billing
   tag: latest

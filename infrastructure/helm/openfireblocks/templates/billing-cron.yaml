@@ -77,3 +77,83 @@ spec:
               resources:
                 {{- toYaml .Values.billing.resources | nindent 16 }}
 {{- end }}
+---
+{{- if and .Values.billing.enabled .Values.billing.schedule.enabled }}
+# What makes the money actually arrive.
+#
+# Separate from the invoicing CronJob above, deliberately. Charging is a
+# network call to a payment processor and invoicing is local database
+# work; chained in one job, an unreachable Stripe would mean nobody got
+# billed at all that night rather than nobody got charged. An invoice
+# always gets raised, and collection is free to fail and be retried
+# against the invoice that already exists.
+#
+# Runs after the invoicing sweep so tonight's invoices are included, but
+# it does not depend on it having succeeded -- it collects whatever is
+# outstanding, which is the right behaviour after an invoicing failure
+# too.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "ofb.fullname" . }}-billing-collect
+  labels:
+    {{- include "ofb.labels" . | nindent 4 }}
+    app.kubernetes.io/component: billing-collect
+spec:
+  schedule: {{ .Values.billing.schedule.collectCron | quote }}
+  timeZone: {{ .Values.billing.schedule.timeZone | quote }}
+  # Forbid. Two collection passes at once are safe -- Stripe's
+  # idempotency key is derived from the invoice id, so neither can charge
+  # a customer twice -- but they would race over the same invoices and
+  # make the logs unreconcilable.
+  concurrencyPolicy: Forbid
+  # A missed window needs no catch-up: "outstanding" is computed from the
+  # invoices themselves, so the next run collects whatever the missed one
+  # would have.
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 7
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            {{- include "ofb.labels" . | nindent 12 }}
+            app.kubernetes.io/component: billing-collect
+        spec:
+          restartPolicy: Never
+          securityContext:
+            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+          containers:
+            - name: trigger
+              # Same binary, different flag -- see the invoicing job above.
+              image: {{ include "ofb.image" (dict "root" . "image" .Values.billing.image "tag" .Values.billing.tag) }}
+              imagePullPolicy: {{ .Values.imagePullPolicy }}
+              securityContext:
+                {{- toYaml .Values.containerSecurityContext | nindent 16 }}
+              command: ["/usr/local/bin/billing"]
+              args: ["--collect-payments"]
+              env:
+                - name: APP_ENV
+                  value: production
+                - name: DATABASE_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.external.databaseAdminUrlSecret }}
+                      key: database-admin-url
+                - name: DATABASE_TENANT_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.external.databaseUrlSecret }}
+                      key: database-url
+                {{- if .Values.external.stripeSecret }}
+                - name: STRIPE_API_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.external.stripeSecret }}
+                      key: stripe-api-key
+                {{- end }}
+              resources:
+                {{- toYaml .Values.billing.resources | nindent 16 }}
+{{- end }}

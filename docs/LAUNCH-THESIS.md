@@ -145,7 +145,9 @@ being true.
 | Shares survive a restart usefully | Ceremony context sealed with the share; `POST /tss/keygen/restore` |
 | Sender binding between parties | `peer_identity.go`; a party cannot address a message as another |
 | mTLS between parties, per-pod certs from Vault PKI | `infrastructure/kind/values-kind.yaml`, `mtls.go` |
-| **Ceremony co-signing** (both halves) | `mpc-party/authorizer.go` verifies; `temporal-worker/activities/ceremony_authorization.go` signs; one golden vector pins the wire format in both suites |
+| **Ceremony co-signing**, end to end | `mpc-party/authorizer.go` verifies; `temporal-worker/.../ceremony_authorization.go` signs; one golden vector pins the wire format across both modules; **on in `values-kind.yaml`, so every e2e drill exercises it** |
+| **Live OFAC sanctions feed** | `policy-service/cmd/ofac-sync`; the service refuses to evaluate once the list passes `denyAfter`, and warns before that |
+| **Payment collection** | `billing/collect.go`; invoices were raised on a schedule and never charged. Idempotent, bounded, and every attempt leaves a row |
 | Fail-closed policy on *decoded* ERC-20 content | `erc20.ts` + `token_limits.rego`; 18 Go tests in `policy-service` |
 | Durable settlement orchestration | 92 Go tests in `services/temporal-worker` |
 | Signing and broadcast, legacy and EIP-1559 | 128 Go tests in `services/mpc-signer` |
@@ -214,12 +216,19 @@ trains people to re-run rather than look. The verifier is now
 
 ### 2.6 What is half-built, stated as such
 
-- **Ceremony co-signing is complete on both sides but unexercised in a
-  deployment.** Both halves are tested and pinned to the same bytes; no
-  chart wires an authorising key yet, and no drill turns it on.
 - **The kind recovery drill has never executed.** Every assumption in it
-  was checked against the chart, and the same procedure passes 6/6 as real
-  processes locally — but its first real run will be in CI.
+  was checked against the chart, and the same procedure passes repeatedly
+  as real processes locally — but its first real run will be in CI.
+- **The OFAC sync has never reached Treasury.** The parser is proven
+  against a fixture in the real SDN schema and the tool is proven
+  end-to-end over HTTP against a local server, but `ofac.treas.gov` is
+  blocked from the environment this was built in. The first real fetch
+  will be in a deployment.
+- **Payment collection has never charged a real card.** The decision
+  logic — what gets marked paid, what gets retried, what a human must
+  chase — is covered by tests. Whether Stripe accepts what we send is
+  proven separately by `stripe_live_test.go`, which needs a test-mode key
+  and skips without one.
 - **`docs/PHASE3-BACKUP-RECOVERY-PROCEDURES.md` is partly a target
   design**, and says so in its own banner. Key recovery is real and
   drilled; the surrounding infrastructure backup story is not all built.
@@ -248,3 +257,12 @@ Every clause is checkable in this repository. Do not add one that is not.
 3. **Sign two design partners.** Not for the revenue. For the reference
    and for the list of things that break when someone who did not build it
    tries to use it.
+
+The cheap items that used to sit above these — the authoriser wired into
+the chart, the OFAC feed, payment collection — are done. What they cost
+was a week; what they bought was that three of the sentences in section
+2.2 stopped being aspirational. Note the pattern: each one turned up a
+defect that only appeared when the thing was actually connected (a Secret
+mode the container could not read, an invoice marked paid on a payment
+that had not settled, a body shape the party answered 400 to). None of
+them were visible from reading the code.
