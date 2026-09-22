@@ -1,6 +1,10 @@
+# node_modules is reinstalled from package-lock.json inside the build stage;
+# copying the host's would both bloat the context and risk baking in
+# native addons (bcrypt) compiled for a different platform.
 node_modules
 dist
 coverage
 npm-debug.log
+*.log
 .git
 *.md

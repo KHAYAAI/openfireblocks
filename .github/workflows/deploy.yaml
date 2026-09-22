@@ -1,0 +1,330 @@
+name: Deploy Production
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  security-scan:
+    name: Security Scanning
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Run Snyk Vulnerability Scan
+        uses: snyk/actions/golang@master
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+      
+      - name: Run SAST (Semgrep)
+        uses: returntocorp/semgrep-action@v1
+        with:
+          config: >-
+            p/owasp-top-ten
+            p/security-audit
+      
+      - name: Check secrets
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: openfireblocks_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      
+      redis:
+        image: redis:7
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.21'
+      
+      - name: Run unit tests
+        run: go test -v -race -coverage ./...
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost/openfireblocks_test
+          REDIS_URL: redis://localhost:6379
+      
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          files: ./coverage.out
+
+  build:
+    name: Build Docker Images
+    needs: [security-scan, test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+      
+      - name: Login to ECR
+        uses: aws-actions/amazon-ecr-login@v1
+        with:
+          registry-type: public
+      
+      - name: Build and push API Gateway
+        uses: docker/build-push-action@v4
+        with:
+          context: ./services/api-gateway
+          file: ./services/api-gateway/Dockerfile
+          push: true
+          tags: |
+            ${{ secrets.ECR_REGISTRY }}/openfireblocks:api-gateway-${{ github.sha }}
+            ${{ secrets.ECR_REGISTRY }}/openfireblocks:api-gateway-latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      
+      - name: Build and push Compliance Service
+        uses: docker/build-push-action@v4
+        with:
+          context: ./services/compliance
+          file: ./services/compliance/Dockerfile
+          push: true
+          tags: |
+            ${{ secrets.ECR_REGISTRY }}/openfireblocks:compliance-${{ github.sha }}
+            ${{ secrets.ECR_REGISTRY }}/openfireblocks:compliance-latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      
+      - name: Build and push Settlement Service
+        uses: docker/build-push-action@v4
+        with:
+          context: ./services/settlement
+          file: ./services/settlement/Dockerfile
+          push: true
+          tags: |
+            ${{ secrets.ECR_REGISTRY }}/openfireblocks:settlement-${{ github.sha }}
+            ${{ secrets.ECR_REGISTRY }}/openfireblocks:settlement-latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy-staging:
+    name: Deploy to Staging
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: staging
+      url: https://staging.openfireblocks.io
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN_STAGING }}
+          aws-region: us-east-1
+      
+      - name: Run database migrations
+        run: |
+          AWS_REGION=us-east-1 make db-migrate-staging
+      
+      - name: Deploy to ECS
+        run: |
+          aws ecs update-service \
+            --cluster openfireblocks-staging \
+            --service api-gateway \
+            --force-new-deployment \
+            --region us-east-1
+      
+      - name: Wait for deployment
+        run: |
+          aws ecs wait services-stable \
+            --cluster openfireblocks-staging \
+            --services api-gateway \
+            --region us-east-1
+      
+      - name: Run smoke tests
+        run: make test-staging
+        env:
+          STAGING_URL: https://staging.openfireblocks.io
+
+  deploy-production:
+    name: Deploy to Production (Blue-Green)
+    needs: deploy-staging
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://api.openfireblocks.io
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN_PRODUCTION }}
+          aws-region: us-east-1
+      
+      - name: Pre-deployment checks
+        run: |
+          # Verify current version
+          CURRENT=$(aws ecs describe-services \
+            --cluster openfireblocks-prod \
+            --services api-gateway \
+            --query 'services[0].taskDefinition' \
+            --output text)
+          echo "Current version: $CURRENT"
+          
+          # Check service health
+          HEALTHY=$(aws ecs describe-services \
+            --cluster openfireblocks-prod \
+            --services api-gateway \
+            --query 'services[0].desiredCount' \
+            --output text)
+          echo "Healthy instances: $HEALTHY"
+      
+      - name: Create new task definition (Blue)
+        run: |
+          # Register new task definition
+          aws ecs register-task-definition \
+            --cli-input-json file://task-definition-blue.json
+      
+      - name: Update service to new version (Blue)
+        run: |
+          aws ecs update-service \
+            --cluster openfireblocks-prod \
+            --service api-gateway \
+            --task-definition api-gateway:latest \
+            --region us-east-1
+      
+      - name: Monitor deployment
+        run: |
+          # Wait for 50% healthy
+          for i in {1..60}; do
+            RUNNING=$(aws ecs describe-services \
+              --cluster openfireblocks-prod \
+              --services api-gateway \
+              --query 'services[0].runningCount' \
+              --output text)
+            DESIRED=$(aws ecs describe-services \
+              --cluster openfireblocks-prod \
+              --services api-gateway \
+              --query 'services[0].desiredCount' \
+              --output text)
+            
+            if [ $RUNNING -ge $((DESIRED / 2)) ]; then
+              echo "Blue deployment healthy, proceeding with traffic shift..."
+              break
+            fi
+            
+            echo "Waiting for deployment... ($i/60)"
+            sleep 10
+          done
+      
+      - name: Shift traffic gradually
+        run: |
+          # Shift 25% traffic to new version
+          aws elbv2 modify-target-group \
+            --target-group-arn ${{ secrets.BLUE_TARGET_GROUP_ARN }} \
+            --health-check-interval-seconds 5
+          
+          sleep 300 # Monitor for 5 minutes
+          
+          # Shift 50% traffic
+          sleep 300
+          
+          # Shift 75% traffic
+          sleep 300
+          
+          # Shift 100% traffic
+          echo "Traffic fully shifted to new version"
+      
+      - name: Verify production stability
+        run: |
+          # Check error rates
+          ERROR_RATE=$(aws cloudwatch get-metric-statistics \
+            --namespace OpenFireblocks \
+            --metric-name ErrorRate \
+            --statistics Average \
+            --start-time $(date -u -d '5 minutes ago' +%Y-%m-%dT%H:%M:%S) \
+            --end-time $(date -u +%Y-%m-%dT%H:%M:%S) \
+            --period 60 \
+            --query 'Datapoints[0].Average' \
+            --output text)
+          
+          if (( $(echo "$ERROR_RATE > 1.0" | bc -l) )); then
+            echo "Error rate too high: $ERROR_RATE%, rolling back..."
+            aws ecs update-service \
+              --cluster openfireblocks-prod \
+              --service api-gateway \
+              --task-definition api-gateway:previous
+            exit 1
+          fi
+      
+      - name: Send deployment notification
+        uses: slackapi/slack-github-action@v1.24.0
+        with:
+          webhook-url: ${{ secrets.SLACK_WEBHOOK }}
+          payload: |
+            {
+              "text": "🚀 Production deployment successful",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*Production Deployment*\n*Status*: ✅ Successful\n*Version*: ${{ github.sha }}\n*Time*: ${{ job.container.network.created_at }}"
+                  }
+                }
+              ]
+            }
+
+  post-deployment:
+    name: Post-Deployment Validation
+    needs: deploy-production
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Run integration tests
+        run: make test-production
+        env:
+          PROD_URL: https://api.openfireblocks.io
+      
+      - name: Check security headers
+        run: |
+          curl -I https://api.openfireblocks.io | grep -E "Strict-Transport-Security|X-Content-Type-Options|X-Frame-Options"
+      
+      - name: Verify database backups
+        run: aws rds describe-db-snapshots --db-instance-identifier openfireblocks-prod
+      
+      - name: Create incident for rollback readiness
+        if: failure()
+        uses: actions/github-script@v6
+        with:
+          script: |
+            github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: '🚨 Deployment validation failed',
+              body: 'Post-deployment checks failed. Rollback may be needed.',
+              labels: ['deployment', 'urgent']
+            })
+

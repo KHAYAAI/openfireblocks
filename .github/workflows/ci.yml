@@ -15,10 +15,30 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # Every Go module in the repository. This list was previously four
+        # entries, and services/mpc-signer -- which is on it -- did not
+        # compile at all for an extended period, so treat a red matrix as
+        # something to fix rather than something to route around. Services
+        # absent from CI entirely (mpc-party, backup, the domain services)
+        # were how a non-building service reached the Helm chart.
         module:
           - services/mpc-signer
+          - services/mpc-party
           - services/policy-service
           - services/temporal-worker
+          - services/backup
+          - services/vault-pki-init
+          - services/policy
+          - services/settlement
+          - services/billing
+          - services/webhooks
+          - services/marketplace
+          - services/compliance
+          # Added when they were: a module absent from this list is a module
+          # nobody notices breaking. vault-unseal in particular holds the
+          # coordination that decides whether a Vault cluster can ever be
+          # unsealed again, and its race is only caught under -race.
+          - services/vault-unseal
           - sdks/sdk-go
     steps:
       - uses: actions/checkout@v4
@@ -28,12 +48,54 @@ jobs:
       - name: Build
         working-directory: ${{ matrix.module }}
         run: go build ./...
+      # copylocks is disabled for services/mpc-party only, and deliberately:
+      # tss-lib delivers its result over a channel whose element type embeds
+      # a protobuf MessageState (which contains a sync.Mutex), so receiving
+      # it at all trips the check. Avoiding it would mean forking tss-lib's
+      # public API. Every other analyzer stays on, for every module.
       - name: Vet
         working-directory: ${{ matrix.module }}
-        run: go vet ./...
+        run: |
+          if [ "${{ matrix.module }}" = "services/mpc-party" ]; then
+            go vet -copylocks=false ./...
+          else
+            go vet ./...
+          fi
+      # -race, because the concurrency bugs in this repo are the expensive
+      # ones. services/vault-unseal coordinates several replicas racing to
+      # initialise one Vault cluster, and a loser overwriting the winner's
+      # unseal key leaves a cluster nobody can ever open again -- a failure
+      # a serial test run would never reproduce.
       - name: Test
         working-directory: ${{ matrix.module }}
-        run: go test ./... -count=1
+        run: go test -race ./... -count=1
+
+      # The licence gate.
+      #
+      # go-ethereum is LGPL-3.0 and was removed from every module here (see
+      # docs/engineering/GO-ETHEREUM-REMOVAL.md). It is the kind of
+      # dependency that comes back without anyone deciding to bring it
+      # back: one import of a convenient helper, or a transitive path
+      # through a new library, and the obligation is live again in a
+      # release nobody reviewed for it.
+      #
+      # `go mod why` is the right question. Checking go.mod would miss a
+      # transitive reintroduction, and checking imports would miss the
+      # module graph -- this asks whether the built binary needs the
+      # package at all.
+      - name: No copyleft dependency
+        working-directory: ${{ matrix.module }}
+        run: |
+          if ! go mod why github.com/ethereum/go-ethereum 2>&1 | grep -q "does not need"; then
+            echo "::error::${{ matrix.module }} depends on github.com/ethereum/go-ethereum (LGPL-3.0)."
+            echo "This dependency was deliberately removed. Distributing binaries built"
+            echo "against it obliges us to let recipients relink, which Go's static"
+            echo "linking makes awkward -- see docs/LICENSING.md."
+            echo ""
+            go mod why github.com/ethereum/go-ethereum
+            exit 1
+          fi
+          echo "clean: no LGPL dependency"
 
   mpc-tss:
     name: MPC threshold signing (tss tag)
@@ -97,3 +159,203 @@ jobs:
           python-version: "3.12"
       - working-directory: sdks/sdk-python
         run: python -m unittest discover -s tests -v
+
+  manifests:
+    name: Kubernetes manifests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.2
+      - name: Lint the chart
+        run: helm lint infrastructure/helm/openfireblocks
+
+      # helm template only proves the templates produce *some* YAML. This
+      # validates every rendered object against the real Kubernetes API
+      # schemas in strict mode, which rejects unknown/misspelled fields --
+      # the difference between "it rendered" and "the cluster will accept
+      # it". All 29 objects pass today.
+      - name: Install kubeconform
+        run: go install github.com/yannh/kubeconform/cmd/kubeconform@latest
+      - name: Render and validate (defaults)
+        run: |
+          helm template ci infrastructure/helm/openfireblocks \
+            | $(go env GOPATH)/bin/kubeconform -strict -summary \
+                -kubernetes-version 1.29.0
+      # The optional paths (mTLS, auto-issued certs, SSO, ingress) are where
+      # a template bug would otherwise hide until the day someone enables it.
+      - name: Render and validate (all optional features on)
+        run: |
+          helm template ci infrastructure/helm/openfireblocks \
+            --set mpcParty.mtls.enabled=true \
+            --set mpcParty.mtls.autoIssue.enabled=true \
+            --set temporalWorker.mtls.enabled=true \
+            --set temporalWorker.mtls.autoIssue.enabled=true \
+            --set workos.enabled=true \
+            --set workos.redirectUri=https://api.example/auth/sso/callback \
+            --set ingress.enabled=true \
+            | $(go env GOPATH)/bin/kubeconform -strict -summary \
+                -kubernetes-version 1.29.0
+
+      # kubeconform proves every object would be *accepted* by the API
+      # server. Each bug this checks for rendered perfectly valid YAML, was
+      # accepted by a real cluster, and then broke the platform at runtime --
+      # probes that cannot complete an mTLS handshake, an orchestrator
+      # dialling http:// against an HTTPS port, certificates that do not
+      # cover the name peers dial, a rollout that deadlocks under strict
+      # anti-affinity, and certificates nothing renews. They are only visible
+      # once the feature is switched on, which is exactly when nobody wants
+      # to find them.
+      - name: Check chart invariants
+        run: |
+          pip install pyyaml
+          python3 infrastructure/helm/test-chart-invariants.py
+
+  terraform:
+    name: Terraform
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - name: Format
+        run: terraform -chdir=infrastructure/terraform fmt -check -recursive
+      - name: Validate
+        run: |
+          terraform -chdir=infrastructure/terraform init -backend=false
+          terraform -chdir=infrastructure/terraform validate
+
+  gosec:
+    name: Go security scan
+    runs-on: ubuntu-latest
+    # Advisory for now: the existing findings are triaged in
+    # docs/security/audit-checklist.md rather than all fixed, so a failure
+    # here should be read, not merged past silently.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+      - name: Install gosec
+        run: go install github.com/securego/gosec/v2/cmd/gosec@latest
+      - name: Scan
+        run: |
+          for m in services/*/; do
+            [ -f "$m/go.mod" ] || continue
+            echo "--- $m"
+            (cd "$m" && $(go env GOPATH)/bin/gosec -quiet -severity high ./... || true)
+          done
+
+  stripe-live:
+    name: Stripe (real test API)
+    runs-on: ubuntu-latest
+    # Whether this platform can actually collect money is a question about
+    # Stripe's behaviour, not ours, and a stub cannot answer it: a stub says
+    # yes to a wrong field name, a deprecated parameter, or an idempotency
+    # key that does not deduplicate the way the docs claim.
+    #
+    # Runs only where the secret exists -- so it is silently absent on
+    # forks, and the tests themselves skip with a message saying what has
+    # therefore not been verified. `continue-on-error` is deliberately NOT
+    # set: if the secret is configured and Stripe rejects what we send, that
+    # is a broken payment path and it should be red.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+      - name: Verify against Stripe test mode
+        env:
+          STRIPE_TEST_API_KEY: ${{ secrets.STRIPE_TEST_API_KEY }}
+        run: |
+          if [ -z "${STRIPE_TEST_API_KEY}" ]; then
+            echo "::warning title=Stripe unverified::STRIPE_TEST_API_KEY is not configured."
+            echo "The payment path is proven only against a stub; whether Stripe accepts"
+            echo "what this platform sends is UNVERIFIED. Add a test-mode secret key as"
+            echo "the STRIPE_TEST_API_KEY repository secret to close this gap."
+          fi
+          cd services/billing && go test -v -run Live ./...
+
+  shell:
+    name: Drill scripts lint clean
+    runs-on: ubuntu-latest
+    # The drills are the only executable proof of several claims in
+    # docs/, and they are shell -- a language where an unquoted expansion
+    # or a masked return value fails silently and turns a red drill into a
+    # green one. Two of the last three bugs found in this repository's
+    # drills were in the scripts rather than in what they test.
+    #
+    # -S warning, not -S error: the errors were already clean, and the
+    # warnings are where SC2155 (a failing command substitution hidden by
+    # `local`) lives.
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y shellcheck
+          shellcheck --version
+          shellcheck -S warning infrastructure/kind/*.sh infrastructure/local/*.sh
+      - name: Every drill parses
+        run: |
+          for f in infrastructure/kind/*.sh infrastructure/local/*.sh; do
+            bash -n "$f" || exit 1
+          done
+
+  stripe-spec:
+    name: Our requests match Stripe's published API
+    runs-on: ubuntu-latest
+    # Between the two tests that already exist and neither of which can
+    # answer this. stripe_test.go pins the request against itself, so it
+    # catches accidental change but never established correctness.
+    # stripe-live needs a secret and skips without one. This fetches the
+    # machine-readable spec Stripe publishes and checks every parameter we
+    # send is one Stripe documents -- Stripe ignores unknown parameters
+    # rather than rejecting them, so a typo is otherwise discovered by a
+    # customer being charged in the wrong currency.
+    #
+    # Not vendored: 8MB, changes weekly, and a stale copy would assert
+    # conformance to a version nobody runs.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+      - name: Fetch Stripe's OpenAPI spec
+        run: |
+          curl -fsSL -o "${RUNNER_TEMP}/stripe-spec.json" \
+            https://raw.githubusercontent.com/stripe/openapi/master/openapi/spec3.json
+      - name: Check our requests against it
+        working-directory: services/billing
+        env:
+          STRIPE_OPENAPI_SPEC: ${{ runner.temp }}/stripe-spec.json
+        run: go test -v -run 'Spec|ApiVersion' ./...
+
+  key-recovery:
+    name: A key survives losing every party
+    runs-on: ubuntu-latest
+    # Here rather than in e2e.yml, and that is the point. The kind drill
+    # proves the same property against a deployed cluster, but it needs a
+    # cluster, so it runs on a slower, narrower trigger. This one needs a
+    # Go toolchain and a Vault binary, so it can run on every push -- and a
+    # recovery procedure is only a control if it is exercised on every
+    # change rather than on the changes somebody remembered to check.
+    #
+    # It is a real drill, not a simulation: a real `vault server -dev`, three
+    # real mpc-party processes with their own pids, a real tss-lib DKG, and
+    # a real SIGKILL. What it does not cover is host isolation and mTLS --
+    # see the script's header, and party-isolation-check.sh.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+      - name: Install Vault
+        run: |
+          curl -fsSL -o vault.zip \
+            https://releases.hashicorp.com/vault/1.17.6/vault_1.17.6_linux_amd64.zip
+          unzip -q vault.zip
+          sudo install -m 0755 vault /usr/local/bin/vault
+          vault version
+      - name: Destroy every party and recover the key
+        run: ./infrastructure/local/recovery-drill-local.sh

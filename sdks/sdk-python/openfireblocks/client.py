@@ -63,3 +63,15 @@ class OpenFireblocksClient:
         return self._request(
             "GET", f"/transactions/{urllib.parse.quote(request_id)}/audit"
         )
+
+    def get_supported_chains(self) -> Dict[str, Any]:
+        """Get list of supported blockchains."""
+        return self._request("POST", "/sign-multi-chain/chains")
+
+    def sign_multi_chain(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """Sign a transaction on any supported blockchain."""
+        return self._request("POST", "/sign-multi-chain", request)
+
+    def broadcast_transaction(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """Broadcast a signed transaction."""
+        return self._request("POST", "/sign-multi-chain/broadcast", request)

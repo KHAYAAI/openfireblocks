@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ethereum/go-ethereum/crypto"
+	"forge-crypto/mpc-signer/internal/ethcrypto"
 )
 
 // TestThresholdKeygenAndSign runs a real 2-of-3 distributed keygen and signing,
@@ -33,7 +33,7 @@ func TestThresholdKeygenAndSign(t *testing.T) {
 	t.Logf("threshold address: %s", addr)
 
 	// 32-byte message hash to sign.
-	hash := crypto.Keccak256([]byte("openfireblocks threshold signing test"))
+	hash := ethcrypto.Keccak256([]byte("openfireblocks threshold signing test"))
 
 	sig, err := keys.Sign(ctx, hash)
 	if err != nil {
@@ -44,24 +44,23 @@ func TestThresholdKeygenAndSign(t *testing.T) {
 	}
 
 	// Verify: recover the public key from the signature and compare addresses.
-	recovered, err := crypto.SigToPub(hash, sig)
+	recoveredAddr, err := ethcrypto.RecoverAddress(hash, sig)
 	if err != nil {
 		t.Fatalf("recover: %v", err)
 	}
-	recoveredAddr := crypto.PubkeyToAddress(*recovered).Hex()
 	if recoveredAddr != addr {
 		t.Fatalf("recovered address %s != threshold address %s", recoveredAddr, addr)
 	}
 
 	// Also verify the signature directly against the public key bytes.
-	pubBytes := crypto.FromECDSAPub(keys.PublicKey)
-	if !crypto.VerifySignature(pubBytes, hash, sig[:64]) {
+	pubBytes := ethcrypto.FromECDSAPub(keys.PublicKey)
+	if !ethcrypto.VerifySignature(pubBytes, hash, sig[:64]) {
 		t.Fatal("VerifySignature failed for threshold signature")
 	}
 
 	// Sanity: a different message must not verify.
-	other := crypto.Keccak256([]byte("different message"))
-	if crypto.VerifySignature(pubBytes, other, sig[:64]) {
+	other := ethcrypto.Keccak256([]byte("different message"))
+	if ethcrypto.VerifySignature(pubBytes, other, sig[:64]) {
 		t.Fatal("signature unexpectedly verified for a different message")
 	}
 	if bytes.Equal(hash, other) {

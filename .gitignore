@@ -19,3 +19,9 @@ coverage/
 .DS_Store
 .idea/
 .vscode/
+
+# SOC 2 evidence packs: dated operational snapshots, produced by
+# scripts/collect-soc2-evidence.sh. They contain live configuration and row
+# counts and belong in access-controlled storage, not in the repository --
+# but the collector is checked in so the process is reviewable.
+evidence/

@@ -5,8 +5,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/ethereum/go-ethereum/crypto"
 	vault "github.com/hashicorp/vault/api"
+
+	"forge-crypto/mpc-signer/internal/ethcrypto"
 )
 
 // vault.go integrates HashiCorp Vault for signing-key management.
@@ -69,12 +70,12 @@ func loadOrCreateVaultKey(ctx context.Context, cfg vaultConfig) (string, error) 
 	}
 
 	// Not present: generate a new key and persist it.
-	priv, err := crypto.GenerateKey()
+	priv, err := ethcrypto.GenerateKey()
 	if err != nil {
 		return "", fmt.Errorf("generate key: %w", err)
 	}
-	hexKey := fmt.Sprintf("%x", crypto.FromECDSA(priv))
-	address := crypto.PubkeyToAddress(priv.PublicKey).Hex()
+	hexKey := fmt.Sprintf("%x", ethcrypto.FromECDSA(priv))
+	address := ethcrypto.PubkeyToAddress(priv.PublicKey)
 
 	if _, err := kv.Put(ctx, cfg.keyPath, map[string]interface{}{
 		"private_key": hexKey,

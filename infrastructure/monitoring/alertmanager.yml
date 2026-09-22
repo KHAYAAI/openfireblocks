@@ -1,0 +1,101 @@
+global:
+  resolve_timeout: 5m
+  pagerduty_url: https://events.pagerduty.com/v2/enqueue
+  slack_api_url: 'SLACK_WEBHOOK_URL'
+
+route:
+  receiver: 'null'
+  group_by: ['alertname', 'cluster', 'service']
+  group_wait: 10s
+  group_interval: 10s
+  repeat_interval: 12h
+
+  routes:
+    # Critical Infrastructure Issues
+    - match:
+        severity: critical
+        category: infrastructure
+      receiver: 'pagerduty-critical'
+      group_wait: 0s
+      repeat_interval: 5m
+
+    # Critical Security Issues
+    - match:
+        severity: critical
+        category: security
+      receiver: 'pagerduty-critical'
+      group_wait: 0s
+      repeat_interval: 5m
+
+    # Database Critical Issues
+    - match:
+        severity: critical
+        category: database
+      receiver: 'pagerduty-critical'
+      group_wait: 1m
+      repeat_interval: 10m
+
+    # Backup & DR Critical Issues
+    - match:
+        severity: critical
+        category: backup
+      receiver: 'pagerduty-critical'
+      group_wait: 1m
+      repeat_interval: 10m
+
+    # Warning level alerts to Slack
+    - match:
+        severity: warning
+      receiver: 'slack-warnings'
+      group_wait: 30s
+      repeat_interval: 6h
+
+    # Info level alerts (no action)
+    - match:
+        severity: info
+      receiver: 'null'
+
+receivers:
+  - name: 'null'
+
+  - name: 'slack-warnings'
+    slack_configs:
+      - channel: '#openfireblocks-alerts'
+        title: 'Warning: {{ .GroupLabels.alertname }}'
+        text: '{{ range .Alerts }}{{ .Annotations.description }}{{ end }}'
+        send_resolved: true
+        color: 'warning'
+
+  - name: 'pagerduty-critical'
+    pagerduty_configs:
+      - service_key: 'PAGERDUTY_SERVICE_KEY'
+        description: '{{ .GroupLabels.alertname }}: {{ .Alerts.Firing | len }} firing'
+        details:
+          firing: '{{ template "pagerduty.default.instances" .Alerts.Firing }}'
+          resolved: '{{ template "pagerduty.default.instances" .Alerts.Resolved }}'
+
+  - name: 'email-security'
+    email_configs:
+      - to: 'security-team@openfireblocks.io'
+        from: 'alerts@openfireblocks.io'
+        smarthost: 'smtp.sendgrid.net:587'
+        auth_username: 'apikey'
+        auth_password: 'SENDGRID_API_KEY'
+        headers:
+          Subject: 'CRITICAL: {{ .GroupLabels.alertname }}'
+
+inhibit_rules:
+  # Suppress instance down alerts if node is down
+  - source_match:
+      severity: 'critical'
+      alertname: 'InstanceDown'
+    target_match:
+      severity: 'warning'
+    equal: ['instance', 'job']
+
+  # Suppress high memory if instance is down
+  - source_match:
+      alertname: 'InstanceDown'
+    target_match_re:
+      alertname: 'High.*Usage'
+    equal: ['instance', 'job']

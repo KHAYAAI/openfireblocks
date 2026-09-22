@@ -1,0 +1,92 @@
+OpenFireblocks
+Copyright (c) 2026 <LEGAL ENTITY NAME>
+
+  ^^^^^^^^^^^^^^^^^^^^ REPLACE THIS before shipping to anyone.
+
+  The Elastic License 2.0 defines the "licensor" as the entity offering
+  the terms. If that entity is not named, there is no identifiable party
+  granting the licence, which is the one detail in this file that has to
+  be right before a copy of this software leaves your control.
+
+Licensed under the Elastic License 2.0. See LICENSE.
+
+The client SDK in sdks/sdk-js/ is licensed separately under the Apache
+License 2.0 (see sdks/sdk-js/LICENSE). That is deliberate: an SDK is
+embedded in a customer's own application, and one carrying a non-compete
+clause is one their legal team blocks.
+
+
+================================================================================
+THIRD-PARTY SOFTWARE
+================================================================================
+
+This product bundles software from the projects below. Their licences
+govern those components, not this one.
+
+--------------------------------------------------------------------------------
+COPYLEFT: NONE
+--------------------------------------------------------------------------------
+
+There is no copyleft dependency in any Go module or in the JavaScript
+tree.
+
+github.com/ethereum/go-ethereum (LGPL-3.0) was one, imported by nine
+files across four modules. It has been removed, and CI fails any module
+that reintroduces it -- `go mod why` per module, which catches a
+transitive path as well as a direct import.
+
+That matters commercially rather than technically: the LGPL obliges
+whoever receives a distributed binary to be able to relink it against
+their own build of the library, and Go links statically. Shipping source
+discharged it; shipping images would not have.
+
+See docs/engineering/GO-ETHEREUM-REMOVAL.md.
+
+--------------------------------------------------------------------------------
+PERMISSIVE
+--------------------------------------------------------------------------------
+
+github.com/bnb-chain/tss-lib/v2                          MIT
+  The threshold ECDSA and EdDSA implementation. Copyright (c) 2019 Binance.
+
+github.com/binance-chain/edwards25519                    MIT
+  Substituted for github.com/agl/ed25519 via a replace directive, which
+  tss-lib's own go.mod requires and Go does not inherit from a dependency.
+
+github.com/btcsuite/btcd, btcd/btcec/v2, btcutil         ISC
+  Bitcoin address encoding, script construction and secp256k1.
+
+github.com/open-policy-agent/opa                         Apache-2.0
+  The Rego policy engine embedded in policy-service.
+
+github.com/lib/pq                                        MIT
+go.temporal.io/sdk                                       MIT
+github.com/hashicorp/vault/api                           MPL-2.0 (file-level
+  copyleft; unmodified use imposes no obligation on this codebase)
+github.com/google/uuid                                   BSD-3-Clause
+github.com/prometheus/client_golang                      Apache-2.0
+golang.org/x/crypto, golang.org/x/sys                    BSD-3-Clause
+
+Node dependencies of the API gateway (284 packages) are MIT, ISC,
+BSD-2-Clause, BSD-3-Clause, 0BSD and Apache-2.0. No GPL or AGPL component
+is present in the JavaScript tree.
+
+--------------------------------------------------------------------------------
+DEVELOPMENT AND TEST ONLY -- NOT DISTRIBUTED
+--------------------------------------------------------------------------------
+
+ethereum/client-go (geth) container image                GPL-3.0
+bitcoin/bitcoin (Bitcoin Core) container image           MIT
+solc 0.8.24, used once to compile infrastructure/kind/erc20/DrillToken.sol
+
+  These are pulled by the kind cluster and the CI drills. They are run,
+  not linked, and no part of them is redistributed with this software.
+  The geth image being GPL-3.0 is worth stating explicitly because the
+  go-ethereum *library* above is LGPL-3.0 and the two are different
+  licences on the same project.
+
+================================================================================
+
+This inventory was compiled by reading go.mod files and the installed
+dependency tree. It is a starting point for a licence review, not the
+product of one. Have counsel confirm it before it goes into a data room.

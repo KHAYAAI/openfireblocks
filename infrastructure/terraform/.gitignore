@@ -1,0 +1,14 @@
+# Local provider plugin cache and state — never commit; .terraform.lock.hcl
+# (the dependency lock file) is intentionally NOT listed here and should be
+# committed, per Terraform's own convention.
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc

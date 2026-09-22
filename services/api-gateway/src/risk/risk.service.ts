@@ -1,6 +1,6 @@
 import { Inject, Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import type { Redis } from 'ioredis';
-import { REDIS_CLIENT } from './risk.module';
+import { REDIS_CLIENT } from './redis-client.token';
 
 export interface VelocityDecision {
   allowed: boolean;

@@ -1,0 +1,63 @@
+# A single-node development Ethereum chain, so a threshold-signed
+# transaction produced by this platform can be handed to a real node and
+# actually mined.
+#
+# Without it the cluster deployment proves that the signing path produces
+# well-formed bytes; it does not prove a node will accept them. Encoding
+# mistakes -- a wrong EIP-155 v, a mis-serialised field, an off-by-one in
+# the signing hash -- all still yield a signature that recovers correctly
+# while being rejected by every node on the network.
+#
+# NOT A REAL NETWORK. geth --dev is a single-signer instant-seal chain with
+# a prefunded account and no consensus. It proves encoding and acceptance,
+# and says nothing about mainnet economics, reorgs, or mempool behaviour.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: geth-dev
+  namespace: openfireblocks
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: geth-dev }
+  template:
+    metadata:
+      labels: { app: geth-dev }
+    spec:
+      containers:
+        - name: geth
+          image: ethereum/client-go:v1.13.15
+          args:
+            - --dev
+            # Instant sealing would mine each transaction in its own block
+            # the moment it arrives; a one-second period is closer to a
+            # network where a transaction is pending before it is mined,
+            # which is the state the confirmation-watching code has to
+            # handle.
+            - --dev.period=1
+            - --http
+            - --http.addr=0.0.0.0
+            - --http.port=8545
+            - --http.api=eth,web3,net,personal,miner
+            - --http.vhosts=*
+            - --http.corsdomain=*
+            - --nodiscover
+            - --maxpeers=0
+          ports:
+            - { name: rpc, containerPort: 8545 }
+          readinessProbe:
+            tcpSocket: { port: rpc }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: geth-dev
+  namespace: openfireblocks
+spec:
+  selector: { app: geth-dev }
+  ports:
+    - { name: rpc, port: 8545, targetPort: rpc }
