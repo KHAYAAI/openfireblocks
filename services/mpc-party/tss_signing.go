@@ -336,8 +336,9 @@ func (m *TSSPartyManager) completeSigning(signID string, ceremony *tssSigningCer
 }
 
 // ErrSigningNotReady mirrors ErrCeremonyNotReady for the signing path --
-// see that var's doc comment in tss_party.go.
-var ErrSigningNotReady = fmt.Errorf("signing ceremony registered but not yet ready to receive messages")
+// see that var's doc comment in tss_party.go. It covers both "registered
+// but not ready" and "not registered yet".
+var ErrSigningNotReady = fmt.Errorf("this party is not yet ready to receive messages for that signing ceremony")
 
 // HandleIncomingSignMessage feeds a relayed protocol message into the
 // local signing party's state machine. Called by the HTTP handler for
@@ -347,7 +348,13 @@ func (m *TSSPartyManager) HandleIncomingSignMessage(env tssSignMessageEnvelope) 
 	ceremony, ok := m.signings[env.SignID]
 	m.signMu.Unlock()
 	if !ok {
-		return fmt.Errorf("unknown signing ceremony %s", env.SignID)
+		// Retryable for the same reason keygen's equivalent is: the
+		// orchestrator posts /tss/sign/start to each committee member in
+		// turn, and the first one can relay round 1 before the last one
+		// knows the ceremony exists. This was found by the local recovery
+		// drill, which failed intermittently and only after a restore --
+		// where the parties are freshly started and the window is widest.
+		return ErrSigningNotReady
 	}
 
 	ceremony.mu.Lock()

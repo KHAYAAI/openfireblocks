@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -49,6 +50,8 @@ func startFakeVault(t *testing.T) string {
 
 	t.Setenv("VAULT_ADDR", server.URL)
 	t.Setenv("VAULT_TOKEN", "fake-root-token")
+	// So a test's own log lines can say which Vault they proved anything against.
+	t.Setenv("OFB_FAKE_VAULT", "1")
 	return server.URL
 }
 
@@ -133,4 +136,13 @@ func versionMetadata(version int) map[string]interface{} {
 
 func writeVaultErrors(w http.ResponseWriter, status int, messages ...string) {
 	writeJSON(w, status, map[string]interface{}{"errors": messages})
+}
+
+// vaultUnderTest names which of the two a test actually ran against, so a
+// passing log line cannot be read as a stronger claim than it is.
+func vaultUnderTest() string {
+	if os.Getenv("OFB_FAKE_VAULT") == "1" {
+		return "the in-process KV v2 stand-in"
+	}
+	return "a real Vault"
 }

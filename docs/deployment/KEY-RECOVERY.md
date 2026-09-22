@@ -11,9 +11,12 @@ nothing in this system ever contacts the vendor — but an answer that is
 implied rather than written down and rehearsed is not an answer a control
 function can accept.
 
-This document is the procedure. `infrastructure/kind/recovery-drill.sh`
-executes it, and it runs in CI, so the claim is tested rather than
-asserted.
+This document is the procedure, and two drills execute it rather than
+describe it. `infrastructure/local/recovery-drill-local.sh` runs on every
+push against real processes and a real Vault;
+`infrastructure/kind/recovery-drill.sh` runs the same procedure against a
+deployed cluster. Both destroy every party and require the recovered
+committee to sign for the original address.
 
 ---
 
@@ -134,8 +137,16 @@ never be used.
 Recovery is not complete when the shares load. It is complete when they
 sign.
 
+There are two drills, and they prove different halves.
+
 ```bash
-# Provision a key and drill it end to end. This is what CI runs.
+# Real processes, real Vault, real SIGKILL, no cluster needed. Runs on
+# every push (.github/workflows/ci.yml). Proves the recovery logic and the
+# sealed material.
+./infrastructure/local/recovery-drill-local.sh
+
+# The same procedure against a deployed cluster: real pods, mTLS, Vault
+# in Raft. Runs in the end-to-end workflow. Proves the deployment.
 ./infrastructure/kind/recovery-drill.sh
 
 # Or rehearse against a key that already exists.
@@ -143,10 +154,11 @@ sign.
   --ceremony-id "$CEREMONY_ID" --key-id "$KEY_ID" --api-key "$API_KEY"
 ```
 
-The drill deletes every party pod with `--force --grace-period=0`, waits
-for the replacements, **requires that signing now fails**, restores each
-party from Vault, and proves the restored committee produces a signature
-that recovers to the *original* address.
+Both destroy every party without warning -- `--force --grace-period=0` for
+pods, `kill -9` for processes -- wait for the replacements, **require that
+signing now fails**, restore each party from Vault, and prove the restored
+committee produces a signature that verifies against the *original*
+address.
 
 The middle step is the one that matters. A drill that only showed the
 parties coming back and signing would pass in the case where nothing was
@@ -206,10 +218,13 @@ while believing you have it.
 
 > The shares live on our infrastructure, sealed in our Vault, backed up on
 > our schedule to our storage. We hold the source under a perpetual
-> licence. The recovery procedure is documented, it is executed by a
-> script we can run on demand, and that script runs in the vendor's CI on
-> every change. No step of it contacts the vendor. We have rehearsed it on
-> ‹date›.
+> licence. The recovery procedure is documented, it is executed by scripts
+> we can run on demand, and those scripts run in the vendor's CI on every
+> change — one against real processes and a real Vault, one against a
+> deployed cluster. Each destroys every signing party and requires the
+> recovered committee to produce a signature that verifies against the
+> original address. No step of it contacts the vendor. We have rehearsed
+> it ourselves on ‹date›.
 
 Every clause is checkable and none of it depends on the vendor existing.
 That is the argument self-hosting lets you make and a SaaS custodian

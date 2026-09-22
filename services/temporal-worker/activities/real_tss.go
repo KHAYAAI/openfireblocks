@@ -41,6 +41,12 @@ type tssKeygenStartBody struct {
 	CeremonyID string            `json:"ceremony_id"`
 	Threshold  int               `json:"threshold"`
 	Peers      map[string]string `json:"peers"`
+	// A second signature, from a key this worker's host cannot reach,
+	// which a party can be configured to require before it will take
+	// part. Empty when no authoriser is configured; see
+	// ceremony_authorization.go.
+	Authorization          string `json:"authorization,omitempty"`
+	AuthorizationSignature string `json:"authorization_signature,omitempty"`
 	// The chain the key is for, so each party can generate on the curve
 	// that chain's signatures require. Sent rather than a curve name: the
 	// mapping from chain to curve is one decision and it lives in
@@ -63,6 +69,11 @@ type tssSignStartBody struct {
 	KeygenCeremonyID  string `json:"keygen_ceremony_id"`
 	MessageHashHex    string `json:"message_hash_hex"`
 	CommitteePartyIDs []int  `json:"committee_party_ids"`
+	// Bound to the digest, not just to the ceremony. An authorisation
+	// that named only the ceremony would authorise every transaction
+	// signed under it.
+	Authorization          string `json:"authorization,omitempty"`
+	AuthorizationSignature string `json:"authorization_signature,omitempty"`
 }
 
 type tssSignStatusBody struct {
@@ -94,11 +105,24 @@ func (a *Activities) ExecuteRealDKG(ctx context.Context, req workflows.DKGCeremo
 		endpointByParty[id] = req.PartyEndpoints[i]
 	}
 
+	// Authorised before anything is sent. A failure here fails the
+	// ceremony rather than falling back to an unauthorised request: a
+	// deployment that has configured an authoriser has decided ceremonies
+	// require one, and quietly proceeding without it would turn a control
+	// into a suggestion.
+	auth, authSig, err := a.ceremonyAuth.authorize(ctx, "keygen", req.CeremonyID, "")
+	if err != nil {
+		logger.Error("could not authorise the keygen ceremony", "ceremonyId", req.CeremonyID, "error", err)
+		return &workflows.DKGCeremonyResult{CeremonyID: req.CeremonyID, Status: "failed", Error: err.Error()}, nil
+	}
+
 	payload, err := json.Marshal(tssKeygenStartBody{
-		CeremonyID: req.CeremonyID,
-		Threshold:  req.K,
-		Peers:      peers,
-		Blockchain: req.ChainID,
+		CeremonyID:             req.CeremonyID,
+		Threshold:              req.K,
+		Peers:                  peers,
+		Blockchain:             req.ChainID,
+		Authorization:          auth,
+		AuthorizationSignature: authSig,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("marshal keygen start request: %w", err)
@@ -194,11 +218,22 @@ func (a *Activities) ExecuteRealSigning(ctx context.Context, req workflows.Thres
 		endpointByParty[id] = req.PartyEndpoints[i]
 	}
 
+	// The authorisation names this signing ceremony *and* this digest. A
+	// party checks both, so an authorisation captured from one transfer
+	// cannot be replayed to sign another.
+	auth, authSig, err := a.ceremonyAuth.authorize(ctx, "sign", signID, req.Message)
+	if err != nil {
+		logger.Error("could not authorise the signing ceremony", "signId", signID, "error", err)
+		return &workflows.ThresholdSigningResult{Status: "failed", Error: err.Error()}, nil
+	}
+
 	payload, err := json.Marshal(tssSignStartBody{
-		SignID:            signID,
-		KeygenCeremonyID:  req.CeremonyID,
-		MessageHashHex:    req.Message,
-		CommitteePartyIDs: req.PartyIDs,
+		SignID:                 signID,
+		KeygenCeremonyID:       req.CeremonyID,
+		MessageHashHex:         req.Message,
+		CommitteePartyIDs:      req.PartyIDs,
+		Authorization:          auth,
+		AuthorizationSignature: authSig,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("marshal sign start request: %w", err)

@@ -435,13 +435,16 @@ func (m *TSSPartyManager) completeCeremony(ceremonyID string, ceremony *tssKeyge
 	}
 }
 
-// ErrCeremonyNotReady means the ceremony is registered but this party's
-// localParty hasn't been constructed yet (still generating preParams) --
+// ErrCeremonyNotReady means this party cannot accept the message yet:
+// either the ceremony is registered and its localParty has not been
+// constructed (still generating preParams), or this party has not been
+// told about the ceremony at all because the orchestrator has not reached
+// it yet --
 // a real, expected race when a faster peer starts sending protocol
 // messages before this process is ready to receive them, not a failure.
 // The HTTP handler reports it with a distinct status so the sender can
 // retry instead of aborting the whole ceremony over a startup race.
-var ErrCeremonyNotReady = fmt.Errorf("ceremony registered but not yet ready to receive messages")
+var ErrCeremonyNotReady = fmt.Errorf("this party is not yet ready to receive messages for that ceremony")
 
 // HandleIncomingMessage feeds a relayed protocol message into the local
 // party's state machine. Called by the HTTP handler for /tss/keygen/message.
@@ -450,7 +453,19 @@ func (m *TSSPartyManager) HandleIncomingMessage(env tssMessageEnvelope) error {
 	ceremony, ok := m.ceremonies[env.CeremonyID]
 	m.mu.Unlock()
 	if !ok {
-		return fmt.Errorf("unknown ceremony %s", env.CeremonyID)
+		// Retryable, not an error. The orchestrator starts the parties
+		// one after another, so the first party it reaches can have
+		// relayed its round-1 message before the last party has been
+		// told the ceremony exists. From the sender's side "I have not
+		// been started yet" and "I have never heard of this" are the
+		// same answer, and only one of them was being retried -- so the
+		// message was dropped, the round never completed, and the
+		// ceremony hung until it timed out.
+		//
+		// The sender's retry is bounded (PeerReadyTimeout), so a genuinely
+		// bogus ceremony id still fails; it just takes the same path as a
+		// slow peer instead of killing the ceremony instantly.
+		return ErrCeremonyNotReady
 	}
 
 	ceremony.mu.Lock()

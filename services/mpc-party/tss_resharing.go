@@ -511,7 +511,17 @@ func (m *TSSPartyManager) HandleIncomingReshareMessage(env tssReshareMessageEnve
 	ceremony, ok := m.resharings[env.ReshareID]
 	m.mu.Unlock()
 	if !ok {
-		return fmt.Errorf("unknown resharing %s", env.ReshareID)
+		// Retryable, for the reason given at HandleIncomingMessage in
+		// tss_party.go: a refresh is started on each party in turn, so
+		// the first party reached can relay round 1 before the last one
+		// knows the refresh exists. Answering "no such thing" makes the
+		// sender abandon the message and the refresh hangs.
+		//
+		// A hung refresh is worse than a hung keygen. The key is live and
+		// holding money, and an operator who sees a refresh time out has
+		// to establish which parties moved to the new epoch before doing
+		// anything else.
+		return ErrResharingNotReady
 	}
 
 	ceremony.mu.Lock()
@@ -550,7 +560,7 @@ func (m *TSSPartyManager) HandleIncomingReshareMessage(env tssReshareMessageEnve
 // ErrResharingNotReady mirrors ErrCeremonyNotReady: the refresh is
 // registered but its local party has not been constructed yet, so the
 // sender should retry rather than abandon the ceremony.
-var ErrResharingNotReady = fmt.Errorf("resharing registered but not yet ready to receive messages")
+var ErrResharingNotReady = fmt.Errorf("this party is not yet ready to receive messages for that refresh")
 
 // ResharingStatusResult is what the status endpoint returns.
 //

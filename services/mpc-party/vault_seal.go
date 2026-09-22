@@ -125,11 +125,26 @@ func SealKeyShareWithContext(ctx context.Context, getenv func(string) string, pa
 	return true, nil
 }
 
-// LoadKeyShare reads a previously-sealed key share back from Vault. Used
-// today only for round-trip verification (see vault_seal_test.go); a
-// party process resuming after a restart to actively sign again would
-// also need the ceremony's sortedIDs/peers/threshold context, not sealed
-// by this increment -- see the package doc comment above.
+// LoadKeyShare reads a previously-sealed secp256k1 key share back from
+// Vault.
+//
+// Prefer LoadSealedShare, which handles both curves and returns the
+// context needed to actually use the share. This exists because it is
+// exported, and because a narrow "give me the ECDSA save-data" call is
+// what the round-trip test wants.
+//
+// It used to unmarshal the stored blob straight into a
+// LocalPartySaveData, and that was wrong in the worst available way.
+// Since shares were tagged by curve, the stored JSON is
+// {"curve":...,"ecdsa":{...}} -- a shape that unmarshals into
+// LocalPartySaveData with no error and no matching fields, producing a
+// struct whose every member is nil. A caller got back a key share that
+// was not a key share and was told nothing.
+//
+// It was invisible because the only test that exercised it needed a real
+// Vault, so it skipped everywhere and had never once run. That is the
+// argument for vault_fake_test.go: a test that only runs where somebody
+// installed a binary is a test that does not run.
 func LoadKeyShare(ctx context.Context, getenv func(string) string, partyID int, ceremonyID string) (*tsskeygen.LocalPartySaveData, error) {
 	cfg, configured := vaultShareConfigFromEnv(getenv, partyID, ceremonyID)
 	if !configured {
@@ -158,11 +173,19 @@ func LoadKeyShare(ctx context.Context, getenv func(string) string, partyID int, 
 		return nil, fmt.Errorf("sealed key share at %s is malformed", cfg.keyPath)
 	}
 
-	var saveData tsskeygen.LocalPartySaveData
-	if err := json.Unmarshal([]byte(raw), &saveData); err != nil {
-		return nil, fmt.Errorf("unmarshal sealed key share: %w", err)
+	// Through UnmarshalShare, which reads the curve tag and refuses a blob
+	// that does not carry one. Unmarshalling into the concrete type
+	// directly is what produced the silent all-nil share described above.
+	share, err := UnmarshalShare([]byte(raw))
+	if err != nil {
+		return nil, fmt.Errorf("sealed key share at %s: %w", cfg.keyPath, err)
 	}
-	return &saveData, nil
+	if share.Curve != CurveSecp256k1 || share.ECDSA == nil {
+		return nil, fmt.Errorf(
+			"the share at %s is a %s share; LoadKeyShare returns secp256k1 save-data only. Use LoadSealedShare",
+			cfg.keyPath, share.Curve)
+	}
+	return share.ECDSA, nil
 }
 
 func orDefaultVault(v, def string) string {

@@ -276,3 +276,32 @@ jobs:
             echo "the STRIPE_TEST_API_KEY repository secret to close this gap."
           fi
           cd services/billing && go test -v -run Live ./...
+
+  key-recovery:
+    name: A key survives losing every party
+    runs-on: ubuntu-latest
+    # Here rather than in e2e.yml, and that is the point. The kind drill
+    # proves the same property against a deployed cluster, but it needs a
+    # cluster, so it runs on a slower, narrower trigger. This one needs a
+    # Go toolchain and a Vault binary, so it can run on every push -- and a
+    # recovery procedure is only a control if it is exercised on every
+    # change rather than on the changes somebody remembered to check.
+    #
+    # It is a real drill, not a simulation: a real `vault server -dev`, three
+    # real mpc-party processes with their own pids, a real tss-lib DKG, and
+    # a real SIGKILL. What it does not cover is host isolation and mTLS --
+    # see the script's header, and party-isolation-check.sh.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+      - name: Install Vault
+        run: |
+          curl -fsSL -o vault.zip \
+            https://releases.hashicorp.com/vault/1.17.6/vault_1.17.6_linux_amd64.zip
+          unzip -q vault.zip
+          sudo install -m 0755 vault /usr/local/bin/vault
+          vault version
+      - name: Destroy every party and recover the key
+        run: ./infrastructure/local/recovery-drill-local.sh

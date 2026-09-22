@@ -238,3 +238,51 @@ func TestTheDescriptionSaysWhatIsEnforced(t *testing.T) {
 		t.Errorf("description does not reflect the configuration: %v", d)
 	}
 }
+
+// The same golden vector that appears in
+// services/temporal-worker/activities/ceremony_authorization_test.go.
+//
+// These are separate Go modules, so neither can import the other's
+// encoding and the wire format is held together by this constant existing
+// identically in both places. The worker signs these bytes; this party
+// verifies these bytes. If either side changes how it builds them, one of
+// the two suites goes red -- which is the point, because the alternative
+// is a production deployment where the worker produces signatures no party
+// accepts and every ceremony fails at once.
+//
+// A failure here is not fixed by editing the constant. It means the wire
+// format moved, and moving it requires both sides to move together and the
+// "-v1" in the prefix to become "-v2".
+func TestTheCanonicalFormMatchesTheWorkersGoldenVector(t *testing.T) {
+	const golden = "openfireblocks-authorization-v1\n" +
+		"sign\n" +
+		"ceremony-abc\n" +
+		"deadbeef\n" +
+		"1700000000"
+
+	got := string(CanonicalAuthorizationBytes(AuthorizationRequest{
+		Operation:   "sign",
+		CeremonyID:  "ceremony-abc",
+		MessageHash: "deadbeef",
+		IssuedAt:    1700000000,
+	}))
+	if got != golden {
+		t.Fatalf("the canonical authorisation bytes changed.\n got: %q\nwant: %q\n\n"+
+			"services/temporal-worker signs this exact form. Changing it on one "+
+			"side only means every ceremony is refused.", got, golden)
+	}
+}
+
+// An absent message hash still occupies its field, so a keygen
+// authorisation cannot canonicalise identically to some signing one.
+func TestAnAbsentMessageHashStillOccupiesItsField(t *testing.T) {
+	got := string(CanonicalAuthorizationBytes(AuthorizationRequest{
+		Operation:  "keygen",
+		CeremonyID: "c1",
+		IssuedAt:   42,
+	}))
+	const want = "openfireblocks-authorization-v1\nkeygen\nc1\n\n42"
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}

@@ -12,16 +12,28 @@ import (
 	"github.com/gorilla/mux"
 )
 
-// requireVaultEnv skips the test unless a real Vault is configured --
-// these tests write and read real secrets and are meant to run against a
-// real `vault server -dev` instance, not mocked. Run with:
+// requireVaultEnv gives this test somewhere to seal to: the real Vault the
+// environment already points at, or the in-process KV v2 stand-in from
+// vault_fake_test.go.
+//
+// It used to skip when VAULT_ADDR was unset, which in practice meant it
+// skipped always. That is not a cautious test, it is an absent one, and it
+// cost something concrete: LoadKeyShare returned a silently empty share
+// for as long as key shares have carried curve tags, and this is the test
+// that would have caught it the same day. It was finally caught by running
+// it against a real Vault -- which is an argument for making it run
+// everywhere, not for relying on someone doing that again.
+//
+// Against a real server when one is configured:
 //
 //	VAULT_ADDR=http://127.0.0.1:8200 VAULT_TOKEN=<token> go test -run TestSeal -v
 func requireVaultEnv(t *testing.T) {
 	t.Helper()
-	if os.Getenv("VAULT_ADDR") == "" {
-		t.Skip("VAULT_ADDR not set; this test needs a real Vault (e.g. `vault server -dev`)")
+	if os.Getenv("VAULT_ADDR") != "" {
+		t.Logf("using the Vault at %s", os.Getenv("VAULT_ADDR"))
+		return
 	}
+	startFakeVault(t)
 }
 
 // TestSealAndLoadKeyShareRoundTrip proves SealKeyShare/LoadKeyShare
@@ -105,13 +117,27 @@ func TestSealAndLoadKeyShareRoundTrip(t *testing.T) {
 		t.Fatalf("LoadKeyShare failed: %v", err)
 	}
 
+	// The first thing to check, because it is what actually broke. A share
+	// that unmarshalled into the wrong shape came back with every field
+	// nil and no error at all, and a JSON comparison of two such structs
+	// against each other would have been perfectly happy.
+	if loaded == nil || loaded.ECDSAPub == nil || loaded.PaillierSK == nil || len(loaded.Ks) == 0 {
+		t.Fatalf("LoadKeyShare returned a share with no material in it: %+v", loaded)
+	}
+
 	// Compare via JSON rather than reflect.DeepEqual: LocalPartySaveData
 	// embeds *big.Int and elliptic-curve point types whose internal
 	// representation isn't guaranteed identical after a marshal/unmarshal
 	// round-trip even when the mathematical values are -- JSON
 	// serialization is the actual contract SealKeyShare/LoadKeyShare rely
 	// on, so it's also the right equality check here.
-	originalJSON, err := json.Marshal(&original)
+	//
+	// Against original.ECDSA, not original. The ceremony holds a KeyShare,
+	// which is a curve-tagged union, and LoadKeyShare returns the
+	// secp256k1 save-data inside it. Marshalling the two outer shapes and
+	// comparing them compares a tagged wrapper to its own contents, which
+	// can never match and says nothing about whether the material survived.
+	originalJSON, err := json.Marshal(original.ECDSA)
 	if err != nil {
 		t.Fatalf("failed to marshal original save data: %v", err)
 	}
@@ -123,7 +149,8 @@ func TestSealAndLoadKeyShareRoundTrip(t *testing.T) {
 		t.Fatalf("key share read back from Vault does not match what was sealed:\noriginal: %s\nloaded:   %s", originalJSON, loadedJSON)
 	}
 
-	t.Logf("SUCCESS: key share round-tripped through real Vault byte-for-byte identical (%d bytes)", len(originalJSON))
+	t.Logf("SUCCESS: key share round-tripped through %s byte-for-byte identical (%d bytes)",
+		vaultUnderTest(), len(originalJSON))
 }
 
 // TestSealKeyShareSkippedWithoutVaultAddr proves the documented fallback:

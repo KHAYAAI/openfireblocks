@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -31,6 +32,10 @@ type Activities struct {
 	httpClient            *http.Client
 	db                    *sql.DB
 	roundStore            *db.CeremonyRoundStore
+	// Produces the second signature a party can be configured to require
+	// before joining a ceremony. nil when none is configured, which is
+	// the default -- see ceremony_authorization.go.
+	ceremonyAuth *ceremonyAuthorizer
 }
 
 // NewActivities builds an Activities with sane defaults. Its shared
@@ -65,6 +70,16 @@ func NewActivities(policyURL, mpcURL, ethRPC string, confirmations int64, databa
 		httpClient.Transport = mtlsTransport
 	}
 
+	// Fatal when configured but unusable, for the same reason the mTLS
+	// check above is: a deployment that set an authorising key and got a
+	// worker which silently sends unauthorised ceremony requests believes
+	// it has a control it does not have.
+	ceremonyAuth, err := newCeremonyAuthorizer(os.Getenv, httpClient)
+	if err != nil {
+		log.Fatalf("ceremony authorisation is configured but unusable: %v", err)
+	}
+	log.Printf("ceremony authorisation: %s", ceremonyAuth.describe())
+
 	return &Activities{
 		PolicyURL:             policyURL,
 		MpcSignerURL:          mpcURL,
@@ -73,6 +88,7 @@ func NewActivities(policyURL, mpcURL, ethRPC string, confirmations int64, databa
 		httpClient:            httpClient,
 		db:                    database,
 		roundStore:            roundStore,
+		ceremonyAuth:          ceremonyAuth,
 	}
 }
 

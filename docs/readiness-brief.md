@@ -1,8 +1,14 @@
 # OpenFireblocks — Capability & Readiness Brief
 
-A one-page, honest summary for evaluating OpenFireblocks as a sovereign,
-open-source settlement platform. Pair with the [architecture](architecture.md)
-and the [bank-readiness audit checklist](security/audit-checklist.md).
+A one-page summary for evaluating OpenFireblocks as a sovereign,
+self-hostable settlement platform. Pair with the
+[architecture](architecture.md) and the
+[bank-readiness audit checklist](security/audit-checklist.md).
+
+> **Superseded for anything load-bearing.** [LAUNCH-THESIS.md](LAUNCH-THESIS.md)
+> carries the current readiness assessment, stage gates and evidence, and is
+> the one to give a buyer or an investor. This page is kept as the short
+> orientation and is updated less often.
 
 ## What it is
 
@@ -30,22 +36,36 @@ entirely on proven open-source components, deployable on your own infrastructure
 
 ## Open-source foundation
 
-Binance tss-lib (MPC) · go-ethereum · Temporal (orchestration) · Open Policy
+Binance tss-lib (MPC) · Temporal (orchestration) · Open Policy
 Agent (policy) · HashiCorp Vault (keys) · immudb (immutable ledger) ·
 PostgreSQL · Redis · Prometheus/Grafana · Kubernetes/Helm. No proprietary
 lock-in; everything runs in your environment.
+
+go-ethereum was removed deliberately and a CI gate keeps it out — it is
+LGPL-3.0, and static linking it into a distributed binary carries a
+relinking obligation this product cannot meet. See
+[LICENSING.md](LICENSING.md) and
+[engineering/GO-ETHEREUM-REMOVAL.md](engineering/GO-ETHEREUM-REMOVAL.md).
 
 ## What remains before moving customer funds on mainnet
 
 These need external parties or Phase 2/3 engineering and are **prerequisites**,
 tracked in the [audit checklist](security/audit-checklist.md):
 
-1. **Distribute the MPC parties** across isolated hosts + per-customer key
-   ceremony (the cryptography is proven; the multi-host topology is not built).
+1. **Distribute the MPC parties** across isolated hosts. The chart already
+   spreads them across nodes and `infrastructure/kind/party-isolation-check.sh`
+   reports the level reached, but on any single-host cluster that level is
+   `simulated` — which is a 1-of-1 key wearing a costume. This is the one
+   item standing between the platform and real money.
 2. **External cryptographic audit** of the signing layer + **penetration test**.
 3. SOC 2 Type II / ISO 27001; AML/KYC onboarding + automated OFAC feed sync.
 4. Edge WAF + mTLS service mesh; HSM-backed Vault auto-unseal.
 5. Bank settlement connectors + reconciliation; billing-engine wiring.
+
+Since this list was written, three of its assumptions have moved:
+proactive key refresh, a drilled recovery procedure and ceremony
+co-signing now exist. See [LAUNCH-THESIS.md](LAUNCH-THESIS.md) section 2
+for what is proven and how.
 
 ## Honest positioning
 
