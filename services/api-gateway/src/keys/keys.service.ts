@@ -42,6 +42,8 @@ import {
 import { TokenRegistryService } from '../tokens/token-registry.service';
 import { EvmRpcService } from '../tokens/evm-rpc.service';
 import { TokenTransferDto } from './dto/token-transfer.dto';
+import { TravelRuleService } from '../travel-rule/travel-rule.service';
+import type { TravelRuleInput } from '../travel-rule/travel-rule';
 
 // What a transaction moves, as opposed to what it looks like on the wire.
 //
@@ -124,7 +126,38 @@ export class KeysService {
     // correct behaviour for a deployment that has not configured one.
     private readonly tokens?: TokenRegistryService,
     private readonly rpc?: EvmRpcService,
+    // Optional like the others: a service built without it applies no
+    // Travel Rule, which is what the existing unit tests construct.
+    private readonly travelRule?: TravelRuleService,
   ) {}
+
+  // Travel Rule, before signing: refuses (422) if the transfer needs
+  // originator/beneficiary information and it is missing or incomplete,
+  // and otherwise records it -- so a transfer that needs a record is never
+  // signed without one.
+  private async travelRuleBeforeSigning(
+    customer: Customer,
+    requestId: string,
+    chainId: number,
+    fromAddress: string,
+    beneficiaryAddress: string,
+    facts: { asset: string; amount: string; decimals: number; pegCurrency?: string; isAllowance?: boolean },
+    input: TravelRuleInput | undefined,
+  ): Promise<string | null> {
+    if (!this.travelRule) return null;
+    const assessment = this.travelRule.assess(facts, input);
+    if (!assessment) return null;
+    return this.travelRule.recordBeforeSigning({
+      customerId: customer.customer_id,
+      customerName: customer.name,
+      requestId,
+      chainId,
+      facts,
+      originatorAddress: fromAddress,
+      beneficiaryAddress,
+      assessment,
+    });
+  }
 
   // Works out what a transaction actually moves, before anything decides
   // whether it is allowed.
@@ -503,6 +536,22 @@ export class KeysService {
       isAllowance: intent.isAllowance,
     });
 
+    const travelRecord = await this.travelRuleBeforeSigning(
+      customer,
+      requestId,
+      req.chainId,
+      key.address,
+      intent.effectiveTo ?? req.to,
+      {
+        asset: intent.asset,
+        amount: intent.effectiveAmount ?? intent.assetAmount,
+        decimals: intent.assetDecimals,
+        pegCurrency: intent.pegCurrency,
+        isAllowance: intent.isAllowance,
+      },
+      req.travelRule,
+    );
+
     const signed = await this.runSigningCeremony(
       key,
       keyId,
@@ -538,7 +587,12 @@ export class KeysService {
       intent,
     });
 
+    const travelRule = travelRecord
+      ? { record_id: travelRecord, ...(await this.travelRule!.completeAfterSigning(customer.customer_id, travelRecord, assembled.hash)) }
+      : undefined;
+
     return {
+      travel_rule: travelRule,
       request_id: requestId,
       key_id: keyId,
       from: assembled.from,
@@ -658,6 +712,16 @@ export class KeysService {
       isAllowance: false,
     });
 
+    const travelRecord = await this.travelRuleBeforeSigning(
+      customer,
+      requestId,
+      req.chainId,
+      key.address,
+      req.recipient,
+      { asset: token.symbol, amount: baseUnits, decimals: token.decimals, pegCurrency: token.pegCurrency ?? undefined },
+      req.travelRule,
+    );
+
     const signed = await this.runSigningCeremony(
       key,
       keyId,
@@ -707,7 +771,12 @@ export class KeysService {
       recipient: req.recipient,
     });
 
+    const travelRule = travelRecord
+      ? { record_id: travelRecord, ...(await this.travelRule!.completeAfterSigning(customer.customer_id, travelRecord, assembled.hash)) }
+      : undefined;
+
     return {
+      travel_rule: travelRule,
       request_id: requestId,
       key_id: keyId,
       from: assembled.from,

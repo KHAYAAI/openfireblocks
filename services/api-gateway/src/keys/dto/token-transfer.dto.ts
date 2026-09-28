@@ -1,4 +1,5 @@
-import { IsInt, IsOptional, IsString, Length, Matches, Min } from 'class-validator';
+import { IsInt, IsObject, IsOptional, IsString, Length, Matches, Min } from 'class-validator';
+import type { TravelRuleInput } from '../../travel-rule/travel-rule';
 
 // Validated body for POST /keys/:keyId/token-transfers.
 //
@@ -92,4 +93,10 @@ export class TokenTransferDto {
   @IsOptional()
   @IsString()
   idempotencyKey?: string;
+
+  // Originator and beneficiary information (IVMS101), required at or above
+  // the Travel Rule threshold. See src/travel-rule/travel-rule.ts.
+  @IsOptional()
+  @IsObject()
+  travelRule?: TravelRuleInput;
 }
