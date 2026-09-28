@@ -176,13 +176,23 @@ jobs:
         run: |
           DATABASE_URL="$DATABASE_ADMIN_URL" TENANT_DATABASE_URL="$DATABASE_URL" \
             go test -count=1 -run 'Approv|Initiator|Person|Rejection|Tenant|Machine|Expired|Lowering|Distinct' -v ./activities/
-      - name: Approvals API over HTTP
+      - name: A dev EVM chain for reconciliation
+        run: |
+          npx --yes ganache@7.9.2 --chain.chainId 1337 --server.port 18545 --logging.quiet \
+            --wallet.accounts "0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a,1000000000000000000000" &
+          for i in $(seq 1 30); do
+            curl -sf -X POST -H 'content-type: application/json' \
+              -d '{"jsonrpc":"2.0","id":1,"method":"eth_chainId"}' http://127.0.0.1:18545 && break
+            sleep 1
+          done
+      - name: Approvals, Travel Rule, agents and reconciliation over real Postgres
         working-directory: services/api-gateway
         env:
           REQUIRE_LIVE_DB: "1"
+          RECON_EVM_RPC: http://127.0.0.1:18545
         run: |
           npm ci
-          npx jest src/approvals src/travel-rule src/agents
+          npx jest src/approvals src/travel-rule src/agents src/reconciliation
 
   gateway:
     name: API gateway
