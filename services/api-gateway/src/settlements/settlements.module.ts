@@ -9,5 +9,6 @@ import { CustomersModule } from '../customers/customers.module';
   imports: [CustomersModule],
   controllers: [SettlementsController],
   providers: [TemporalService],
+  exports: [TemporalService],
 })
 export class SettlementsModule {}

@@ -65,10 +65,15 @@ export class TemporalService implements OnModuleDestroy {
   }
 
   // Starts a settlement workflow for a tenant; returns its workflow id.
+  //
+  // initiator identifies the person who asked, when a person did; it is
+  // what the approval step excludes from approving their own transfer.
+  // Omitted for API-key (machine) requests.
   async start(
     customerId: string,
     tier: string,
     req: SignRequestDto,
+    initiator?: { userId: string; label: string },
   ): Promise<{ workflowId: string }> {
     const client = await this.getClient();
     const workflowId = `${this.prefix(customerId)}${uuid()}`;
@@ -88,6 +93,8 @@ export class TemporalService implements OnModuleDestroy {
           gasPrice: req.gasPrice ?? '',
           nonce: req.nonce,
           country: req.country ?? '',
+          initiatedByUserId: initiator?.userId ?? '',
+          initiatedByLabel: initiator?.label ?? 'api-key',
         },
       ],
     });
@@ -114,15 +121,19 @@ export class TemporalService implements OnModuleDestroy {
     return out;
   }
 
-  // Sends the human-approval signal for a high-value settlement.
-  async approve(
+  // Delivers a recorded approval decision to the settlement workflow.
+  //
+  // Called only after the decision is in the database, which is where it
+  // was checked. The workflow ignores duplicates, so re-sending the same
+  // decision is harmless -- which is what makes a retry safe.
+  async signalDecision(
     customerId: string,
     workflowId: string,
-    approved: boolean,
+    decision: { approverUserId: string; decision: 'approve' | 'reject' },
   ): Promise<void> {
     this.assertOwned(customerId, workflowId);
     const client = await this.getClient();
-    await client.getHandle(workflowId).signal('approval', approved);
+    await client.getHandle(workflowId).signal('approval-decision', decision);
   }
 
   private assertOwned(customerId: string, workflowId: string) {

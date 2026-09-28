@@ -1,24 +1,19 @@
 import {
-  Body,
   Controller,
   Get,
+  GoneException,
   HttpCode,
   HttpStatus,
   Param,
   Post,
+  Body,
   UseGuards,
 } from '@nestjs/common';
-import { IsBoolean } from 'class-validator';
 import { TemporalService } from './temporal.service';
 import { SignRequestDto } from '../sign/dto/sign-request.dto';
 import { ApiKeyGuard } from '../auth/api-key.guard';
 import { CurrentCustomer } from '../auth/current-customer.decorator';
 import { Customer } from '../customers/customer.service';
-
-class ApprovalDto {
-  @IsBoolean()
-  approved: boolean;
-}
 
 // Durable settlement API: starts a Temporal workflow that runs
 // policy → sign → broadcast → monitor with retries and an approval gate.
@@ -43,14 +38,16 @@ export class SettlementsController {
     return this.temporal.status(customer.customer_id, workflowId);
   }
 
+  // Removed. This approved a transfer with the tenant's API key: the same
+  // credential that started it, no record of which person approved, and
+  // one approval always enough. Approvals are now made by named people
+  // with the approver role, under the organisation's quorum -- see
+  // ApprovalsController.
   @Post(':workflowId/approve')
-  @HttpCode(HttpStatus.OK)
-  async approve(
-    @CurrentCustomer() customer: Customer,
-    @Param('workflowId') workflowId: string,
-    @Body() dto: ApprovalDto,
-  ) {
-    await this.temporal.approve(customer.customer_id, workflowId, dto.approved);
-    return { workflowId, approved: dto.approved };
+  approve(): never {
+    throw new GoneException(
+      'approving with an API key has been removed; approvals are made by people with the approver role: ' +
+        'POST /organisations/:customerId/approvals/:approvalId/decisions',
+    );
   }
 }

@@ -149,6 +149,41 @@ jobs:
           echo "$out"
           echo "$out" | grep -q -- "-tags pkcs11"
 
+  approvals-db:
+    # Segregation of duties, against a real Postgres with every migration
+    # applied: the approval rules are database triggers (migration 023),
+    # so a mock would test nothing. REQUIRE_LIVE_DB makes an unreachable
+    # database a failure, not a skip.
+    name: Approvals and segregation of duties (real Postgres)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: services/api-gateway/package-lock.json
+      - name: Start Postgres with every migration
+        run: |
+          eval "$(infrastructure/local/postgres-local.sh start)"
+          echo "DATABASE_URL=$DATABASE_URL" >> "$GITHUB_ENV"
+          echo "DATABASE_ADMIN_URL=$DATABASE_ADMIN_URL" >> "$GITHUB_ENV"
+      - name: Database rules and worker activities
+        working-directory: services/temporal-worker
+        run: |
+          DATABASE_URL="$DATABASE_ADMIN_URL" TENANT_DATABASE_URL="$DATABASE_URL" \
+            go test -count=1 -run 'Approv|Initiator|Person|Rejection|Tenant|Machine|Expired|Lowering|Distinct' -v ./activities/
+      - name: Approvals API over HTTP
+        working-directory: services/api-gateway
+        env:
+          REQUIRE_LIVE_DB: "1"
+        run: |
+          npm ci
+          npx jest src/approvals
+
   gateway:
     name: API gateway
     runs-on: ubuntu-latest

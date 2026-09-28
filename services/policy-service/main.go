@@ -82,7 +82,11 @@ type PolicyDecision struct {
 	Approved         bool     `json:"approved"`
 	Denials          []string `json:"denials"`
 	RequiresApproval bool     `json:"requiresApproval"`
-	Reason           string   `json:"reason"`
+	// Why approval is required, from the policies that asked for it. Shown
+	// to the people approving: an approver who cannot see why they are
+	// being asked is rubber-stamping.
+	ApprovalReasons []string `json:"approvalReasons"`
+	Reason          string   `json:"reason"`
 }
 
 // evaluator holds a prepared OPA query reused across requests.
@@ -184,18 +188,20 @@ func (e *evaluator) evaluate(ctx context.Context, req *PolicyRequest) (*PolicyDe
 	}
 
 	denials := []string{}
-	requiresApproval := false
+	approvalReasons := []string{}
 	if len(rs) > 0 && len(rs[0].Expressions) > 0 {
 		if doc, ok := rs[0].Expressions[0].Value.(map[string]interface{}); ok {
 			denials = toStringSlice(doc["deny"])
-			requiresApproval = len(toStringSlice(doc["require_approval"])) > 0
+			approvalReasons = toStringSlice(doc["require_approval"])
 		}
 	}
+	requiresApproval := len(approvalReasons) > 0
 
 	decision := &PolicyDecision{
 		Approved:         len(denials) == 0,
 		Denials:          denials,
 		RequiresApproval: requiresApproval,
+		ApprovalReasons:  approvalReasons,
 	}
 	if decision.Approved {
 		decision.Reason = "approved"
