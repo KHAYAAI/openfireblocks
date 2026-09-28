@@ -66,6 +66,17 @@ func (fv *fakeVault) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	path := strings.TrimPrefix(r.URL.Path, prefix)
+	// DeleteMetadata: DELETE <mount>/metadata/<path> destroys every
+	// version. Stored under the /data/ spelling of the same path.
+	if r.Method == http.MethodDelete && strings.Contains(path, "/metadata/") {
+		dataPath := strings.Replace(path, "/metadata/", "/data/", 1)
+		fv.mu.Lock()
+		delete(fv.secrets, dataPath)
+		delete(fv.version, dataPath)
+		fv.mu.Unlock()
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	if !strings.Contains(path, "/data/") {
 		http.NotFound(w, r)
 		return

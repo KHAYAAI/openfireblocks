@@ -285,6 +285,44 @@ def main() -> int:
         str(slot_env),
     )
 
+    # --- External (separately hosted) parties -------------------------
+    print("\nparties outside the cluster:")
+    ext = dict(
+        mpcParty__enabled="false",
+        mpcParty__external__enabled="true",
+        mpcParty__external__endpointTemplate="https://party-{id}.custody.example.com:7000",
+        mpcParty__external__healthTemplate="http://party-{id}.custody.example.com:7001/health",
+        temporalWorker__mtls__enabled="true",
+    )
+    docs = render(**ext)
+    gw_env = env_of(container_named(
+        deployments(docs)["ci-openfireblocks-api-gateway"]["spec"]["template"]["spec"], "api-gateway"))
+    check(
+        "the gateway addresses external parties at the configured templates",
+        gw_env["MPC_PARTY_ENDPOINT_TEMPLATE"] == "https://party-{id}.custody.example.com:7000"
+        and gw_env["MPC_PARTY_HEALTH_TEMPLATE"] == "http://party-{id}.custody.example.com:7001/health",
+        str({k: v for k, v in gw_env.items() if k.startswith("MPC_PARTY")}),
+    )
+    def party_deployments(ds):
+        return [n for n in deployments(ds) if n.startswith("party-")]
+
+    check(
+        "the default chart does run parties in the cluster (so the next check can fail)",
+        len(party_deployments(render())) == 3,
+    )
+    check(
+        "no party runs in the cluster when parties are external",
+        party_deployments(docs) == [],
+        str(party_deployments(docs)),
+    )
+    check("external parties alongside in-cluster ones are refused", refused(**{**ext, "mpcParty__enabled": "true"}))
+    check("a plaintext external endpoint is refused",
+          refused(**{**ext, "mpcParty__external__endpointTemplate": "http://party-{id}.x:7000"}))
+    check("an endpoint template without {id} is refused",
+          refused(**{**ext, "mpcParty__external__endpointTemplate": "https://party.x:7000"}))
+    check("external parties without worker mTLS are refused",
+          refused(**{**ext, "temporalWorker__mtls__enabled": "false"}))
+
     print()
     if failures:
         print(f"{len(failures)} of {checks} invariants FAILED:")

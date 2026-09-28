@@ -215,6 +215,19 @@ mpcParty:
   # production gives up the property the whole design exists for. "off"
   # removes the constraint entirely.
   spreadAcrossNodes: required # required | preferred | off
+  # Parties that run outside this cluster -- each in its own cloud account,
+  # deployed with infrastructure/terraform/party. This is what makes the
+  # threshold mean something: see docs/deployment/SEPARATE-HOSTS.md.
+  #
+  # When enabled, no party runs in this cluster at all (the chart refuses
+  # external.enabled together with mpcParty.enabled), and the gateway
+  # addresses the parties at these templates, {id} replaced by 1..n.
+  # Requires temporalWorker.mtls.enabled: ceremony traffic crosses the
+  # public internet and must be mutually authenticated.
+  external:
+    enabled: false
+    endpointTemplate: "" # e.g. https://party-{id}.custody.example.com:7000
+    healthTemplate: ""   # e.g. http://party-{id}.custody.example.com:7001/health
   # Plaintext port carrying only GET /health, started when mtls.enabled.
   #
   # With mTLS on, the main port is HTTPS requiring a client certificate, and

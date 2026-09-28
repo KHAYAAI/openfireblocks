@@ -177,8 +177,9 @@ func KeyRotationWorkflow(ctx workflow.Context, req KeyRotationRequest) (*KeyRota
 		}
 		var deactivateResult DeactivateSharesResult
 		if err := workflow.ExecuteActivity(ctx, "DeactivateOldKeyShares", DeactivateSharesRequest{
-			CeremonyID: req.OldCeremonyID,
-			PartyIDs:   req.OldPartyIDs,
+			CeremonyID:     req.OldCeremonyID,
+			PartyIDs:       req.OldPartyIDs,
+			PartyEndpoints: req.OldPartyEndpoints,
 		}).Get(ctx, &deactivateResult); err != nil {
 			logger.Error("failed to deactivate old key shares in Vault", "error", err)
 			return &KeyRotationResult{NewCeremony: newCeremony, Status: "failed", Error: fmt.Sprintf("deactivate old shares: %v", err)}, nil

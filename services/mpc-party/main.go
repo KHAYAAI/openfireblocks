@@ -161,6 +161,9 @@ func main() {
 	// it is an operator's decision rather than a side effect of a pod being
 	// rescheduled.
 	router.HandleFunc("/tss/keygen/restore", ps.HandleTSSRestore).Methods(http.MethodPost)
+	// Each party destroys its own share after a rotation or refresh; see
+	// RetireSealedShare for why this is not the orchestrator's job.
+	router.HandleFunc("/tss/shares/retire", ps.HandleTSSRetire).Methods(http.MethodPost)
 	// Proactive key refresh. Same committee, same threshold, same key --
 	// new shares. See tss_resharing.go for why a system without this has
 	// a weaker threshold claim than it appears to.

@@ -1,9 +1,14 @@
 package activities
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
+	"strings"
 
 	vault "github.com/hashicorp/vault/api"
 
@@ -103,6 +108,17 @@ func (a *Activities) SetCeremonyStatus(ctx context.Context, req workflows.SetCer
 // share is independent, so a transient failure on party 2 shouldn't leave
 // party 1's and 3's shares undeleted too. See DeactivateSharesResult.Errors.
 func (a *Activities) DeactivateOldKeyShares(ctx context.Context, req workflows.DeactivateSharesRequest) (*workflows.DeactivateSharesResult, error) {
+	if len(req.PartyEndpoints) > 0 {
+		return a.retireThroughParties(ctx, req)
+	}
+
+	// Legacy path: every party's share in one shared Vault, deleted with
+	// the worker's own token. Kept only for deployments where all parties
+	// genuinely share a Vault (development, the kind drills). It cannot
+	// work once parties are separated -- this process has no route to
+	// another account's Vault -- and it should not: one platform token
+	// that reaches every share is the single point the threshold exists
+	// to remove.
 	addr := os.Getenv("VAULT_ADDR")
 	if addr == "" {
 		// Matches vault_seal.go's own precedence: unset VAULT_ADDR means
@@ -141,4 +157,55 @@ func getenvDefault(key, def string) string {
 		return v
 	}
 	return def
+}
+
+type retireBody struct {
+	CeremonyID             string `json:"ceremony_id"`
+	Authorization          string `json:"authorization,omitempty"`
+	AuthorizationSignature string `json:"authorization_signature,omitempty"`
+}
+
+// retireThroughParties asks each party to destroy its own share for the
+// ceremony, over the same (mTLS) client every ceremony uses, carrying a
+// "retire" authorisation from the co-signer when one is configured.
+//
+// One party failing does not stop the others, and is reported per party
+// in Errors -- the same contract as the legacy path. A party that is
+// unreachable still holds its old share, and the caller must know which.
+func (a *Activities) retireThroughParties(ctx context.Context, req workflows.DeactivateSharesRequest) (*workflows.DeactivateSharesResult, error) {
+	if len(req.PartyEndpoints) != len(req.PartyIDs) {
+		return nil, fmt.Errorf("partyEndpoints (%d) must be parallel to partyIds (%d)", len(req.PartyEndpoints), len(req.PartyIDs))
+	}
+	auth, authSig, err := a.ceremonyAuth.authorize(ctx, "retire", req.CeremonyID, "")
+	if err != nil {
+		return nil, err
+	}
+	body, err := json.Marshal(retireBody{CeremonyID: req.CeremonyID, Authorization: auth, AuthorizationSignature: authSig})
+	if err != nil {
+		return nil, err
+	}
+
+	result := &workflows.DeactivateSharesResult{}
+	for i, partyID := range req.PartyIDs {
+		url := strings.TrimRight(req.PartyEndpoints[i], "/") + "/tss/shares/retire"
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+		if err != nil {
+			result.Errors = append(result.Errors, fmt.Sprintf("party %d: %v", partyID, err))
+			continue
+		}
+		httpReq.Header.Set("Content-Type", "application/json")
+		resp, err := a.httpClient.Do(httpReq)
+		if err != nil {
+			result.Errors = append(result.Errors, fmt.Sprintf("party %d (%s): %v", partyID, url, err))
+			continue
+		}
+		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			result.Errors = append(result.Errors, fmt.Sprintf("party %d (%s): HTTP %d: %s", partyID, url, resp.StatusCode, strings.TrimSpace(string(msg))))
+			continue
+		}
+		result.DeactivatedCount++
+	}
+	return result, nil
 }

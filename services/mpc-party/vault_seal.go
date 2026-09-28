@@ -245,3 +245,35 @@ func LoadSealedShare(ctx context.Context, getenv func(string) string, partyID in
 	}
 	return share, cc, nil
 }
+
+// RetireSealedShare permanently destroys this party's sealed share for a
+// ceremony: every version and the metadata, not a soft delete that
+// `vault kv undelete` reverses. Returns (false, nil) if Vault isn't
+// configured.
+//
+// Permanent on purpose. Retiring a share is what makes a key rotation or
+// refresh worth doing: a share compromised before retirement must not be
+// combinable with anything taken after it. A soft-deleted share is still
+// on the disk, one command away.
+//
+// Each party retires only its own share, in its own Vault. The previous
+// arrangement -- the orchestrator deleting every party's share with one
+// Vault token -- only worked while all parties shared one Vault, and it
+// meant one platform credential could reach every share.
+func RetireSealedShare(ctx context.Context, getenv func(string) string, partyID int, ceremonyID string) (bool, error) {
+	cfg, configured := vaultShareConfigFromEnv(getenv, partyID, ceremonyID)
+	if !configured {
+		return false, nil
+	}
+	client, err := vault.NewClient(&vault.Config{Address: cfg.addr})
+	if err != nil {
+		return false, fmt.Errorf("vault client: %w", err)
+	}
+	if cfg.token != "" {
+		client.SetToken(cfg.token)
+	}
+	if err := client.KVv2(cfg.mount).DeleteMetadata(ctx, cfg.keyPath); err != nil {
+		return false, fmt.Errorf("vault destroy %s: %w", cfg.keyPath, err)
+	}
+	return true, nil
+}

@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"net/http/httputil"
+	"os"
 
 	"github.com/gorilla/mux"
 	"time"
@@ -444,4 +445,47 @@ func (ps *PartyServer) HandleTSSRestore(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeJSON(w, http.StatusOK, status)
+}
+
+type tssRetireRequest struct {
+	CeremonyID             string `json:"ceremony_id"`
+	Authorization          string `json:"authorization,omitempty"`
+	AuthorizationSignature string `json:"authorization_signature,omitempty"`
+}
+
+// HandleTSSRetire permanently destroys this party's share for a ceremony:
+// from memory, and from this party's own Vault.
+//
+// Authorised like every other ceremony operation -- destroying a share is
+// irreversible, and on a key that still holds money it is the same as
+// burning it. The co-signer decides whether that is intended.
+func (ps *PartyServer) HandleTSSRetire(w http.ResponseWriter, r *http.Request) {
+	var req tssRetireRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.CeremonyID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request: ceremony_id is required"})
+		return
+	}
+	if err := ps.requireAuthorization("retire", req.CeremonyID, "",
+		req.Authorization, req.AuthorizationSignature); err != nil {
+		log.Printf("refused retirement of %s: %v", req.CeremonyID, err)
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": err.Error()})
+		return
+	}
+
+	inMemory := ps.tssManager.Forget(req.CeremonyID)
+	destroyed, err := RetireSealedShare(r.Context(), os.Getenv, ps.partyID, req.CeremonyID)
+	if err != nil {
+		// The share may still be in Vault. Say so: the caller must retry,
+		// not record the retirement as done.
+		log.Printf("retirement of %s: destroying the sealed share failed: %v", req.CeremonyID, err)
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	log.Printf("retired ceremony %s (in memory: %v, sealed share destroyed: %v)", req.CeremonyID, inMemory, destroyed)
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"ceremony_id":      req.CeremonyID,
+		"party_id":         ps.partyID,
+		"held_in_memory":   inMemory,
+		"sealed_destroyed": destroyed,
+	})
 }

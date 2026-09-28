@@ -541,3 +541,20 @@ func (m *TSSPartyManager) GetStatus(ceremonyID string) (*KeygenStatusResult, err
 		Address:    ceremony.address,
 	}, nil
 }
+
+// Forget drops a keygen ceremony -- and with it the share -- from this
+// process's memory. Returns whether it was held. Used by retirement, so a
+// retired share cannot go on signing from memory until the next restart.
+func (m *TSSPartyManager) Forget(ceremonyID string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	c, ok := m.ceremonies[ceremonyID]
+	if !ok {
+		return false
+	}
+	c.mu.Lock()
+	c.saveData = nil
+	c.mu.Unlock()
+	delete(m.ceremonies, ceremonyID)
+	return true
+}

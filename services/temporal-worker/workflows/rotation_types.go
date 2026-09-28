@@ -28,6 +28,9 @@ type KeyRotationRequest struct {
 	// key with no prior ceremony to retire).
 	OldCeremonyID string `json:"oldCeremonyId,omitempty"`
 	OldPartyIDs   []int  `json:"oldPartyIds,omitempty"`
+	// Parallel to OldPartyIDs: where to reach each old party to have it
+	// retire its own share. See DeactivateSharesRequest.PartyEndpoints.
+	OldPartyEndpoints []string `json:"oldPartyEndpoints,omitempty"`
 
 	// ShareRetention is how long the old shares stay soft-deletable
 	// (recoverable) in Vault before this workflow deletes them --  not
@@ -70,6 +73,11 @@ type SetKeyPairStatusRequest struct {
 type DeactivateSharesRequest struct {
 	CeremonyID string `json:"ceremonyId"`
 	PartyIDs   []int  `json:"partyIds"`
+	// Where each party is reached, parallel to PartyIDs. When set, each
+	// party is asked to destroy its own share (POST /tss/shares/retire);
+	// this is the only path that works when parties do not share a Vault,
+	// which is every deployment where the threshold means anything.
+	PartyEndpoints []string `json:"partyEndpoints,omitempty"`
 }
 
 // DeactivateSharesResult is returned by the DeactivateOldKeyShares

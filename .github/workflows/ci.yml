@@ -293,6 +293,12 @@ jobs:
         run: |
           terraform -chdir=infrastructure/terraform init -backend=false
           terraform -chdir=infrastructure/terraform validate
+      - name: Validate the per-party root
+        # infrastructure/terraform/party is applied once per party, by that
+        # party's own operator, in its own account (SEPARATE-HOSTS.md).
+        run: |
+          terraform -chdir=infrastructure/terraform/party init -backend=false
+          terraform -chdir=infrastructure/terraform/party validate
 
   gosec:
     name: Go security scan

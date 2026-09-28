@@ -153,13 +153,17 @@ spec:
             # client certificate and could not use the mTLS port even if
             # it wanted to.
             - name: MPC_PARTY_HEALTH_TEMPLATE
-              {{- if .Values.mpcParty.mtls.enabled }}
+              {{- if .Values.mpcParty.external.enabled }}
+              value: {{ .Values.mpcParty.external.healthTemplate | quote }}
+              {{- else if .Values.mpcParty.mtls.enabled }}
               value: {{ printf "http://party-{id}.%s.svc.cluster.local:%d/health" .Release.Namespace (int .Values.mpcParty.healthPort) | quote }}
               {{- else }}
               value: {{ printf "http://party-{id}:%d/health" (int .Values.mpcParty.port) | quote }}
               {{- end }}
             - name: MPC_PARTY_ENDPOINT_TEMPLATE
-              {{- if .Values.mpcParty.mtls.enabled }}
+              {{- if .Values.mpcParty.external.enabled }}
+              value: {{ .Values.mpcParty.external.endpointTemplate | quote }}
+              {{- else if .Values.mpcParty.mtls.enabled }}
               value: {{ printf "https://party-{id}.%s.svc.cluster.local:%d" .Release.Namespace (int .Values.mpcParty.port) | quote }}
               {{- else }}
               value: {{ printf "http://party-{id}:%d" (int .Values.mpcParty.port) | quote }}

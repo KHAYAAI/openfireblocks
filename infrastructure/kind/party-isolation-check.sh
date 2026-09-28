@@ -40,6 +40,56 @@ PARTY_SELECTOR="${PARTY_SELECTOR:-app.kubernetes.io/component=mpc-party}"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
+# Levels in order, so REQUIRE can be compared against a result.
+level_rank() {
+  case "$1" in
+    simulated) echo 0 ;; same-host) echo 1 ;; multi-node) echo 2 ;;
+    multi-az) echo 3 ;; multi-region) echo 4 ;; multi-account) echo 5 ;;
+    *) echo -1 ;;
+  esac
+}
+
+# --- Parties outside the cluster --------------------------------------------
+#
+# With separately hosted parties (infrastructure/terraform/party) there is
+# nothing in Kubernetes to inspect. What can be checked from here is that
+# each party is a distinct, reachable host; what cannot is which account
+# each runs in, so that is declared by the operators, in writing, as before.
+#
+#   OFB_PARTY_HOSTS=party-1.custody.example.com,party-2...,party-3... \
+#   OFB_PARTY_ACCOUNTS=111122223333,444455556666,777788889999 \
+#   REQUIRE=multi-account ./infrastructure/kind/party-isolation-check.sh
+if [[ -n "${OFB_PARTY_HOSTS:-}" ]]; then
+  HEALTH_PORT="${OFB_PARTY_HEALTH_PORT:-7001}"
+  mapfile -t HOSTS < <(tr ',' '\n' <<<"${OFB_PARTY_HOSTS}" | sed '/^$/d')
+  [[ ${#HOSTS[@]} -ge 2 ]] || fail "OFB_PARTY_HOSTS names fewer than two parties"
+  echo "==> external parties"
+  declare -A SEEN_IP
+  for host in "${HOSTS[@]}"; do
+    ip=$(getent ahostsv4 "${host}" | awk 'NR==1{print $1}')
+    [[ -n "${ip}" ]] || fail "${host} does not resolve"
+    [[ -z "${SEEN_IP[$ip]:-}" ]] || fail "${host} and ${SEEN_IP[$ip]} are the same address (${ip}): two parties on one host"
+    SEEN_IP[$ip]="${host}"
+    code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://${host}:${HEALTH_PORT}/health" || true)
+    printf '    %-40s %-16s health=%s\n' "${host}" "${ip}" "${code}"
+    [[ "${code}" == "200" ]] || fail "${host} is not answering its health probe"
+  done
+  ACCOUNTS=0
+  if [[ -n "${OFB_PARTY_ACCOUNTS:-}" ]]; then
+    ACCOUNTS=$(tr ',' '\n' <<<"${OFB_PARTY_ACCOUNTS}" | sed '/^$/d' | sort -u | wc -l)
+  fi
+  LEVEL="multi-node"
+  if [[ "${ACCOUNTS}" -ge "${#HOSTS[@]}" ]]; then LEVEL="multi-account"; fi
+  echo
+  echo "    parties:  ${#HOSTS[@]} on ${#SEEN_IP[@]} distinct addresses"
+  echo "    accounts: ${ACCOUNTS} (declared via OFB_PARTY_ACCOUNTS)"
+  echo "    level:    ${LEVEL}"
+  if [[ -n "${REQUIRE}" && $(level_rank "${LEVEL}") -lt $(level_rank "${REQUIRE}") ]]; then
+    fail "isolation is ${LEVEL}; ${REQUIRE} is required"
+  fi
+  exit 0
+fi
+
 command -v kubectl >/dev/null || fail "kubectl is required"
 
 echo "==> finding the MPC parties"

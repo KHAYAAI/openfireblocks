@@ -5,7 +5,8 @@ single actor cannot reach — which is the difference between a demonstration
 of MPC and custody of somebody's money.
 
 Run `infrastructure/kind/party-isolation-check.sh` against any deployment to
-see where it currently sits.
+see where it currently sits. The step-by-step procedure, and the Terraform
+that implements it, is [SEPARATE-HOSTS.md](SEPARATE-HOSTS.md).
 
 ---
 
