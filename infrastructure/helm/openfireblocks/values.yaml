@@ -90,6 +90,30 @@ mpcSigner:
     rpcUrl: "" # e.g. http://bitcoind:18443
     rpcUser: ""
     rpcPasswordSecret: openfireblocks-secrets # secret holding key "bitcoin-rpc-password"
+  # Hardware signing: the key lives in an HSM, reached over PKCS#11, and
+  # signs there without ever leaving it. See
+  # docs/engineering/PKCS11-HSM-SIGNING.md for what this does and does not
+  # cover (it is the single-key path; threshold shares are a different
+  # problem).
+  #
+  # Needs the image built with `docker build --target pkcs11`; the default
+  # image refuses to start with this enabled rather than fall back to a
+  # software key. Exclusive with vault.addr -- the chart refuses both,
+  # because a hardware deployment that also carries a software key is not
+  # one.
+  hsm:
+    enabled: false
+    tag: "" # image tag of the --target pkcs11 build; defaults to "<tag>-pkcs11"
+    # The vendor's PKCS#11 module, at its path inside the container,
+    # e.g. /opt/cloudhsm/lib/libcloudhsm_pkcs11.so. Mount it (and its
+    # configuration) with volumes/volumeMounts below.
+    library: ""
+    tokenLabel: "" # select the token by label (preferred), or...
+    slot: ""       # ...by slot number
+    keyLabel: ""   # create it once with: kubectl exec ... -- hsm-key generate
+    pinSecret: openfireblocks-secrets # secret holding key "hsm-pkcs11-pin"
+    volumes: []
+    volumeMounts: []
 
 policyService:
   enabled: true

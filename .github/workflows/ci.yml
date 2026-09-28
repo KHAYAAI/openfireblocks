@@ -115,6 +115,40 @@ jobs:
         working-directory: services/mpc-signer
         run: go test -tags tss -vet=off -short ./tss/
 
+  hsm-pkcs11:
+    # Hardware signing over PKCS#11, against SoftHSM2: the same C_Sign,
+    # C_GenerateKeyPair and attribute calls a CloudHSM, Luna or YubiHSM
+    # receives. REQUIRE_SOFTHSM makes a missing SoftHSM a failure rather
+    # than a skip, so this job cannot pass by testing nothing.
+    name: HSM signing (pkcs11 tag, SoftHSM2)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+      - name: Install SoftHSM2
+        run: sudo apt-get update && sudo apt-get install -y softhsm2
+      - name: Test (pkcs11)
+        working-directory: services/mpc-signer
+        env:
+          CGO_ENABLED: "1"
+          REQUIRE_SOFTHSM: "1"
+        run: |
+          go vet -tags pkcs11 ./...
+          go test -tags pkcs11 -count=1 . ./keys/... ./chains/
+      - name: Build the hardware-signing image
+        working-directory: services/mpc-signer
+        run: docker build --target pkcs11 -t mpc-signer:ci-pkcs11 .
+      - name: The default image still refuses HSM mode
+        working-directory: services/mpc-signer
+        run: |
+          docker build -t mpc-signer:ci .
+          out=$(docker run --rm -e HSM_PKCS11_LIBRARY=/x.so -e HSM_PKCS11_TOKEN_LABEL=t \
+                  -e HSM_PKCS11_PIN=p -e HSM_PKCS11_KEY_LABEL=k mpc-signer:ci 2>&1 || true)
+          echo "$out"
+          echo "$out" | grep -q -- "-tags pkcs11"
+
   gateway:
     name: API gateway
     runs-on: ubuntu-latest

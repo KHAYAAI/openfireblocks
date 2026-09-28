@@ -10,17 +10,20 @@ import (
 
 	"forge-crypto/mpc-signer/internal/ethcrypto"
 	"forge-crypto/mpc-signer/internal/ethtypes"
+	"forge-crypto/mpc-signer/keys"
 )
 
-// signer.go holds the actual Ethereum transaction signing logic.
+// signer.go holds the single-key Ethereum transaction signing logic.
 //
-// Phase 0: a single shared ECDSA (secp256k1) key signs every transaction.
-// This is intentionally simple so we can prove the end-to-end flow
-// (request -> sign -> broadcast -> audit). It is NOT production-safe.
+// This is the non-threshold path: one secp256k1 key signs. Threshold
+// signing, where no party ever holds the whole key, is
+// services/mpc-party, and it is a separate path rather than a mode of
+// this one.
 //
-// Phase 1+: replace the single key with Binance TSS-Lib threshold signing,
-// where the private key is never reconstructed and key shares are stored in
-// HashiCorp Vault.
+// Where the key lives is a KeySigner (see ./keys): a software key in
+// process memory by default, or -- with HSM_PKCS11_* configured and a
+// binary built with -tags pkcs11 -- a key inside a hardware security
+// module that signs without ever releasing it.
 
 // SignedTransaction is the result of signing a SignRequest.
 type SignedTransaction struct {
@@ -30,9 +33,13 @@ type SignedTransaction struct {
 	From      string // signer address
 }
 
-// MPCSigner owns the signing key material.
+// MPCSigner signs Ethereum transactions with a KeySigner.
+//
+// It no longer holds key material itself. It holds something that can
+// sign, which may be a key in this process's memory or a handle to one
+// that never leaves an HSM, and it does not know which.
 type MPCSigner struct {
-	privKey *ecdsa.PrivateKey
+	key     keys.KeySigner
 	address string
 }
 
@@ -63,9 +70,22 @@ func NewMPCSigner(privKeyHex string) (*MPCSigner, error) {
 		}
 	}
 
-	addr := ethcrypto.PubkeyToAddress(privKey.PublicKey)
-	return &MPCSigner{privKey: privKey, address: addr}, nil
+	return NewMPCSignerFromKey(keys.NewRawKeySigner(privKey))
 }
+
+// NewMPCSignerFromKey builds a signer around any KeySigner, including one
+// backed by hardware.
+func NewMPCSignerFromKey(key keys.KeySigner) (*MPCSigner, error) {
+	addr, err := keys.Address(key)
+	if err != nil {
+		return nil, fmt.Errorf("deriving the signer address: %w", err)
+	}
+	return &MPCSigner{key: key, address: addr}, nil
+}
+
+// Key returns the KeySigner this signer uses, so the multi-chain router
+// can sign with the same key rather than a second copy of it.
+func (m *MPCSigner) Key() keys.KeySigner { return m.key }
 
 // Address returns the signer's Ethereum address.
 func (m *MPCSigner) Address() string {
@@ -119,7 +139,7 @@ func (m *MPCSigner) SignTransaction(ctx context.Context, req *SignRequest) (*Sig
 	if err != nil {
 		return nil, err
 	}
-	sig, err := ethcrypto.Sign(digest, m.privKey)
+	sig, err := m.key.SignDigest(ctx, digest)
 	if err != nil {
 		return nil, fmt.Errorf("signing failed: %w", err)
 	}

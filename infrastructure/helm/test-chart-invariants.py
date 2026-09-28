@@ -221,6 +221,70 @@ def main() -> int:
         container_named(pod, "vault-pki-renew") is None,
     )
 
+    # --- Hardware signing -------------------------------------------------
+    print("\nmpc-signer with an HSM:")
+    hsm = dict(
+        mpcSigner__hsm__enabled="true",
+        mpcSigner__hsm__library="/opt/cloudhsm/lib/libcloudhsm_pkcs11.so",
+        mpcSigner__hsm__tokenLabel="hsm1",
+        mpcSigner__hsm__keyLabel="treasury",
+    )
+    signer = deployments(render(**hsm))["ci-openfireblocks-mpc-signer"]
+    c = container_named(signer["spec"]["template"]["spec"], "mpc-signer")
+    env = {e["name"]: e for e in c["env"]}
+    check(
+        "HSM mode runs the pkcs11 image, not the static one",
+        c["image"].endswith("-pkcs11"),
+        c["image"],
+    )
+    check(
+        "the HSM PIN comes from a Secret, never a literal value",
+        "value" not in env["HSM_PKCS11_PIN"]
+        and env["HSM_PKCS11_PIN"]["valueFrom"]["secretKeyRef"]["key"] == "hsm-pkcs11-pin",
+    )
+    check(
+        "HSM mode carries no software-key source",
+        "VAULT_ADDR" not in env and "MPC_SIGNER_PRIVATE_KEY" not in env,
+    )
+    default_signer = container_named(
+        deployments(render())["ci-openfireblocks-mpc-signer"]["spec"]["template"]["spec"],
+        "mpc-signer",
+    )
+    check(
+        "HSM mode is off by default",
+        "HSM_PKCS11_LIBRARY" not in env_of(default_signer)
+        and not default_signer["image"].endswith("-pkcs11"),
+    )
+
+    def refused(**sets: str) -> bool:
+        args = ["helm", "template", "ci", CHART, "-n", NS]
+        for k, v in sets.items():
+            args += ["--set", f"{k.replace('__', '.')}={v}"]
+        return subprocess.run(args, capture_output=True, text=True).returncode != 0
+
+    check(
+        "the chart refuses HSM mode alongside a Vault-held key",
+        refused(**hsm, mpcSigner__vault__addr="http://vault:8200"),
+    )
+    check(
+        "the chart refuses HSM mode without a key label",
+        refused(**{**hsm, "mpcSigner__hsm__keyLabel": ""}),
+    )
+    check(
+        "the chart refuses HSM mode with both a token label and a slot",
+        refused(**hsm, mpcSigner__hsm__slot="0"),
+    )
+    by_slot = {**hsm, "mpcSigner__hsm__tokenLabel": "", "mpcSigner__hsm__slot": "0"}
+    slot_env = env_of(container_named(
+        deployments(render(**by_slot))["ci-openfireblocks-mpc-signer"]["spec"]["template"]["spec"],
+        "mpc-signer",
+    ))
+    check(
+        "slot 0 is accepted as a slot, not read as unset",
+        slot_env.get("HSM_PKCS11_SLOT") == "0" and "HSM_PKCS11_TOKEN_LABEL" not in slot_env,
+        str(slot_env),
+    )
+
     print()
     if failures:
         print(f"{len(failures)} of {checks} invariants FAILED:")

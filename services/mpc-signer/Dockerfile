@@ -31,7 +31,31 @@ COPY . .
 # static binary is what the distroless/static runtime below can execute.
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags='-s -w' -o /out/mpc-signer .
 
-# Runtime stage.
+# ---------------------------------------------------------------------------
+# Hardware-signing variant: docker build --target pkcs11 .
+#
+# PKCS#11 means dlopen()ing the HSM vendor's module, which needs cgo and a
+# libc -- so this is a separate image rather than a mode of the default
+# one, and the default stays static and cgo-free. It also carries hsm-key,
+# the tool that creates the key on the token (the service never does).
+#
+# The vendor's module is not in this image. It is licensed, versioned and
+# configured by the HSM vendor (CloudHSM, Luna, YubiHSM) and mounted into
+# the pod; see mpcSigner.hsm in the chart.
+FROM build AS build-pkcs11
+RUN CGO_ENABLED=1 GOOS=linux go build -tags pkcs11 -trimpath -ldflags='-s -w' -o /out/mpc-signer . && \
+    CGO_ENABLED=1 GOOS=linux go build -tags pkcs11 -trimpath -ldflags='-s -w' -o /out/hsm-key ./cmd/hsm-key
+
+# distroless/cc: glibc and libstdc++, which vendor PKCS#11 modules link
+# against, and still no shell or package manager.
+FROM gcr.io/distroless/cc-debian12:nonroot AS pkcs11
+COPY --from=build-pkcs11 /out/mpc-signer /usr/local/bin/mpc-signer
+COPY --from=build-pkcs11 /out/hsm-key /usr/local/bin/hsm-key
+USER 65532:65532
+ENTRYPOINT ["/usr/local/bin/mpc-signer"]
+
+# ---------------------------------------------------------------------------
+# Runtime stage (the default target -- it must stay last).
 #
 # distroless/static rather than alpine:3.18: no package manager to invoke at
 # build time, no shell to exploit at runtime, and it satisfies the chart's

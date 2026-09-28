@@ -33,7 +33,11 @@ type server struct {
 	signer       *MPCSigner
 	audit        *AuditLogger // may be nil if immudb was unavailable at startup
 	signerRouter *chains.SignerRouter
-	privKeyHex   string
+	// privKeyHex is the software key, and empty in HSM mode -- where there
+	// is no key in this process to hold. Its emptiness is what routes
+	// multi-chain signing through the KeySigner instead.
+	privKeyHex string
+	hardware   bool
 }
 
 func (s *server) log(ctx context.Context, event AuditEvent) uint64 {
@@ -102,7 +106,12 @@ func (s *server) handleSign(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleAddress(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"address": s.signer.Address()})
+	writeJSON(w, http.StatusOK, map[string]string{
+		"address": s.signer.Address(),
+		// Where the key is, so an operator can confirm from outside the
+		// pod that a hardware deployment is actually signing in hardware.
+		"keySource": s.signer.Key().Describe(),
+	})
 }
 
 func (s *server) handleSignMultiChain(w http.ResponseWriter, r *http.Request) {
@@ -131,7 +140,15 @@ func (s *server) handleSignMultiChain(w http.ResponseWriter, r *http.Request) {
 		Message: []byte(req.Message),
 	}
 
-	resp, err := s.signerRouter.SignMultiChain(ctx, signReq, s.privKeyHex)
+	var resp *chains.ChainSignResponse
+	var err error
+	if s.hardware {
+		// Solana is refused here by name: its key is Ed25519, and there
+		// is no hardware key for it.
+		resp, err = s.signerRouter.SignMultiChainWithKey(ctx, signReq, s.signer.Key())
+	} else {
+		resp, err = s.signerRouter.SignMultiChain(ctx, signReq, s.privKeyHex)
+	}
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]interface{}{
 			"error":     err.Error(),
@@ -217,17 +234,11 @@ func getenv(key, fallback string) string {
 }
 
 func main() {
-	// Resolve the signing key from Vault (preferred), env, or generate ephemeral.
-	keyHex, err := ResolveSigningKey(context.Background(), os.Getenv)
-	if err != nil {
-		log.Fatalf("failed to resolve signing key: %v", err)
-	}
-
-	signer, err := NewMPCSigner(keyHex)
+	signer, keyHex, hardware, err := resolveSigner(context.Background(), os.Getenv)
 	if err != nil {
 		log.Fatalf("failed to init MPC signer: %v", err)
 	}
-	log.Printf("MPC signer address: %s", signer.Address())
+	log.Printf("MPC signer address: %s (%s)", signer.Address(), signer.Key().Describe())
 
 	// immudb is best-effort at startup so a slow ledger doesn't block signing.
 	var audit *AuditLogger
@@ -250,6 +261,7 @@ func main() {
 		audit:        audit,
 		signerRouter: signerRouter,
 		privKeyHex:   keyHex,
+		hardware:     hardware,
 	}
 
 	router := mux.NewRouter()
