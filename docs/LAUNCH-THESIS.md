@@ -148,6 +148,11 @@ being true.
 | **Ceremony co-signing**, end to end | `mpc-party/authorizer.go` verifies; `temporal-worker/.../ceremony_authorization.go` signs; one golden vector pins the wire format across both modules; **on in `values-kind.yaml`, so every e2e drill exercises it** |
 | **Live OFAC sanctions feed** | `policy-service/cmd/ofac-sync`; the service refuses to evaluate once the list passes `denyAfter`, and warns before that |
 | **Payment collection** | `billing/collect.go`; invoices were raised on a schedule and never charged. Idempotent, bounded, and every attempt leaves a row |
+| **Approvals with segregation of duties** | Migration 023's triggers (initiator can never approve; approver/admin only; one decision each; quorum fixed at open); workflow re-reads the database before signing; approval console at `/console`. Proven end to end: real Temporal, worker and Chromium, 25 ETH stopped until two named approvers approved |
+| **Travel Rule (IVMS101)** | Required at or above R5,000 (unvalued assets treated as over); refused with what is missing; recorded before signing, immutable; transmitted to a configured provider or queued for export |
+| **Agents with budgets** | Own credentials that can only pay: one key, named tokens and recipients, per-transfer and 24h rand limits reserved under a row lock (12 simultaneous requests cannot overspend); every attempt kept as the agent's record |
+| **Reconciliation** | Ledger vs chain (confirmed / mismatch / failed / missing, and transactions from the organisation's addresses the platform never signed) and vs a customer statement; proven against a real EVM chain |
+| **Separate-hosts deployment, built** | `infrastructure/terraform/party` (one account per party, applied by that party's operator), chart `mpcParty.external`, parties retire their own shares. Not yet applied — see 2.4 |
 | Fail-closed policy on *decoded* ERC-20 content | `erc20.ts` + `token_limits.rego`; 18 Go tests in `policy-service` |
 | Durable settlement orchestration | 92 Go tests in `services/temporal-worker` |
 | Signing and broadcast, legacy and EIP-1559 | 145 Go tests in `services/mpc-signer` (159 with `-tags pkcs11`) |
@@ -193,7 +198,9 @@ trains people to re-run rather than look. The verifier is now
 
 **One item, and it is not cryptography:**
 
-1. **Party isolation is simulated.** `party-isolation-check.sh` reports the
+1. **Party isolation is simulated.** The code to fix it now exists
+   (`docs/deployment/SEPARATE-HOSTS.md`); what remains is three AWS
+   accounts, three operators, and applying it. `party-isolation-check.sh` reports the
    level and on kind it always says `simulated` — the parties share a
    kernel. A threshold is only worth what the independence of its parties
    is worth, and three processes on one host is a 1-of-1 key wearing a

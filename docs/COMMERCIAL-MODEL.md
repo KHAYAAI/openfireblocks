@@ -68,7 +68,7 @@ bad answers:
 | "SOC 2 Type II?" | Not yet — the observation window has not started |
 | "Who audited the cryptography?" | Nobody, yet |
 | "What insurance?" | None — you hold the keys, your policy responds |
-| "Show me dual control." | The policy engine flags it; no approver workflow |
+| "Show me dual control." | Built: named approvers, M-of-N quorum, the requester can never approve, enforced in the database |
 
 None of those is fatal on its own. Together, on a first call, they end the
 conversation — and worse, they end it in a way you cannot reopen. A bank
@@ -231,12 +231,11 @@ It does not close the competitive gap — Fireblocks' console is years of
 work — and two things are still missing that a bank will ask for
 specifically:
 
-- **An approval workflow.** The policy engine emits `requiresApproval` and
-  nothing consumes it. Dual control is the reason a control function signs
-  off, and it is roughly three weeks including the console screens.
-- **Mobile approvals.** Dual control is not real if the second approver
-  has to open a laptop. Four weeks, and only worth it once the workflow
-  above exists.
+- **An approval workflow.** Built: named approvers, quorum, segregation
+  of duties enforced in the database, and an approval console at
+  `/console`.
+- **Mobile approvals.** The console works on a phone and installs to the
+  home screen; push notifications to approvers are not built.
 
 ### Month 9 → Month 24: SOC 2 Type II
 

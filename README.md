@@ -69,6 +69,17 @@ actually in this repository.
   This is the single-key path only — threshold shares can't live in a
   PKCS#11 HSM, and the docs say why. See
   [`docs/engineering/PKCS11-HSM-SIGNING.md`](docs/engineering/PKCS11-HSM-SIGNING.md).
+- **Dual control that a bank's control function can sign off.** Named
+  approvers, an M-of-N quorum, and the person who requested a transfer can
+  never approve it — enforced by the database itself, re-checked by the
+  workflow before signing. Approvers decide in a console at `/console`
+  (works on a phone) with a fresh one-time code or SSO on every decision.
+- **Travel Rule, agents and reconciliation.** Originator and beneficiary
+  information (IVMS101) is required and kept for transfers at or above the
+  threshold; AI agents can be given their own credential that can only pay
+  within budgets; and a reconciliation run compares what was signed with
+  what the chain and the customer's books say — including any transaction
+  from the organisation's addresses that the platform never signed.
 - **Durable settlement orchestration** (policy → sign → broadcast →
   monitor, with an approval gate) on Temporal, so a transfer cannot be
   lost halfway.
@@ -167,7 +178,9 @@ The honest version, kept separate from the pitch, lives in
 
 **What blocks production with real money — one item, and it is not
 cryptography:** the signing parties are not yet deployed on isolated
-hosts (separate cloud accounts for custody). `infrastructure/kind/party-isolation-check.sh`
+hosts (separate cloud accounts for custody). The Terraform and procedure
+to do it are built ([`docs/deployment/SEPARATE-HOSTS.md`](docs/deployment/SEPARATE-HOSTS.md));
+applying them needs three AWS accounts and three operators. `infrastructure/kind/party-isolation-check.sh`
 reports the isolation level a deployment has actually achieved and fails
 the build below whatever a deployment requires; on a single-host cluster
 it always reports `simulated`, which is deployment work, not research.
