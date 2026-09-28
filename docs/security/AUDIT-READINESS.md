@@ -10,6 +10,44 @@ unverified, so an auditor spends their time on questions we cannot answer
 ourselves rather than rediscovering ones we can.
 
 **Status: not yet engaged.** No firm has been contacted or scheduled.
+Updated for everything built since the first version: key refresh,
+ceremony co-signing, per-party share retirement, approvals with
+segregation of duties, HSM signing and separately hosted parties. §0 is
+the one-page brief to send a firm with a request for a quote.
+
+---
+
+## 0. The brief to send a firm
+
+**Product.** Self-hosted MPC custody infrastructure. Customers run it in
+their own accounts; the vendor never holds keys.
+
+**The claim under review.** No single party, and no fewer than
+threshold+1 parties, can sign or reconstruct a key; and no transfer that
+policy says needs approval is signed without the required number of
+distinct, named approvers, none of whom initiated it.
+
+**Size of the priority-1 scope** (non-blank lines, excluding tests):
+
+| Area | Lines | Where |
+|---|---|---|
+| Threshold DKG, signing, refresh, relay, sealing, co-signing | ~3,550 Go | `services/mpc-party` (plus ~2,550 lines of tests) |
+| Orchestration touching ceremonies and approvals | ~1,190 Go | `services/temporal-worker` (`real_tss.go`, `ceremony_authorization.go`, `key_rotation.go`, `approvals.go`, `workflows/approval.go`, `transaction_settlement.go`) |
+| Approval rules | ~235 SQL | `infrastructure/database/migrations/023_approvals_segregation_of_duties.sql` |
+| Approval API and roles | ~840 TypeScript | `services/api-gateway/src/approvals` |
+| Single-key / HSM signing path | ~1,040 Go | `services/mpc-signer/keys`, `chains/keysigned.go`, `signer.go` |
+
+**Dependency.** `github.com/bnb-chain/tss-lib/v2 v2.0.0` (GG18/20 ECDSA,
+EdDSA). Our own read of its published advisory classes against the pinned
+tree is `docs/security/TSS-LIB-ADVISORY-REVIEW.md` — a starting point, not
+a substitute.
+
+**Audit against a pinned commit.** Quote the commit on the branch you are
+given; the review is a statement about that commit and nothing later.
+
+**What we want back.** Findings ranked by severity with a reproduction,
+and a written opinion on the specific questions in §1 — especially 1.6
+(refresh) and 1.8 (approvals), which are ours rather than the library's.
 Selecting and contracting one is a procurement decision, not an engineering
 task, and it is on the critical path to launch — see
 `docs/security/what-claude-cannot-build.md`.
@@ -31,7 +69,10 @@ parties, can produce a signature or reconstruct a private key.**
 | DKG ceremony (real `tss-lib` `keygen.LocalParty`) | `services/mpc-party/tss_party.go` |
 | Threshold signing ceremony | `services/mpc-party/tss_signing.go` |
 | Peer-to-peer protocol message relay | `services/mpc-party/tss_handlers.go` |
-| Key share sealing at rest | `services/mpc-party/vault_seal.go` |
+| Key share sealing at rest, and retirement | `services/mpc-party/vault_seal.go` (`RetireSealedShare`), `POST /tss/shares/retire` in `tss_handlers.go` |
+| Proactive key refresh (resharing, epoch-offset committee ids) | `services/mpc-party/tss_resharing.go` |
+| Ceremony co-signing (every ceremony carries a signature from a key the platform's hosts cannot reach) | `services/mpc-party/authorizer.go`; signing half `services/temporal-worker/activities/ceremony_authorization.go` |
+| Sender binding between parties | `services/mpc-party/peer_identity.go` |
 | Orchestration (never touches key material) | `services/temporal-worker/activities/real_tss.go` |
 | Single-key signer (separate, non-threshold path) | `services/mpc-signer/signer.go` |
 
@@ -61,14 +102,39 @@ Specific questions we want answered:
    partway? Can a party be induced to reuse nonces or partial state across
    ceremonies?
 4. **Key share lifecycle.** Shares are sealed to Vault KV v2 on ceremony
-   completion and soft-deleted after a retention window on rotation
-   (`services/temporal-worker/activities/key_rotation.go`). Is there a
-   window where shares are recoverable when they should not be, or
-   destroyed when they should not be?
+   completion. After a rotation's retention window, each party is asked to
+   retire its own share (`POST /tss/shares/retire`, authorised as
+   `retire`), which destroys every version and drops it from memory. This
+   replaced the worker soft-deleting every party's share with one Vault
+   token, which needed a shared Vault and was recoverable. Is there a
+   window where a share is recoverable when it should not be, or
+   destroyed when it should not be? Can a `retire` be replayed or
+   redirected at a live key within the authorisation's validity window?
 5. **The two signing paths.** `mpc-signer` holds a single key and is
    *not* threshold-based; `mpc-party` is. Both can produce signatures.
    Is the separation clear enough that a caller cannot get a single-key
    signature where a threshold signature was intended?
+6. **Refresh.** `tss_resharing.go` re-randomises shares without changing
+   the key, giving the new committee identities offset by epoch
+   (`epoch*1_000_000 + party`) because tss-lib requires old and new
+   committee keys to be disjoint. We would like an opinion on whether old
+   and new shares can be combined across an epoch, and on what an
+   aborted refresh leaves behind.
+7. **Co-signing.** The canonical bytes signed and verified are pinned by
+   one golden vector in both modules. Is binding to operation, ceremony
+   id, message hash and issue time sufficient? Is the freshness window
+   (`CEREMONY_AUTHORIZER_MAX_AGE_SECONDS`) safe for `retire` and
+   `restore`, which destroy or resurrect key material?
+8. **Approvals (segregation of duties).** Enforced in three places: the
+   database's triggers (initiator cannot decide; only approver/admin of
+   that organisation; one decision per person, append-only; quorum fixed
+   at open; cannot be marked approved without the decisions — including
+   for the BYPASSRLS role), the gateway (roles per request, fresh TOTP or
+   SSO per decision), and the workflow (counts signals, then re-reads the
+   database before signing, so a forged Temporal signal alone cannot cause
+   a signature). Where is the weakest of the three, and is there a path to
+   signing that skips all of them? (Note `ThresholdSigningWorkflow` —
+   below, priority 3 — is one such path by design.)
 
 ### Priority 2 — Tenant isolation
 
@@ -99,6 +165,15 @@ keys, or transactions.**
   both signing routes), so anything that can start that workflow in
   Temporal directly bypasses policy entirely. Whether that boundary is in
   the right place is worth an opinion.
+
+- Approvals: `services/api-gateway/src/approvals/` — roles per
+  organisation from `user_customer_roles` on every request, not from the
+  JWT; an API key can appoint only the first admin, and approving with an
+  API key returns 410. The approval console at `/console` renders every
+  API value through `textContent` under the gateway's CSP.
+- HSM signing for the single-key path: `services/mpc-signer/keys/pkcs11.go`
+  (refuses extractable keys, mismatched pairs, and a software key
+  configured alongside it). `docs/engineering/PKCS11-HSM-SIGNING.md`.
 
 ### Priority 4 — Penetration test (separate engagement)
 
@@ -142,6 +217,11 @@ Offered so an auditor can skip re-deriving it — and to be explicit that
 | Policy governs what is actually signed | `POST /keys/:keyId/transactions` on that cluster: the returned raw transaction was parsed back independently with `ethers`, and its sender is the DKG-derived address **and** its own `unsignedHash` is byte-identical to the digest the ceremony signed |
 | Per-pod mTLS via Vault Kubernetes auth | `vault-pki-init` authenticating with its pod's service-account token against a real Vault kubernetes auth backend, issuing a leaf with the service identity as CN and the in-cluster DNS name as a SAN, and the parties then completing a DKG over those certificates |
 | Parties are actually spread | Enforced `requiredDuringScheduling` anti-affinity; the three party pods land on three distinct worker nodes, and the chart refuses to schedule them otherwise rather than silently co-locating key shares |
+| Approvals with segregation of duties | 11 database-rule tests against real Postgres with migration 023 (initiator refused even as admin, non-approvers refused, one decision per person, append-only even for `app_admin`, quorum fixed at open, cannot be marked approved directly, another tenant sees nothing); 11 workflow tests; 12 HTTP tests with real JWTs and TOTP. End to end with real Temporal, worker, policy service and Chromium: a 25 ETH transfer stopped at approval, the initiator was refused, two approvers approved, and only then did the workflow sign |
+| Key refresh keeps the key and changes the shares | `TestKeyRefreshKeepsTheKeyAndChangesTheShares`, and `TestAKeyCanStillBeRecoveredAfterARefresh` (refresh, destroy every party, restore from sealed material, sign for the original address) |
+| Retirement destroys a party's own share, and only its own | `TestRetiringDestroysThisPartysShareAndOnlyItsOwn`; refused without a `retire` authorisation, with a `restore` one, or with one for another ceremony |
+| Recovery from total loss | `infrastructure/local/recovery-drill-local.sh`: three real processes and a real Vault, `kill -9`, restore, sign, verify — in CI on every push |
+| HSM-held single key | 21 tests against SoftHSM2 in CI (`-tags pkcs11`), including that the key cannot be read off the token; a hardware-signed Bitcoin spend accepted by btcd's script engine |
 | Tenant isolation enforced, not merely configured | On that cluster, with `app` demoted to non-superuser and owning the tables: tenant A sees 1 of 2 rows; a session with no tenant context sees 0 |
 
 ---
@@ -260,13 +340,21 @@ We would rather hand this over than have it found.
    decision on the record. Worth an auditor's opinion on whether it should
    exist at all.
 
-   Neither route constrains calldata semantics: policy evaluates
-   `to`/`value`/`chainId`, so a transfer to a whitelisted address carrying
-   a call to something else is within policy as written. Constraining that
-   means decoding calldata against an ABI allowlist.
+   Calldata: ERC-20 `transfer`, `transferFrom` and `approve` to registered
+   tokens are decoded before policy, so limits and allow-lists apply to
+   the real recipient and amount. Any other contract call is refused
+   unless the tenant has been granted arbitrary contract calls — which is
+   then policy over `to`/`value` only. Whether that grant should exist is
+   worth an opinion.
 7. **immudb audit anchoring is unexercised.** The integration is real SDK
    code but has not run against a live immudb instance.
-8. **HSM auto-unseal is unapplied.** The AWS KMS seal stanza and IAM are
+8. **Separately hosted parties have never been deployed.** The Terraform
+   (`infrastructure/terraform/party`) and chart mode exist and are
+   tested as far as possible without AWS; see
+   `docs/deployment/SEPARATE-HOSTS.md`. Until they are applied, every
+   environment is `simulated`.
+9. **HSM signing has never touched a physical HSM** — SoftHSM2 only.
+10. **HSM auto-unseal is unapplied.** The AWS KMS seal stanza and IAM are
    configured in Terraform; no Vault node has ever auto-unsealed via it.
 
 ---
@@ -402,3 +490,36 @@ change to `services/mpc-party/`, to the committee-selection logic in the
 gateway, or to the `tss-lib` version invalidates part of it. Decide up
 front whether the engagement includes a re-review window, because
 negotiating one afterwards costs more than including it.
+
+---
+
+## 7. Reproducing the evidence
+
+Everything in §2 that does not need a cluster, in order of how directly
+it bears on the claim under review:
+
+```bash
+# Threshold signing, refresh, restore, retirement, co-signing gate
+cd services/mpc-party && go test -count=1 ./...          # ~9 min: real secp256k1 ceremonies
+
+# Recovery from total loss: three processes, real Vault, kill -9, restore, sign
+cd services/mpc-party && go build -o /tmp/mpc-party . && cd ../..
+./infrastructure/local/recovery-drill-local.sh
+
+# Approvals: the database rules, the workflow, and the HTTP API
+eval "$(infrastructure/local/postgres-local.sh start)"
+(cd services/temporal-worker && DATABASE_URL="$DATABASE_ADMIN_URL" TENANT_DATABASE_URL="$DATABASE_URL" \
+   go test -count=1 ./activities/ ./workflows/)
+(cd services/api-gateway && npm ci && REQUIRE_LIVE_DB=1 npx jest src/approvals)
+
+# Co-signing wire format pinned across both modules
+(cd services/mpc-party && go test -run GoldenVector .)
+(cd services/temporal-worker && go test -run Golden ./activities/)
+
+# HSM signing (needs softhsm2)
+(cd services/mpc-signer && REQUIRE_SOFTHSM=1 CGO_ENABLED=1 go test -tags pkcs11 ./...)
+```
+
+Each of these runs in CI on every push (`.github/workflows/ci.yml`:
+`go`, `key-recovery`, `approvals-db`, `hsm-pkcs11`).
+
