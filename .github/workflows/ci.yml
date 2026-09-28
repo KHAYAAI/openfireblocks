@@ -182,7 +182,7 @@ jobs:
           REQUIRE_LIVE_DB: "1"
         run: |
           npm ci
-          npx jest src/approvals src/travel-rule
+          npx jest src/approvals src/travel-rule src/agents
 
   gateway:
     name: API gateway

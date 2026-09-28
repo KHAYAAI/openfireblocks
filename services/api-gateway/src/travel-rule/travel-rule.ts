@@ -54,6 +54,16 @@ function units(amount: string, decimals: number): number {
   return Number(whole) + Number(frac) / Number(base);
 }
 
+// What a transfer is worth in rand, or null if the platform cannot say.
+// The same valuation the Travel Rule uses, so an agent's budget and the
+// Travel Rule threshold can never disagree about one transfer.
+export function valueInZar(t: TransferFacts, cfg: TravelRuleConfig): number | null {
+  const peg = (t.pegCurrency ?? '').toUpperCase();
+  if (peg === 'ZAR') return round2(units(t.amount, t.decimals));
+  if (peg === 'USD' && cfg.zarPerUsd) return round2(units(t.amount, t.decimals) * cfg.zarPerUsd);
+  return null;
+}
+
 // Does this transfer need Travel Rule information?
 //
 // The conservative reading throughout. A transfer whose value the

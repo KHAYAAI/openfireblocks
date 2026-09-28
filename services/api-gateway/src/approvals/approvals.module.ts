@@ -15,6 +15,6 @@ import { TenantRoleGuard } from './tenant-role.guard';
   imports: [IdentityModule, CustomersModule, SettlementsModule],
   controllers: [ApprovalsController, OrganisationBootstrapController, MeController, ConsoleController],
   providers: [ApprovalsService, TenantRoleGuard],
-  exports: [ApprovalsService],
+  exports: [ApprovalsService, TenantRoleGuard],
 })
 export class ApprovalsModule {}
