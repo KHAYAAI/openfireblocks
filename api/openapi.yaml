@@ -1,0 +1,229 @@
+openapi: 3.0.3
+info:
+  title: OpenFireblocks API
+  description: |
+    Enterprise-grade institutional cryptocurrency key management and signing platform.
+    
+    ## Authentication
+    All requests require an API key in the `X-API-Key` header.
+    
+    ## Rate Limiting
+    - Standard: 100 requests/second
+    - Premium: 1000 requests/second
+  version: 1.0.0
+  contact:
+    name: OpenFireblocks Support
+    email: support@openfireblocks.io
+
+servers:
+  - url: https://api.openfireblocks.io/v1
+    description: Production
+  - url: https://api-staging.openfireblocks.io/v1
+    description: Staging
+
+components:
+  securitySchemes:
+    apiKey:
+      type: apiKey
+      in: header
+      name: X-API-Key
+
+  schemas:
+    KeyPair:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        blockchain:
+          type: string
+          enum: [bitcoin, ethereum, solana, cosmos]
+        address:
+          type: string
+        public_key:
+          type: string
+        threshold:
+          type: integer
+        total_parties:
+          type: integer
+        status:
+          type: string
+          enum: [active, inactive, pending_dkg]
+        created_at:
+          type: string
+          format: date-time
+
+    SigningRequest:
+      type: object
+      required:
+        - key_pair_id
+        - transaction
+      properties:
+        key_pair_id:
+          type: string
+          format: uuid
+        transaction:
+          type: string
+        idempotency_key:
+          type: string
+          format: uuid
+
+    SigningResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [pending, in_progress, completed, failed]
+        signed_transaction:
+          type: string
+        signature:
+          type: string
+        latency_ms:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+
+    DKGCeremony:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        threshold:
+          type: integer
+        total_parties:
+          type: integer
+        status:
+          type: string
+          enum: [preparing, running, completed, failed]
+        key_pair_id:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+
+    CustomerProfile:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+        kyc_status:
+          type: string
+          enum: [pending, approved, rejected]
+        aml_risk_level:
+          type: string
+          enum: [low, medium, high]
+
+security:
+  - apiKey: []
+
+paths:
+  /health:
+    get:
+      summary: Health check
+      tags: [System]
+      security: []
+      responses:
+        '200':
+          description: Service is healthy
+
+  /keys:
+    get:
+      summary: List key pairs
+      tags: [Keys]
+      responses:
+        '200':
+          description: List of key pairs
+    post:
+      summary: Create key pair via DKG
+      tags: [Keys]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '201':
+          description: DKG ceremony initiated
+
+  /keys/{key_id}:
+    get:
+      summary: Get key pair
+      tags: [Keys]
+      parameters:
+        - name: key_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Key pair details
+
+  /sign:
+    post:
+      summary: Sign transaction
+      tags: [Signing]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SigningRequest'
+      responses:
+        '202':
+          description: Signing initiated
+
+  /sign/{signing_id}:
+    get:
+      summary: Get signing status
+      tags: [Signing]
+      parameters:
+        - name: signing_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Signing status
+
+  /customers:
+    post:
+      summary: Register customer
+      tags: [Compliance]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '201':
+          description: Customer created
+
+  /metrics:
+    get:
+      summary: Prometheus metrics
+      tags: [System]
+      security: []
+      responses:
+        '200':
+          description: Metrics

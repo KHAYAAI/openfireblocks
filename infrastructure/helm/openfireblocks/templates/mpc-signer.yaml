@@ -1,4 +1,18 @@
 {{- if .Values.mpcSigner.enabled }}
+{{- $hsm := .Values.mpcSigner.hsm }}
+{{- if $hsm.enabled }}
+{{- if .Values.mpcSigner.vault.addr }}
+{{- fail "mpcSigner.hsm.enabled and mpcSigner.vault.addr are both set: a hardware-signing deployment must not also hold a software key in Vault" }}
+{{- end }}
+{{- if or (not $hsm.library) (not $hsm.keyLabel) }}
+{{- fail "mpcSigner.hsm.enabled requires mpcSigner.hsm.library and mpcSigner.hsm.keyLabel" }}
+{{- end }}
+{{- /* toString: slot 0 is a real slot, and falsy to `not` */}}
+{{- $hasSlot := ne (toString $hsm.slot) "" }}
+{{- if eq (not $hsm.tokenLabel) (not $hasSlot) }}
+{{- fail "mpcSigner.hsm.enabled requires exactly one of mpcSigner.hsm.tokenLabel or mpcSigner.hsm.slot" }}
+{{- end }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -22,7 +36,11 @@ spec:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
       containers:
         - name: mpc-signer
+          {{- if $hsm.enabled }}
+          image: {{ include "ofb.image" (dict "root" . "image" .Values.mpcSigner.image "tag" ($hsm.tag | default (printf "%s-pkcs11" .Values.mpcSigner.tag))) }}
+          {{- else }}
           image: {{ include "ofb.image" (dict "root" . "image" .Values.mpcSigner.image "tag" .Values.mpcSigner.tag) }}
+          {{- end }}
           imagePullPolicy: {{ .Values.imagePullPolicy }}
           securityContext:
             {{- toYaml .Values.containerSecurityContext | nindent 12 }}
@@ -30,6 +48,11 @@ spec:
             - name: http
               containerPort: {{ .Values.mpcSigner.port }}
           env:
+            # Makes each service refuse to fall back to local development
+            # credentials if its DSN/config env var is missing, instead of
+            # silently attempting a localhost connection (gosec G101).
+            - name: APP_ENV
+              value: production
             - name: PORT
               value: {{ .Values.mpcSigner.port | quote }}
             {{- if .Values.mpcSigner.vault.addr }}
@@ -41,6 +64,39 @@ spec:
                   name: {{ .Values.mpcSigner.vault.tokenSecret }}
                   key: vault-token
             {{- end }}
+            {{- if $hsm.enabled }}
+            - name: HSM_PKCS11_LIBRARY
+              value: {{ $hsm.library | quote }}
+            {{- if $hsm.tokenLabel }}
+            - name: HSM_PKCS11_TOKEN_LABEL
+              value: {{ $hsm.tokenLabel | quote }}
+            {{- else }}
+            - name: HSM_PKCS11_SLOT
+              value: {{ $hsm.slot | quote }}
+            {{- end }}
+            - name: HSM_PKCS11_KEY_LABEL
+              value: {{ $hsm.keyLabel | quote }}
+            - name: HSM_PKCS11_PIN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $hsm.pinSecret }}
+                  key: hsm-pkcs11-pin
+            {{- end }}
+            {{- if .Values.mpcSigner.bitcoin.rpcUrl }}
+            # A Bitcoin node. Without it this service can still derive
+            # addresses and assemble transactions, but it cannot see a
+            # key's coins or relay anything -- so /bitcoin/prepare answers
+            # 503 rather than pretending.
+            - name: BITCOIN_RPC_URL
+              value: {{ .Values.mpcSigner.bitcoin.rpcUrl | quote }}
+            - name: BITCOIN_RPC_USER
+              value: {{ .Values.mpcSigner.bitcoin.rpcUser | quote }}
+            - name: BITCOIN_RPC_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.mpcSigner.bitcoin.rpcPasswordSecret }}
+                  key: bitcoin-rpc-password
+            {{- end }}
           livenessProbe:
             httpGet: { path: /health, port: http }
             initialDelaySeconds: 5
@@ -51,6 +107,14 @@ spec:
             periodSeconds: 5
           resources:
             {{- toYaml .Values.mpcSigner.resources | nindent 12 }}
+          {{- if and $hsm.enabled $hsm.volumeMounts }}
+          volumeMounts:
+            {{- toYaml $hsm.volumeMounts | nindent 12 }}
+          {{- end }}
+      {{- if and $hsm.enabled $hsm.volumes }}
+      volumes:
+        {{- toYaml $hsm.volumes | nindent 8 }}
+      {{- end }}
       affinity:
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:

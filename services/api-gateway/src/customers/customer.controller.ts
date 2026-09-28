@@ -7,13 +7,24 @@ import {
   Put,
   UseGuards,
 } from '@nestjs/common';
-import { IsEmail, IsIn, IsObject, IsOptional, IsString } from 'class-validator';
+import {
+  IsBoolean,
+  IsEmail,
+  IsIn,
+  IsObject,
+  IsOptional,
+  IsString,
+} from 'class-validator';
 import { CustomerService } from './customer.service';
 import { AdminGuard } from '../auth/admin.guard';
 
 class CreateCustomerDto {
   @IsEmail()
   email: string;
+
+  @IsOptional()
+  @IsString()
+  name?: string;
 
   @IsOptional()
   @IsString()
@@ -29,8 +40,19 @@ class UpdatePoliciesDto {
   policies: Record<string, unknown>;
 }
 
+// Granting this accepts that policy on POST /keys/:keyId/sign evaluates a
+// caller's *claim* about an opaque digest rather than the digest itself.
+class SetRawDigestSigningDto {
+  @IsBoolean()
+  enabled: boolean;
+}
+
+// Must match customers_status_check (migration 001) exactly -- there is
+// no 'deleted' status in the real schema (this previously listed one that
+// doesn't exist, which would have failed the CHECK constraint on every
+// real attempt to use it).
 class SetStatusDto {
-  @IsIn(['active', 'suspended', 'deleted'])
+  @IsIn(['active', 'inactive', 'suspended'])
   status: string;
 }
 
@@ -62,6 +84,17 @@ export class CustomerController {
   ) {
     await this.customers.updatePolicies(customerId, dto.policies);
     return { customerId, policies: dto.policies };
+  }
+
+  // Grants or revokes the weaker opaque-digest signing route. See
+  // KeysService.signWithKey and migration 017 for why it is off by default.
+  @Put(':customerId/raw-digest-signing')
+  async setRawDigestSigning(
+    @Param('customerId') customerId: string,
+    @Body() dto: SetRawDigestSigningDto,
+  ) {
+    await this.customers.setRawDigestSigning(customerId, dto.enabled);
+    return { customerId, raw_digest_signing_enabled: dto.enabled };
   }
 
   @Put(':customerId/status')

@@ -1,0 +1,61 @@
+filebeat.config:
+  modules:
+    path: ${path.config}/modules.d/*.yml
+    reload.enabled: false
+
+filebeat.inputs:
+  - type: container
+    enabled: true
+    paths:
+      - '/var/lib/docker/containers/*/*.log'
+    processors:
+      - add_kubernetes_metadata:
+          in_cluster: false
+      - add_docker_metadata: ~
+      - add_fields:
+          target: ''
+          fields:
+            component: 'containers'
+
+  - type: log
+    enabled: true
+    paths:
+      - '/var/log/vault/*.log'
+    fields:
+      component: vault
+    tags: ["vault"]
+
+  - type: log
+    enabled: true
+    paths:
+      - '/var/log/postgresql/*.log'
+    fields:
+      component: postgres
+    tags: ["postgres"]
+
+  - type: log
+    enabled: true
+    paths:
+      - '/var/log/temporal/*.log'
+    fields:
+      component: temporal
+    tags: ["temporal"]
+
+processors:
+  - add_host_metadata:
+      when.not.contains.tags: forwarded
+  - add_cloud_metadata: ~
+  - add_docker_metadata: ~
+  - add_kubernetes_metadata: ~
+
+output.logstash:
+  hosts: ["logstash:5044"]
+  loadbalance: true
+
+logging.level: info
+logging.to_files: true
+logging.files:
+  path: /var/log/filebeat
+  name: filebeat
+  keepfiles: 7
+  permissions: 0644

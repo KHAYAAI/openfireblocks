@@ -1,0 +1,80 @@
+# Applies infrastructure/database/migrations/*.sql in filename order.
+#
+# Runs as `app`, not as a separate migration role. That is not incidental:
+# migration 011 turns on FORCE ROW LEVEL SECURITY, which binds the table
+# owner as well, and grants privileges on the migrated tables to app_admin
+# but never to `app`. `app` therefore has to *own* the tables to be able to
+# read them at all, and it only owns them if it is the role that created
+# them.
+#
+# ON_ERROR_STOP=1 and `set -e`: a migration that half-applies is worse than
+# one that fails loudly, and the job's restartPolicy is Never so a failure
+# is visible in `kubectl get jobs` rather than being retried into a
+# confusing state.
+#
+# The ConfigMap is created by infrastructure/kind/up.sh with
+# `kubectl create configmap ofb-migrations --from-file=` rather than being
+# checked in, so the migrations have exactly one source of truth on disk.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ofb-migrate
+  namespace: openfireblocks
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: psql
+          image: postgres:16-bookworm
+          env:
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: dev-dependency-credentials
+                  key: app-password
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              set -euo pipefail
+              until pg_isready -h postgres -U postgres -d openfireblocks; do sleep 2; done
+
+              PSQL="psql -v ON_ERROR_STOP=1 -h postgres -U app -d openfireblocks"
+
+              # A ledger, so this Job is re-runnable. Without one, applying
+              # migrations is all-or-nothing from an empty database: a
+              # second run dies on 001 with `relation "customers" already
+              # exists`, which makes adding a migration to a deployed
+              # environment impossible. The individual .sql files are not
+              # written to be idempotent, so the ledger -- not the files --
+              # is what makes re-running safe.
+              $PSQL -q -c 'CREATE TABLE IF NOT EXISTS schema_migrations (
+                filename    TEXT PRIMARY KEY,
+                applied_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+              )'
+
+              applied=0
+              skipped=0
+              for f in $(ls /migrations/*.sql | sort); do
+                name=$(basename "$f")
+                if [ "$($PSQL -tAc "SELECT 1 FROM schema_migrations WHERE filename = '$name'")" = "1" ]; then
+                  echo "--  $name (already applied)"
+                  skipped=$((skipped + 1))
+                  continue
+                fi
+                echo "==> $name"
+                # One transaction per migration: a migration either lands
+                # completely or not at all, and the ledger row commits with
+                # it, so the two can never disagree.
+                $PSQL --single-transaction \
+                  -c "\\i $f" \
+                  -c "INSERT INTO schema_migrations (filename) VALUES ('$name')"
+                applied=$((applied + 1))
+              done
+              echo "MIGRATIONS COMPLETE: $applied applied, $skipped already present"
+          volumeMounts:
+            - { name: migrations, mountPath: /migrations, readOnly: true }
+      volumes:
+        - name: migrations
+          configMap: { name: ofb-migrations }
