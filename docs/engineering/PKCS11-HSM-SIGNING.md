@@ -1,12 +1,14 @@
-# PKCS#11 / HSM signing: scoped
+# PKCS#11 / HSM signing
 
-What a hardware security module backend actually is, what it would do
-for this platform, what it would *not* do despite how it's usually
-pitched, and the concrete increment of work to build it.
+What a hardware security module backend is, what it does for this
+platform, what it does *not* do despite how it's usually pitched, and
+how to run it.
 
-**Status: scoped, not started.** Written because it was asked for by
-name. Nothing in this document has been built; every code reference
-below is to what exists today, not to anything new.
+**Status: built (Claim A below), tested against SoftHSM2 in CI.** Not yet
+run against a physical HSM or a cloud HSM — see §7 for exactly what that
+leaves open. §1–3 are the reasoning, unchanged from the scoping; §4
+onwards describes what was built, including where it deliberately
+departs from the scope.
 
 ---
 
@@ -141,246 +143,214 @@ replace threshold signing for customers who use `mpc-party`; the two
 paths stay independent, which is a design property worth keeping rather
 than something to unify prematurely.
 
-## 4. Where this actually plugs in, and why it's narrower than it looks
+## 4. What was built
 
-The obvious guess — that `s.privKeyHex` gets threaded through a couple
-of call sites in `main.go` — is wrong, and it's worth showing the real
-shape because it changes both the interface and the honest scope of
-what "Ethereum, Bitcoin, Solana, Cosmos" means for hardware signing.
+```
+services/mpc-signer/
+  keys/keys.go            KeySigner interface, RawKeySigner, RecoverableSignature
+  keys/pkcs11.go          PKCS11Signer, GeneratePKCS11Key       (//go:build pkcs11)
+  keys/pkcs11_stub.go     the same names, refusing              (//go:build !pkcs11)
+  keys/pkcs11_config.go   HSM_PKCS11_* parsing, in both builds
+  chains/keysigned.go     SignMessageWithKey (ETH, BTC, Cosmos),
+                          SignTransactionInputWithKey (BTC P2PKH),
+                          SignerRouter.SignMultiChainWithKey
+  keysource.go            chooses hardware or software at startup
+  cmd/hsm-key             generate / show the key on the token
+```
 
-`chains.SignerRouter.SignMultiChain` (`services/mpc-signer/chains/router.go:26`)
-dispatches by chain to one of four `ChainSigner` implementations
-(`chains/ethereum.go`, `chains/bitcoin.go`, `chains/solana.go`,
-`chains/cosmos.go`), all satisfying one interface
-(`services/mpc-signer/chains/types.go:19`):
+**The interface** is one operation, the one every signer here actually
+needed:
 
 ```go
-type ChainSigner interface {
-	SignMessage(ctx context.Context, messageHash []byte, privKey string) (*Signature, error)
-	// ...
+type KeySigner interface {
+	PublicKey() []byte                                           // 0x04 || X || Y
+	SignDigest(ctx context.Context, digest []byte) ([]byte, error) // [R || S || V], low S, V in {0,1}
+	Describe() string                                            // "PKCS#11 key "treasury" on token ..."
 }
 ```
 
-Every implementation is handed the same raw hex (or, for Solana,
-hex-or-base58) private key **on every call** and independently parses
-it: `ethcrypto.HexToECDSA` for Ethereum and Cosmos,
-`decodeBitcoinPrivKey` into a `btcec.PrivateKey` for Bitcoin,
-`solanaPrivateKey` into an `ed25519.PrivateKey` for Solana. None of them
-hold key state; the router is effectively stateless and re-derives the
-key from a string every signing call.
+`MPCSigner` (the `/sign` Ethereum path) now holds a `KeySigner` instead
+of an `*ecdsa.PrivateKey`. Software mode wraps the same key it always
+did in `RawKeySigner`; nothing about that path changed.
 
-That's actually the good news for this scope: it means the real
-interface change is **one method signature**, not four independent call
-sites doing unrelated things. `SignMessage`'s `privKey string` parameter
-becomes a `Signer`, and each implementation stops parsing hex and starts
-calling `Sign` on whatever it was handed.
+**The fiddly part — turning a token's bare `R || S` into something a
+chain accepts — lives in exactly one function**, `RecoverableSignature`:
 
-**The genuine complication is the curve, not the plumbing.** Ethereum,
-Bitcoin and Cosmos are all secp256k1 here — three different signature
-*encodings* (Ethereum's `[R||S||V]`, Bitcoin's DER-or-compact via
-`btcec`, Cosmos's own convention) over the same curve, which a
-PKCS#11-backed secp256k1 signer can serve uniformly: sign the digest,
-re-encode per chain, same as the software path does today. **Solana is
-Ed25519**, a different curve family, signing the raw message rather
-than a hash of it (`chains/solana.go`'s own comment is explicit about
-this). PKCS#11 v3.0 added standard Ed25519 mechanisms
-(`CKM_EDDSA`); PKCS#11 v2.40 — what a meaningful share of deployed HSMs
-and cloud HSM services still speak — did not, and even where a
-mechanism exists, vendor firmware support for it is inconsistent enough
-that it has to be checked per target device rather than assumed.
+- **Low S.** ECDSA is malleable; Ethereum (EIP-2) and Bitcoin (BIP-62/146)
+  reject the high-S twin. An HSM picks whichever S its arithmetic lands on,
+  about half the time the one every node refuses. It is folded here.
+- **The recovery id.** PKCS#11 has nowhere to report V. Both candidates
+  are tried and the one that recovers the expected public key is kept —
+  and if *neither* does, the token signed with a different key from the
+  one it reported, and the signature is refused rather than returned.
 
-So: **scope the secp256k1 path (Ethereum, Bitcoin, Cosmos) as the
-buildable increment. Treat Solana/Ed25519-over-PKCS#11 as a per-vendor
-question to answer when a specific HSM is in hand**, not a blocking
-unknown for this estimate. A customer who needs Solana in hardware today
-gets an honest "confirm your HSM speaks `CKM_EDDSA`" rather than a
-silent gap.
+**The PKCS#11 signer refuses to start** unless all of these hold:
+exactly one private and one public key object carry the label (no
+guessing between duplicates); the curve is secp256k1; the private key is
+`CKA_SENSITIVE` and not `CKA_EXTRACTABLE` (a key the token will hand out
+isn't a hardware key in any sense that matters); and a self-test
+signature at startup recovers to the public key, which catches two key
+pairs sharing a label or a public object left behind by a rotation. On a
+lost session (HSM restart, network HSM drop) it reconnects once, and
+refuses to continue if the key under the label changed while it was
+away.
 
-```go
-// services/mpc-signer/signer.go — new.
+### Where the build departs from the scope, and why
 
-// Signer produces a secp256k1 signature over a pre-hashed digest for a
-// key it controls, without necessarily exposing that key. Deliberately
-// this narrow: it's the one operation every backend (raw key, PKCS#11,
-// someday a cloud KMS) implements identically, and per-chain signature
-// encoding stays exactly where it already lives -- in each ChainSigner.
-type Signer interface {
-	PublicKey() *ecdsa.PublicKey
-	SignDigest(ctx context.Context, digest [32]byte) ([]byte, error) // raw (r, s), no recovery id yet
-}
-```
+- **Added alongside `SignMessage`, not replacing its signature.** The
+  scope said change `ChainSigner.SignMessage(…, privKey string)` to take
+  a signer. The build adds `SignMessageWithKey` on the three secp256k1
+  chains instead. Two reasons: Solana (Ed25519) can't implement it and
+  would have been dragged into a change it has no part in; and keeping
+  the raw-key methods untouched makes them an oracle. For the same key
+  and message, the new methods are tested **byte-identical** to the old
+  ones across 21 keys × 3 chains, and Bitcoin spends signed through the
+  new path are byte-identical *and* pass btcd's script engine with
+  standard verification flags (low S, strict DER).
+- **Solana is refused, not quietly signed in software.** In hardware
+  mode `/sign-multi-chain` answers Solana requests with an error naming
+  the chain. A deployment configured for hardware signing believes its
+  keys are in hardware; signing one chain with a software key would make
+  that false without telling anyone.
+- **The service never creates a key.** A mistyped `HSM_PKCS11_KEY_LABEL`
+  would otherwise mint a new key on first start, and the first anyone
+  would hear of it is a deposit sent to the old address. `hsm-key
+  generate` creates it, once, and refuses if the label exists.
+- **Hardware signatures are not byte-identical to software ones.** The
+  scoping implied they could be. They can't: the software path is RFC
+  6979 deterministic, and `CKM_ECDSA` on most tokens (SoftHSM included)
+  uses a random nonce. Both are valid ECDSA. Tests check what a chain
+  checks — verifies, low S, recovers to the right sender — and that an
+  imported known key gives the same address in hardware as in software.
+- **HSM mode refuses a software key alongside it.** `VAULT_ADDR` or
+  `MPC_SIGNER_PRIVATE_KEY` set together with `HSM_PKCS11_*` is fatal at
+  startup, and the chart refuses to render it. Not because the software
+  key would be used — it wouldn't — but because a deployment carrying
+  both is one where somebody believes the key is in hardware while a key
+  sits in Vault.
+- **`distroless/cc`, not `distroless/base`.** Vendor PKCS#11 modules
+  commonly link libstdc++; `cc` carries it and still has no shell or
+  package manager.
 
-Two implementations satisfy it: the existing raw-key path, extracted
-rather than rewritten, and the new PKCS#11 path.
-
-```go
-// services/mpc-signer/signer.go — existing parsing logic, same math,
-// now behind Signer instead of being the only option each ChainSigner
-// duplicates.
-type rawKeySigner struct{ privKey *ecdsa.PrivateKey }
-
-// services/mpc-signer/pkcs11_signer.go — new.
-type pkcs11Signer struct {
-	ctx      *pkcs11.Ctx // github.com/miekg/pkcs11
-	session  pkcs11.SessionHandle
-	keyLabel string
-	pub      *ecdsa.PublicKey // cached at construction; PKCS#11 exposes this cheaply
-}
-
-func (s *pkcs11Signer) SignDigest(ctx context.Context, digest [32]byte) ([]byte, error) {
-	// C_SignInit + C_Sign against the token-resident private key,
-	// mechanism CKM_ECDSA. The digest is pre-hashed on our side --
-	// PKCS#11's CKM_ECDSA mechanism signs exactly 32 bytes, it does not
-	// hash for you, which is correct since Ethereum's hash (Keccak-256)
-	// is not what a generic HSM mechanism would apply anyway.
-	//
-	// PKCS#11 returns a raw (r, s) pair, not Ethereum's compact
-	// [R||S||V] form -- V (the recovery id) has to be computed on our
-	// side by trying both candidate recovery values against the known
-	// public key, since the token does not report it. This is the one
-	// genuinely fiddly part of the implementation and needs a test
-	// vector, not just a happy-path check.
-}
-```
-
-`ResolveSigningKey` becomes `ResolveSigner`, returning a `Signer`
-instead of a hex string; it picks the PKCS#11 path when
-`HSM_PKCS11_LIBRARY` (and the label/PIN env vars below) are set, and
-falls back to the existing Vault-or-generate path otherwise — matching
-this codebase's established convention of an env-var-gated fallback
-that fails loudly on partial configuration rather than silently picking
-the weaker path (see `services/mpc-party/authorizer.go`'s
-`AuthorizerFromEnv` for the pattern this should copy: a config knob
-that's either fully off or fully validated at startup, never
-half-configured and permissive).
-
-`main.go:134`'s `s.signerRouter.SignMultiChain(ctx, signReq,
-s.privKeyHex)` passes the resolved `Signer` through instead of the raw
-hex string; `SignMultiChain` (`chains/router.go:26`) passes it straight
-to whichever `ChainSigner.SignMessage` it dispatches to, same as it
-passes the string today. `EthereumSigner`, `BitcoinSigner` and
-`CosmosSigner` each replace their `HexToECDSA`-or-equivalent parsing
-with a call to `Signer.SignDigest` and keep their existing per-chain
-encoding of the result unchanged. `SolanaSigner` is untouched by this
-scope — see §2's curve caveat — and keeps taking a raw key exactly as
-it does now, so a deployment with no Ed25519-capable HSM loses nothing
-it has today.
-
-## 5. Configuration
+## 5. Running it
 
 ```
-HSM_PKCS11_LIBRARY   # path to the vendor's .so, e.g. /usr/lib/softhsm/libsofthsm2.so
-HSM_PKCS11_SLOT       # numeric slot id, or HSM_PKCS11_TOKEN_LABEL to look it up by label
-HSM_PKCS11_PIN        # the token's user PIN — a secret, mounted the same way
-                      # VAULT_TOKEN is: never a plain env var in the chart, always
-                      # a Secret volume or secretKeyRef, matching the precedent
-                      # ceremonyAuthorizer.keySecret already set in this chart
-HSM_PKCS11_KEY_LABEL  # which key pair on the token to use
+HSM_PKCS11_LIBRARY      vendor module path inside the container
+HSM_PKCS11_TOKEN_LABEL  token by label (preferred; slot numbers can move) ...
+HSM_PKCS11_SLOT         ... or by slot number — exactly one of the two
+HSM_PKCS11_PIN          user PIN; in the chart always a secretKeyRef
+HSM_PKCS11_KEY_LABEL    the key pair's CKA_LABEL
 ```
 
-Same posture as `CEREMONY_AUTHORIZER_PUBKEY` and Vault's own
-`VAULT_ADDR`: absent means the feature is off and the existing behaviour
-is unchanged; present-but-broken (library won't load, PIN rejected, key
-label not found) is `log.Fatalf` at startup, not a fallback to the
-software key. A deployment that believes its key is in hardware and
-isn't is a worse failure than one that knows it configured nothing.
+None set: software mode, unchanged. All set: hardware mode. Anything in
+between — or any of them handed to the default cgo-free image — is a
+startup failure that names what to fix, never a fallback.
 
-## 6. What this costs the build, and why it's contained
+**Build:** `docker build --target pkcs11 services/mpc-signer` (cgo,
+`distroless/cc`, ships `mpc-signer` and `hsm-key`). The default target
+is unchanged: static, cgo-free.
 
-**Every Dockerfile in this repository builds `CGO_ENABLED=0`** — 12 of
-12, checked directly. That's deliberate: it's what makes
-`gcr.io/distroless/static` possible, which is what satisfies this
-chart's `readOnlyRootFilesystem` / `runAsNonRoot` posture with no
-package manager and no shell in the running image (see
-`services/policy-service/Dockerfile`'s own comment on exactly this).
+**Chart** (`mpcSigner.hsm` in `values.yaml`):
 
-PKCS#11 breaks that, unavoidably. `miekg/pkcs11` (the only mature,
-actively used Go PKCS#11 binding) works by `dlopen`-ing the vendor's
-`.so` at runtime via cgo — there is no pure-Go PKCS#11 client, because
-PKCS#11 is a C ABI and the vendor library is the only thing that speaks
-to the actual hardware or cloud HSM endpoint. This is not a library
-choice this project can route around.
+```yaml
+mpcSigner:
+  hsm:
+    enabled: true
+    library: /opt/cloudhsm/lib/libcloudhsm_pkcs11.so
+    tokenLabel: hsm1
+    keyLabel: treasury
+    pinSecret: openfireblocks-secrets   # key: hsm-pkcs11-pin
+    volumes: [...]        # the vendor's module and its client config
+    volumeMounts: [...]
+```
 
-The containment: **this changes `services/mpc-signer`'s Dockerfile
-only**, not the other 11. It becomes `CGO_ENABLED=1`, built against a
-base image with `libc` (not distroless-static — distroless has a
-`:base` variant with glibc but no package manager, which still works
-for a cgo binary that only needs `libdl`/`libc`, so it stays close to
-the existing security posture rather than jumping to a full Debian
-image). The vendor's PKCS#11 `.so` — or SoftHSM2's, for anything that
-isn't real hardware — has to be present in the image or mounted in,
-which is itself vendor-specific and belongs in that vendor's own
-deployment doc, not this one.
+The image tag defaults to `<tag>-pkcs11`. The vendor module is mounted,
+not baked in: it's licensed, versioned and configured by the vendor.
 
-Everything downstream of this service — the chart, the other services,
-CI's `go mod why` LGPL gate — is unaffected. `mpc-party`'s threshold
-ceremonies do not import this package and are not rebuilt differently.
+**First key:**
 
-## 7. Testing, without a real HSM
+```
+kubectl exec deploy/<release>-mpc-signer -- hsm-key generate
+kubectl exec deploy/<release>-mpc-signer -- hsm-key show
+curl .../address     # {"address": "0x…", "keySource": "PKCS#11 key \"treasury\" on token \"hsm1\", …"}
+```
 
-[SoftHSM2](https://github.com/opensc/SoftHSM2) is a software PKCS#11
-token used industry-wide for exactly this: it speaks the real PKCS#11
-protocol against a real `miekg/pkcs11` client, so a test against it
-exercises the actual `pkcs11Signer` code path — the same argument this
-repository already made for why `services/mpc-party/vault_fake_test.go`
-exists instead of every Vault-touching test skipping everywhere. It is
-not a mock; it's a different implementation of the same standard,
-running in software.
+`keySource` is how an operator confirms from outside the pod that a
+hardware deployment is actually signing in hardware.
 
-CI adds one job: install `softhsm2` + `libsofthsm2`, initialize a
-token, generate a test EC keypair on it, run
-`services/mpc-signer/pkcs11_signer_test.go` against it — sign a known
-digest, verify the signature against the public key PKCS#11 reports,
-confirm the recovery-id computation picks the right one of the two
-candidates. That last part is the one piece of this whole feature most
-likely to have a subtle bug, so it gets the most explicit test coverage,
-the same way this repository's Ethereum signature work already pins 25
-golden signature vectors rather than trusting one happy-path test (see
-`docs/engineering/GO-ETHEREUM-REMOVAL.md`).
+**Moving an existing software key into the HSM** is possible (the signer
+accepts an imported key if it is sensitive and non-extractable) but not
+recommended: the key existed in plaintext before it was imported, and
+the HSM can't make that untrue. Generate a new key on the token and move
+funds to its address.
 
-Real hardware or a cloud HSM (CloudHSM, Cloud HSM, Managed HSM) gets
-exercised only by whichever customer deploys against one — the same
-posture `stripe_live_test.go` already takes toward real Stripe: proven
-against the standard in CI, proven against the real thing only where a
-credential for the real thing exists, and the gap between those two
-stated rather than implied.
+## 6. How it's tested
 
-## 8. What is explicitly out of scope here
+`go test -tags pkcs11` against SoftHSM2 — the real PKCS#11 protocol
+through the real `miekg/pkcs11` client, not a mock. The CI job
+`hsm-pkcs11` sets `REQUIRE_SOFTHSM=1` so a runner without SoftHSM fails
+instead of skipping. What's covered:
+
+- a key generated on the token signs 64 digests, every one low-S and
+  recovering to the token's public key;
+- the private key's value cannot be read off the token;
+- an imported known key has the same Ethereum address in hardware as in
+  software, and hardware signatures verify under the software key;
+- refusals: extractable key, missing key (and opening doesn't create
+  one), duplicate labels, public/private mismatch, second `generate`
+  over an existing label, wrong PIN (and the error never contains it),
+  unknown token, non-32-byte digest;
+- 8 goroutines × 25 signatures on one session;
+- every session on the token closed underneath the signer — it
+  reconnects and signs with the same key;
+- end to end: all three chains through `SignMultiChainWithKey`, a
+  two-input Bitcoin spend accepted by the script engine, and the service
+  in hardware mode signing legacy and EIP-1559 Ethereum transactions,
+  reporting `keySource`, and refusing Solana;
+- in the default build: HSM configuration is refused with instructions
+  to use the pkcs11 build; partial configuration is refused naming what
+  is missing; the chart refuses HSM mode with Vault, without a key label,
+  or with both token label and slot, and accepts slot 0.
+
+Also run by hand here: the `pkcs11` service binary against a SoftHSM
+token, `POST /sign` returning a signed Sepolia transaction from the
+hardware key over HTTP.
+
+## 7. What is not proven
+
+- **A physical or cloud HSM.** SoftHSM proves this code speaks PKCS#11
+  correctly. It can't prove a given vendor's quirks. The first
+  deployment against real hardware should run `hsm-key generate`, `hsm-key
+  show`, and one testnet transaction before anything else. Things that
+  vary by vendor and are handled but unverified on hardware: secp256k1
+  support (CloudHSM, Luna and YubiHSM 2 all document it; confirm on the
+  specific firmware), `CKA_EC_POINT` as DER vs bare point (both
+  accepted), `CKA_EC_PARAMS` exposed only on the public half (handled).
+- **The Docker images.** The `pkcs11` target has not been built in this
+  environment (no container runtime); the CI job builds it and checks
+  the default image refuses HSM mode.
+- **FIPS validation.** That is a property of the HSM, not of this code.
+  Running against a FIPS 140-3 Level 3 device in FIPS mode is what a
+  customer's compliance team will ask about; this code doesn't change
+  it either way.
+
+## 8. What is out of scope
 
 - **Threshold shares inside an HSM.** Not possible with PKCS#11; see
-  §2, Claim B. If this is what's actually wanted, the scoping work
-  needed is an SGX/Nitro enclave port of the ceremony code, which is a
-  different document and a much larger estimate.
+  §2, Claim B. The route there is an SGX/Nitro enclave port of the
+  ceremony code — a different, much larger project.
 - **HSM-backed Vault auto-unseal.** Likely a Vault Enterprise licensing
   question rather than code this repository writes — confirm before
   committing to it.
-- **Touching `services/mpc-party` at all.** Zero changes to any
-  ceremony, any curve, any drill. This is additive to `mpc-signer`'s
-  existing single-key path only.
-- **Key generation policy** (does the HSM generate the keypair, or is
-  an existing key imported into it) — vendor- and compliance-dependent,
-  belongs in the eventual customer-facing runbook, not this scope.
-- **Solana / Ed25519 signing on the HSM.** `SolanaSigner` keeps taking a
-  raw key under this scope; see §2 and §4. Revisit per target vendor.
+- **`services/mpc-party`.** Zero changes to any ceremony, curve or
+  drill.
+- **Solana / Ed25519 on the HSM.** Refused in hardware mode (§4). Needs
+  `CKM_EDDSA` (PKCS#11 v3.0) on the target device; revisit per vendor.
 
-## 9. Estimate and sequencing
+## 9. Where this sits
 
-**~1–2 weeks** for the `Signer` interface, the PKCS#11 implementation,
-rewiring `EthereumSigner`/`BitcoinSigner`/`CosmosSigner` off raw-hex
-parsing and onto it, the SoftHSM2 CI job, and the golden-vector-style
-recovery-id tests. This is firmer than a first guess would be, because
-§4 above is the actual read of `chains/router.go` and every
-`ChainSigner` implementation, not an assumption about them — the one
-real unknown going in (how many places independently touch the raw key)
-turned out to be answerable by reading four files, and the answer is
-"one interface method, three of four implementations."
-
-Where it sits against everything else already queued, unchanged from
-`docs/LAUNCH-THESIS.md`: **not the blocker.** Party isolation is the one
-item standing between here and real money and costs nothing but
-deployment time; the cryptographic review has the longest lead time and
-should be commissioned regardless of what else happens. This item is
-real, buildable, and closes a documented gap — but it answers a question
-("can our signing key live in hardware") that, per that same document,
-no design partner has asked yet. Build it when one does, or now if
-there's a specific reason to have the answer ready before being asked.
+Unchanged from `docs/LAUNCH-THESIS.md`: **not the blocker.** Party
+isolation is what stands between here and real money. This closes a
+documented gap — "can our signing key live in hardware" now has the
+answer "yes, for the single-key path on secp256k1 chains, with a
+PKCS#11 HSM you supply" — before a design partner has asked.

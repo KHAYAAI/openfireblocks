@@ -150,7 +150,8 @@ being true.
 | **Payment collection** | `billing/collect.go`; invoices were raised on a schedule and never charged. Idempotent, bounded, and every attempt leaves a row |
 | Fail-closed policy on *decoded* ERC-20 content | `erc20.ts` + `token_limits.rego`; 18 Go tests in `policy-service` |
 | Durable settlement orchestration | 92 Go tests in `services/temporal-worker` |
-| Signing and broadcast, legacy and EIP-1559 | 128 Go tests in `services/mpc-signer` |
+| Signing and broadcast, legacy and EIP-1559 | 145 Go tests in `services/mpc-signer` (159 with `-tags pkcs11`) |
+| **Signing key in an HSM** (single-key path, secp256k1) | `mpc-signer/keys/pkcs11.go`; CI job `hsm-pkcs11` runs against SoftHSM2 with `REQUIRE_SOFTHSM=1`; key not readable off the token, hardware-signed Bitcoin spend passes btcd's script engine. `docs/engineering/PKCS11-HSM-SIGNING.md` |
 | Multi-tenant API, RLS, audit trail | 214 specs in `services/api-gateway` |
 | Compliance dashboard | `src/dashboard/*` — the thing that makes this usable by someone who will not use curl |
 | No copyleft dependency | `go mod why` gate in CI across four modules |
@@ -208,9 +209,16 @@ trains people to re-run rather than look. The verifier is now
    disclosed since v2.0.0. That is a cryptographer's job. Budget
    $40k–$80k; it has the longest lead time of anything on this list and
    should be commissioned before it is needed.
-3. **No hardware isolation.** Shares live in process memory and are sealed
-   in Vault at rest. Host root reads a live share. This is what PKCS#11
-   support is eventually for.
+3. **No hardware isolation for threshold shares.** Shares live in process
+   memory and are sealed in Vault at rest. Host root reads a live share.
+   PKCS#11 cannot fix this — a ceremony does arithmetic on the share every
+   round, and PKCS#11 has no operation for it; the fix is running the
+   parties in SGX or Nitro enclaves. What *is* now in hardware is the
+   **single-key** signing path: `mpc-signer` can hold its key in any
+   PKCS#11 HSM, generated on the token and non-extractable. That answers
+   "can a signing key live in hardware" for a customer who needs FIPS
+   hardware and not a threshold; it does not answer it for the threshold
+   path, and must not be sold as if it did.
 4. **SOC 2 Type II.** A year from first control, and the reason banks are
    third in the sequence rather than first.
 
@@ -246,6 +254,15 @@ trains people to re-run rather than look. The verifier is now
   `currency` silently charges in the account default. Whether Stripe
   *accepts a charge* still needs `stripe_live_test.go` and a test-mode
   key.
+- **HSM signing has never touched a real HSM.** It is proven against
+  SoftHSM2 — the real PKCS#11 protocol through the real client library,
+  including the service binary signing a Sepolia transaction from a
+  token-held key over HTTP. Vendor quirks (secp256k1 on specific
+  firmware, attribute encodings) are handled but unverified on hardware,
+  and the `--target pkcs11` image is built only in CI, since this
+  environment has no container runtime. The first real deployment runs
+  `hsm-key generate`, `hsm-key show` and one testnet transaction before
+  anything else.
 - **`docs/PHASE3-BACKUP-RECOVERY-PROCEDURES.md` is partly a target
   design**, and says so in its own banner. Key recovery is real and
   drilled; the surrounding infrastructure backup story is not all built.

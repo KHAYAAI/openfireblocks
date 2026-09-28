@@ -14,7 +14,8 @@ actually in this repository.
 > **Status.** Real threshold ECDSA and EdDSA signing (`bnb-chain/tss-lib`),
 > proven over genuine multi-process HTTP transport — not a single shared
 > key. Proactive key refresh, sender-bound party messages, mutual TLS,
-> optional ceremony co-signing, and a recovery procedure that is executed
+> optional ceremony co-signing, HSM-held keys for the single-key signer,
+> and a recovery procedure that is executed
 > against real processes and a real Vault in CI, not just described. Fully
 > tested end to end with real HTTP, a real database, and (where the
 > environment allows it) a real Kubernetes cluster. **Not yet cleared for
@@ -60,6 +61,14 @@ actually in this repository.
   publication (`services/policy-service/cmd/ofac-sync`) rather than a
   list baked into the binary, and the service refuses to evaluate once
   that list is too stale to mean anything.
+- **A signing key in hardware, when the customer requires it.** The
+  single-key signer can keep its key inside any PKCS#11 HSM (CloudHSM,
+  Luna, YubiHSM): generated on the token, non-extractable, signing there
+  for Ethereum, Bitcoin and Cosmos. It refuses to start on an extractable
+  key, a mismatched key pair, or a software key configured alongside it.
+  This is the single-key path only — threshold shares can't live in a
+  PKCS#11 HSM, and the docs say why. See
+  [`docs/engineering/PKCS11-HSM-SIGNING.md`](docs/engineering/PKCS11-HSM-SIGNING.md).
 - **Durable settlement orchestration** (policy → sign → broadcast →
   monitor, with an approval gate) on Temporal, so a transfer cannot be
   lost halfway.
@@ -79,7 +88,7 @@ actually in this repository.
 openfireblocks/
 ├── services/
 │   ├── mpc-party/          # Go: real multi-process tss-lib DKG, signing, resharing, recovery
-│   ├── mpc-signer/         # Go: Ethereum/Bitcoin signing, Vault keys, audit, metrics
+│   ├── mpc-signer/         # Go: ETH/BTC/Cosmos/Solana signing; keys in Vault or a PKCS#11 HSM
 │   ├── api-gateway/        # NestJS: auth, multi-tenancy, policy checks, orchestration
 │   ├── policy-service/     # Go + OPA/Rego: amount/whitelist/approval/geo/sanctions policy
 │   ├── temporal-worker/    # Go: durable settlement workflow + ceremony orchestration
@@ -167,9 +176,11 @@ it always reports `simulated`, which is deployment work, not research.
 how this platform drives `tss-lib` (not commissioned yet — see
 [`docs/security/TSS-LIB-ADVISORY-REVIEW.md`](docs/security/TSS-LIB-ADVISORY-REVIEW.md)
 for what a from-the-source review already established and what still
-needs an outside firm), hardware key isolation (PKCS#11 support does not
-exist yet — shares live in process memory, sealed in Vault at rest), and
-SOC 2 Type II.
+needs an outside firm), hardware isolation for the threshold shares
+(they live in process memory, sealed in Vault at rest; PKCS#11 can't
+hold them — that needs SGX/Nitro enclaves), and SOC 2 Type II. The
+single-key signer *can* already keep its key in a PKCS#11 HSM; that's
+tested against SoftHSM2 in CI but hasn't yet run on physical hardware.
 
 Also see the
 [technical and commercial comparison against Fireblocks, Metaco and
@@ -181,6 +192,7 @@ Taurus](docs/COMPETITIVE-ANALYSIS.md) and
 - [Launch thesis and readiness](docs/LAUNCH-THESIS.md) — the argument and the evidence, kept separate
 - [Platform overview](docs/PLATFORM-OVERVIEW.md) · [Architecture](docs/architecture.md)
 - [Key recovery procedure](docs/deployment/KEY-RECOVERY.md) · [Party isolation](docs/deployment/PARTY-ISOLATION.md)
+- [HSM signing over PKCS#11](docs/engineering/PKCS11-HSM-SIGNING.md) — what it does, what it can't do, how to run it
 - [tss-lib dependency review](docs/security/TSS-LIB-ADVISORY-REVIEW.md) · [Threat model](docs/security/threat-model.md) · [Audit checklist](docs/security/audit-checklist.md)
 - [API reference](docs/api.md) · [Policies (OPA)](docs/policies.md) · [Deployment](docs/deployment.md)
 - [Competitive analysis](docs/COMPETITIVE-ANALYSIS.md) · [Commercial model](docs/COMMERCIAL-MODEL.md)
