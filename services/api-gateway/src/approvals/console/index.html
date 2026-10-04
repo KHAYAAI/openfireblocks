@@ -3,22 +3,23 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#0f1115">
-<title>OpenFireblocks Approvals</title>
+<meta name="theme-color" content="#E8E4DC">
+<title>OpenFireblocks</title>
 <link rel="manifest" href="/console/manifest.webmanifest">
 <link rel="icon" href="/console/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/console/icon.svg">
 <link rel="stylesheet" href="/console/console.css">
 </head>
 <body>
-<header class="bar">
-  <div class="brand">OpenFireblocks <span>Approvals</span></div>
-  <div class="who" id="who"></div>
-</header>
-<main id="app" aria-live="polite">
-  <p class="muted">Loading…</p>
-</main>
-<noscript><p class="notice">The approval console needs JavaScript.</p></noscript>
+<div id="root" aria-live="polite">
+  <div class="auth-shell"><p class="muted">Loading…</p></div>
+</div>
+<noscript><p style="padding:24px;font:14px sans-serif">The OpenFireblocks console needs JavaScript.</p></noscript>
+<!-- app.js first: it defines window.OFB synchronously before views.js's
+     top-level `var el = OFB.el` (etc.) runs. Swapping this order makes
+     every view throw at parse time, silently, because window.OFBViews
+     then never gets assigned. -->
 <script src="/console/app.js"></script>
+<script src="/console/views.js"></script>
 </body>
 </html>

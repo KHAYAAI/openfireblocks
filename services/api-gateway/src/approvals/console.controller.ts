@@ -12,6 +12,7 @@ import { join } from 'path';
 
 const FILES: Record<string, string> = {
   'app.js': 'application/javascript; charset=utf-8',
+  'views.js': 'application/javascript; charset=utf-8',
   'console.css': 'text/css; charset=utf-8',
   'icon.svg': 'image/svg+xml',
   'manifest.webmanifest': 'application/manifest+json',

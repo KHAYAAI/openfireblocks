@@ -2,7 +2,9 @@ import { Module } from '@nestjs/common';
 import { DatabaseModule } from '../database/database.module';
 import { CustomersModule } from '../customers/customers.module';
 import { KeysModule } from '../keys/keys.module';
+import { ApprovalsModule } from '../approvals/approvals.module';
 import { DashboardController } from './dashboard.controller';
+import { OrgDashboardController } from './org-dashboard.controller';
 import { DashboardService } from './dashboard.service';
 
 // A web console, served by the API gateway itself.
@@ -18,8 +20,8 @@ import { DashboardService } from './dashboard.service';
 // implementation would be a second thing that can disagree about what a
 // customer holds.
 @Module({
-  imports: [DatabaseModule, CustomersModule, KeysModule],
-  controllers: [DashboardController],
+  imports: [DatabaseModule, CustomersModule, KeysModule, ApprovalsModule],
+  controllers: [DashboardController, OrgDashboardController],
   providers: [DashboardService],
 })
 export class DashboardModule {}

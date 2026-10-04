@@ -1,10 +1,10 @@
 {
-  "name": "OpenFireblocks Approvals",
-  "short_name": "Approvals",
+  "name": "OpenFireblocks",
+  "short_name": "OpenFireblocks",
   "start_url": "/console",
   "scope": "/console",
   "display": "standalone",
-  "background_color": "#0f1115",
-  "theme_color": "#0f1115",
+  "background_color": "#E8E4DC",
+  "theme_color": "#E8E4DC",
   "icons": [{ "src": "/console/icon.svg", "sizes": "any", "type": "image/svg+xml" }]
 }
