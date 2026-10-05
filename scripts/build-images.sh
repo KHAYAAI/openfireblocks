@@ -29,8 +29,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 #
 # Not built here: services/ceremony-orchestrator, which does not compile and
 # whose responsibilities are already covered by temporal-worker's
-# DKGCeremonyWorkflow; and services/backup, which is a scheduled job rather
-# than a chart workload. See docs/deployment/CLUSTER-DEPLOYMENT.md.
+# DKGCeremonyWorkflow. See docs/deployment/CLUSTER-DEPLOYMENT.md.
 SERVICES=(
   api-gateway
   mpc-party
@@ -45,6 +44,7 @@ SERVICES=(
   settlement
   policy
   compliance
+  backup
 )
 
 # So other scripts can ask what the list is rather than keeping their own

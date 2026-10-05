@@ -89,9 +89,24 @@ func main() {
 	mux.HandleFunc("/dr/failover/status", srv.handleFailoverStatus)
 
 	port := getenv("PORT", "8088")
+	// Authenticated: see auth.go. The unauthenticated escape hatch is for a
+	// developer's laptop and is refused in production.
+	token := os.Getenv("BACKUP_API_TOKEN")
+	allowOpen := os.Getenv("BACKUP_ALLOW_UNAUTHENTICATED") == "true"
+	if allowOpen {
+		for _, k := range []string{"APP_ENV", "ENVIRONMENT"} {
+			if v := os.Getenv(k); v == "production" || v == "prod" {
+				log.Fatalf("BACKUP_ALLOW_UNAUTHENTICATED is set in a production environment (%s); refusing to start", k)
+			}
+		}
+		log.Printf("WARNING: BACKUP_ALLOW_UNAUTHENTICATED is set; /restore and /dr/failover are open")
+	}
+	if token == "" && !allowOpen {
+		log.Printf("BACKUP_API_TOKEN is not set: every route but /health will answer 503")
+	}
 	httpSrv := &http.Server{
 		Addr:              ":" + port,
-		Handler:           mux,
+		Handler:           requireToken(mux, token, allowOpen),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	log.Printf("backup service listening on :%s (dump dir: %s)", port, dumpDir)

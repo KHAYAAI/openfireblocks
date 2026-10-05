@@ -450,3 +450,33 @@ ingress:
 
 serviceMonitor:
   enabled: false # set true if the Prometheus Operator is installed
+
+# Backups: services/backup, with a volume for the dumps and a scheduled full
+# backup. Off by default because it needs a secret holding "backup-api-token"
+# (without it the service refuses every route but /health) and a storage class.
+#
+# The dumps land on a volume in THIS cluster. That protects against a bad
+# deploy or an operator mistake; it does not protect against losing the
+# cluster. Use a storage class whose volumes are snapshotted into another
+# failure domain until an off-cluster backend exists.
+#
+# Restores and failover are POSTs to this service with the bearer token; they
+# are never exposed outside the cluster. Only Postgres failover is
+# implemented -- see services/backup/disaster_recovery.go.
+backup:
+  enabled: false
+  image: backup
+  tag: latest
+  port: 8088
+  apiTokenSecret: openfireblocks-secrets # secret holding key "backup-api-token"
+  standbyDatabaseUrlSecret: "" # secret holding "standby-database-url", enables Postgres failover
+  storage:
+    size: 50Gi
+    className: ""
+  schedule:
+    enabled: true
+    cron: "17 2 * * *" # daily, off the hour
+    image: curlimages/curl:8.10.1
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { cpu: "1", memory: 512Mi }
