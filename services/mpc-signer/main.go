@@ -281,6 +281,12 @@ func main() {
 	router.HandleFunc("/solana/prepare", s.handleSolanaPrepare).Methods(http.MethodPost)
 	router.HandleFunc("/solana/finalize", s.handleSolanaFinalize).Methods(http.MethodPost)
 	router.HandleFunc("/solana/status", s.handleSolanaStatus).Methods(http.MethodGet)
+	// Cosmos SDK chains: bank sends in SIGN_MODE_DIRECT -- see cosmos_http.go.
+	router.HandleFunc("/cosmos/addresses", s.handleCosmosAddresses).Methods(http.MethodGet)
+	router.HandleFunc("/cosmos/balance", s.handleCosmosBalance).Methods(http.MethodGet)
+	router.HandleFunc("/cosmos/prepare", s.handleCosmosPrepare).Methods(http.MethodPost)
+	router.HandleFunc("/cosmos/finalize", s.handleCosmosFinalize).Methods(http.MethodPost)
+	router.HandleFunc("/cosmos/status", s.handleCosmosStatus).Methods(http.MethodGet)
 	router.HandleFunc("/health", handleHealth).Methods(http.MethodGet)
 	router.Handle("/metrics", promhttp.Handler()).Methods(http.MethodGet)
 

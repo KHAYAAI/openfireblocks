@@ -31,12 +31,18 @@ const DefaultCosmosPrefix = "cosmos"
 // type alias; bech32 from btcutil (already a dependency here) does the job
 // without a multi-hundred-megabyte dependency tree that would additionally
 // have forced a Go toolchain upgrade.
-type CosmosSigner struct{}
-
-// NewCosmosSigner creates a new Cosmos signer.
-func NewCosmosSigner() ChainSigner {
-	return &CosmosSigner{}
+type CosmosSigner struct {
+	node *CosmosNode
 }
+
+// NewCosmosSigner creates a new Cosmos signer, with a node client when
+// COSMOS_LCD_URL is set.
+func NewCosmosSigner() ChainSigner {
+	return &CosmosSigner{node: NewCosmosNodeFromEnv()}
+}
+
+// Node returns the configured node client, or nil.
+func (c *CosmosSigner) Node() *CosmosNode { return c.node }
 
 // SignMessage signs a 32-byte message hash with secp256k1.
 //
@@ -188,11 +194,17 @@ func (c *CosmosSigner) BuildTransaction(ctx context.Context, txData interface{})
 	return hash[:], nil
 }
 
-// BroadcastTransaction is not implemented: it needs a Cosmos RPC/LCD
-// endpoint this service is not configured with. Failing loudly beats a stub
-// that claims success.
+// BroadcastTransaction relays a TxRaw (see AssembleCosmosTx) through the
+// configured node and returns its transaction hash.
 func (c *CosmosSigner) BroadcastTransaction(ctx context.Context, signedTx []byte) (string, error) {
-	return "", fmt.Errorf("broadcasting not implemented for Cosmos: no RPC endpoint is configured")
+	if c.node == nil {
+		return "", fmt.Errorf("no Cosmos node is configured (set COSMOS_LCD_URL)")
+	}
+	res, err := c.node.Broadcast(ctx, signedTx)
+	if err != nil {
+		return "", err
+	}
+	return res.TxHash, nil
 }
 
 func strip0x(s string) string {
