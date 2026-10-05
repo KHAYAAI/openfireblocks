@@ -186,6 +186,10 @@ func (a *Activities) ExecuteRealDKG(ctx context.Context, req workflows.DKGCeremo
 	}
 }
 
+// maxSigningMessageBytes bounds what a signing ceremony will take. A Solana
+// transaction is capped at 1232 bytes by the network packet size.
+const maxSigningMessageBytes = 4096
+
 // ExecuteRealSigning drives a real threshold signing ceremony across
 // req.PartyIDs (the committee) via mpc-party's /tss/sign/* endpoints,
 // replacing RequestSignatures' "not implemented" stub. signID is derived
@@ -206,8 +210,14 @@ func (a *Activities) ExecuteRealSigning(ctx context.Context, req workflows.Thres
 	if err != nil {
 		return nil, fmt.Errorf("message must be hex-encoded: %w", err)
 	}
-	if len(messageHash) != 32 {
-		return nil, fmt.Errorf("message hash must be 32 bytes, got %d", len(messageHash))
+	// Not required to be 32 bytes here. ECDSA signs a 32-byte digest and
+	// nothing else, but Ed25519 signs the message itself -- a Solana
+	// transaction is a few hundred bytes -- and this activity does not know
+	// the key's curve. The party does, and refuses a wrong-length digest for
+	// a secp256k1 key (tss_signing.go StartSigning). Requiring 32 here made
+	// every Solana transaction unsignable. The bound is only a sanity limit.
+	if len(messageHash) == 0 || len(messageHash) > maxSigningMessageBytes {
+		return nil, fmt.Errorf("message must be between 1 and %d bytes, got %d", maxSigningMessageBytes, len(messageHash))
 	}
 
 	signIDSum := sha256.Sum256(append([]byte(req.CeremonyID+":"), messageHash...))

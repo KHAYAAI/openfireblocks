@@ -20,6 +20,8 @@ import { ThresholdSignRequestDto } from './dto/threshold-sign.dto';
 import { SignTransactionDto } from './dto/sign-transaction.dto';
 import { BitcoinTransactionDto } from './dto/bitcoin-transaction.dto';
 import { TokenTransferDto } from './dto/token-transfer.dto';
+import { SolanaTransactionDto } from './dto/solana-transaction.dto';
+import { CosmosTransactionDto } from './dto/cosmos-transaction.dto';
 
 @Controller('keys')
 @UseGuards(ApiKeyGuard)
@@ -127,13 +129,19 @@ export class KeysController {
   async getBalances(
     @CurrentCustomer() customer: Customer,
     @Param('keyId') keyId: string,
-    @Query('chainId') chainId: string,
+    @Query('chainId') chainId?: string,
+    @Query('denom') denom?: string,
   ) {
-    const parsed = Number(chainId);
-    if (!Number.isInteger(parsed) || parsed < 1) {
-      throw new BadRequestException('chainId is required and must be a positive integer');
+    // Optional because a Solana or Cosmos key has no EVM chain id; the
+    // service insists on it for an EVM key.
+    let parsed: number | undefined;
+    if (chainId !== undefined) {
+      parsed = Number(chainId);
+      if (!Number.isInteger(parsed) || parsed < 1) {
+        throw new BadRequestException('chainId must be a positive integer');
+      }
     }
-    return this.keysService.getBalances(customer, keyId, parsed);
+    return this.keysService.getBalancesForKey(customer, keyId, parsed, denom);
   }
 
   // Send Bitcoin from a threshold key.
@@ -153,6 +161,46 @@ export class KeysController {
     @Body() req: BitcoinTransactionDto,
   ) {
     return this.keysService.sendBitcoin(customer, keyId, req);
+  }
+
+  // Send SOL from a threshold Ed25519 key. See KeysService.sendSolana.
+  @Post(':keyId/solana-transactions')
+  @HttpCode(HttpStatus.OK)
+  async sendSolana(
+    @CurrentCustomer() customer: Customer,
+    @Param('keyId') keyId: string,
+    @Body() req: SolanaTransactionDto,
+  ) {
+    return this.keysService.sendSolana(customer, keyId, req);
+  }
+
+  @Get(':keyId/solana-transactions/:signature')
+  async solanaStatus(
+    @CurrentCustomer() customer: Customer,
+    @Param('keyId') keyId: string,
+    @Param('signature') signature: string,
+  ) {
+    return this.keysService.solanaTransactionStatus(customer, keyId, signature);
+  }
+
+  // Send a bank denomination on a Cosmos SDK chain. See KeysService.sendCosmos.
+  @Post(':keyId/cosmos-transactions')
+  @HttpCode(HttpStatus.OK)
+  async sendCosmos(
+    @CurrentCustomer() customer: Customer,
+    @Param('keyId') keyId: string,
+    @Body() req: CosmosTransactionDto,
+  ) {
+    return this.keysService.sendCosmos(customer, keyId, req);
+  }
+
+  @Get(':keyId/cosmos-transactions/:txhash')
+  async cosmosStatus(
+    @CurrentCustomer() customer: Customer,
+    @Param('keyId') keyId: string,
+    @Param('txhash') txhash: string,
+  ) {
+    return this.keysService.cosmosTransactionStatus(customer, keyId, txhash);
   }
 
   @Get()

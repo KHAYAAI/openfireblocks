@@ -15,6 +15,9 @@ import { PolicyService } from '../policies/policy.service';
 import { ThresholdSignRequestDto } from './dto/threshold-sign.dto';
 import { SignTransactionDto } from './dto/sign-transaction.dto';
 import { BitcoinTransactionDto } from './dto/bitcoin-transaction.dto';
+import { SolanaTransactionDto } from './dto/solana-transaction.dto';
+import { CosmosTransactionDto } from './dto/cosmos-transaction.dto';
+import { ChainSignerClient } from './chain-signer-client';
 import {
   BitcoinSignerClient,
   SignerError,
@@ -28,6 +31,7 @@ import {
   assembleSignedTransaction,
   buildUnsignedTransaction,
 } from './eth-transaction';
+import { createHash } from 'crypto';
 import { v4 as uuidv4, v5 as uuidv5 } from 'uuid';
 import {
   Erc20Call,
@@ -105,11 +109,52 @@ export function stableUuid(requestId: string): string {
     : uuidv5(requestId, REQUEST_ID_NAMESPACE);
 }
 
+// Blockchains whose keys are secp256k1 keys with an Ethereum address, which
+// is what the EVM transaction builder produces signatures for.
+const EVM_BLOCKCHAINS = new Set(['ethereum', 'polygon']);
+
+// Opaque chain discriminators the policy engine and Travel Rule records carry
+// for non-EVM chains, which have no EVM chain id. SLIP-44 coin types, so they
+// are stable and recognisable; Bitcoin keeps its historical 0.
+const NATIVE_CHAINS = {
+  solana: { chainId: 501, decimals: 9 },
+  cosmos: { chainId: 118, decimals: 6 },
+} as const;
+
+// Policy thresholds are written in wei. A non-EVM amount is scaled to the
+// same 18 decimals so that "10" means ten whole coins on every chain instead
+// of ten smallest units.
+function toPolicyUnits(amount: string, decimals: number): string {
+  if (!/^[0-9]+$/.test(amount) || decimals < 0 || decimals > 18) {
+    throw new BadRequestException('amount must be a non-negative integer in base units');
+  }
+  return (BigInt(amount) * 10n ** BigInt(18 - decimals)).toString();
+}
+
+// What the audit row and idempotency check hold for a message. Digests are
+// 64 hex characters and stored as-is; anything longer is stored by SHA-256.
+function recordedDigest(messageHex: string): string {
+  if (messageHex.length <= 128) return messageHex;
+  return createHash('sha256').update(Buffer.from(messageHex, 'hex')).digest('hex');
+}
+
+function nativeIntent(symbol: string, decimals: number, to: string, amount: string): TransferIntent {
+  return {
+    policyTo: to,
+    asset: symbol,
+    assetAmount: amount,
+    assetDecimals: decimals,
+    effectiveTo: to,
+    effectiveAmount: amount,
+  };
+}
+
 @Injectable()
 export class KeysService {
   private readonly logger = new Logger(KeysService.name);
 
   private readonly bitcoin = new BitcoinSignerClient();
+  private readonly chainSigner = new ChainSignerClient();
 
   constructor(
     private readonly postgres: PostgresService,
@@ -487,6 +532,7 @@ export class KeysService {
     const requestId = req.idempotencyKey ?? uuidv4();
 
     const key = await this.loadSignableKey(keyId, customer.customer_id);
+    this.requireEvmKey(key, keyId, 'builds and signs an EVM transaction');
 
     // Built BEFORE the policy call, deliberately: a request that cannot
     // produce a valid transaction should be rejected as malformed rather
@@ -640,7 +686,7 @@ export class KeysService {
     }
 
     const key = await this.loadSignableKey(keyId, customer.customer_id);
-    if (key.blockchain === 'bitcoin' || key.blockchain === 'solana') {
+    if (!EVM_BLOCKCHAINS.has(key.blockchain)) {
       throw new BadRequestException(
         `key ${keyId} is a ${key.blockchain} key; this route sends ERC-20 tokens on EVM chains`,
       );
@@ -890,6 +936,21 @@ export class KeysService {
       );
     }
 
+    if (key.blockchain === 'solana' || key.blockchain === 'cosmos') {
+      // Derived by the signer from the public key rather than read from the
+      // row, so the address a customer funds is by construction the address
+      // that signs -- including for a key created before addresses were
+      // written per chain.
+      try {
+        const derived =
+          key.blockchain === 'solana'
+            ? await this.chainSigner.solanaAddress(key.public_key)
+            : await this.chainSigner.cosmosAddress(key.public_key);
+        return { key_id: keyId, blockchain: key.blockchain, addresses: { preferred: derived.address } };
+      } catch (err) {
+        throw this.translateSignerError(err, `deriving the ${key.blockchain} address`);
+      }
+    }
     if (key.blockchain !== 'bitcoin') {
       // Ethereum and every EVM chain share one address, already recorded
       // when the ceremony finished.
@@ -1062,9 +1123,12 @@ export class KeysService {
     // should not cost a UTXO scan. chainId 0 because Bitcoin has no chain
     // id -- the field is EVM-shaped and the policy engine treats it as an
     // opaque discriminator.
+    // In 18-decimal units, like every other chain. The policy thresholds are
+    // written in wei, and handing it satoshis made 1 BTC look like 1e-10 ETH:
+    // no amount limit or approval rule could ever fire on a Bitcoin spend.
     await this.enforcePolicy(customer, requestId, {
       to: req.destination,
-      value: req.amount,
+      value: toPolicyUnits(req.amount, 8),
       chainId: 0,
       country: req.country,
     });
@@ -1158,6 +1222,306 @@ export class KeysService {
       parties: parties[0] ?? [],
       threshold: key.threshold,
     };
+  }
+
+  // Pre-flight shared by the non-EVM native spends: policy and Travel Rule,
+  // both evaluated on the amount the signer is about to put in the bytes.
+  //
+  // Amounts reach policy in 18-decimal units (see toPolicyUnits), so a limit
+  // written as "10" means ten whole coins on every chain. That is not
+  // price-aware -- ten SOL and ten ETH are very different sums -- but it is
+  // the only comparison that is not off by orders of magnitude, and it errs
+  // towards asking for approval where SOL is the cheaper coin.
+  private async governNativeSpend(
+    customer: Customer,
+    requestId: string,
+    chain: { chainId: number; decimals: number },
+    fromAddress: string,
+    to: string,
+    amount: string,
+    country: string | undefined,
+    travelRule: TravelRuleInput | undefined,
+  ): Promise<string | null> {
+    const normalised = toPolicyUnits(amount, chain.decimals);
+    await this.enforcePolicy(customer, requestId, {
+      to,
+      value: normalised,
+      chainId: chain.chainId,
+      country,
+      asset: 'NATIVE',
+      assetAmount: normalised,
+      assetDecimals: 18,
+    });
+    return this.travelRuleBeforeSigning(
+      customer,
+      requestId,
+      chain.chainId,
+      fromAddress,
+      to,
+      { asset: 'NATIVE', amount: normalised, decimals: 18 },
+      travelRule,
+    );
+  }
+
+  // Sends SOL from a threshold Ed25519 key.
+  //
+  // Same shape as sendBitcoin: policy, then the signer prepares (and refuses
+  // overdrafts, rent violations and unfunded destinations before any
+  // ceremony), then one threshold ceremony over the message, then the signer
+  // verifies the signature against the fee payer and relays. SPL tokens are
+  // not offered.
+  async sendSolana(customer: Customer, keyId: string, req: SolanaTransactionDto) {
+    const requestId = req.idempotencyKey ?? uuidv4();
+    const key = await this.loadSignableKey(keyId, customer.customer_id);
+    if (key.blockchain !== 'solana') {
+      throw new BadRequestException(`key ${keyId} is a ${key.blockchain} key; this route spends SOL`);
+    }
+    if (!key.public_key) {
+      throw new ConflictException(`key ${keyId} has no public key recorded`);
+    }
+
+    // Derived from the public key by the signer, not read from the row: the
+    // address a customer funds and the address that signs have to be the
+    // same, and one implementation deciding is how they stay the same.
+    let from: string;
+    try {
+      from = (await this.chainSigner.solanaAddress(key.public_key)).address;
+    } catch (err) {
+      throw this.translateSignerError(err, 'deriving the Solana address');
+    }
+
+    const travelRecord = await this.governNativeSpend(
+      customer, requestId, NATIVE_CHAINS.solana, from, req.destination, req.amount, req.country, req.travelRule,
+    );
+
+    let prepared;
+    try {
+      prepared = await this.chainSigner.solanaPrepare({
+        pubkey_hex: key.public_key, destination: req.destination, amount: req.amount,
+      });
+    } catch (err) {
+      throw this.translateSignerError(err, 'preparing the Solana transaction');
+    }
+
+    const signed = await this.runSigningCeremony(
+      key, keyId, customer.customer_id, requestId, prepared.message_hex,
+    );
+    const signature = signed.signature.replace(/^0x/, '');
+    if (signature.length !== 128) {
+      throw new ServiceUnavailableException(
+        `the ceremony returned a ${signature.length / 2}-byte signature; an Ed25519 signature is 64 bytes`,
+      );
+    }
+
+    let finalized;
+    try {
+      finalized = await this.chainSigner.solanaFinalize({
+        message_hex: prepared.message_hex, signature_hex: signature, broadcast: req.broadcast ?? true,
+      });
+    } catch (err) {
+      throw this.translateSignerError(err, 'assembling the Solana transaction');
+    }
+
+    await this.recordTransfer(customer, requestId, NATIVE_CHAINS.solana.chainId, 'solana', {
+      to: req.destination, value: req.amount, data: null,
+      signedTx: finalized.raw_tx_base64, txHash: finalized.signature,
+      intent: nativeIntent('SOL', 9, req.destination, req.amount),
+    });
+    const travelRule = travelRecord
+      ? { record_id: travelRecord, ...(await this.travelRule!.completeAfterSigning(customer.customer_id, travelRecord, finalized.signature)) }
+      : undefined;
+
+    if (finalized.broadcast) {
+      this.announce(customer.customer_id, 'transaction.broadcast', {
+        key_id: keyId, blockchain: 'solana', signature: finalized.signature,
+        to: req.destination, amount: req.amount, fee: prepared.fee,
+      });
+    }
+    return {
+      travel_rule: travelRule,
+      request_id: requestId,
+      key_id: keyId,
+      from,
+      to: req.destination,
+      amount: req.amount,
+      asset: 'SOL',
+      decimals: 9,
+      fee: prepared.fee,
+      balance_before: prepared.balance,
+      blockhash: prepared.blockhash,
+      last_valid_block_height: prepared.last_valid_block_height,
+      signature: finalized.signature,
+      raw_transaction: finalized.raw_tx_base64,
+      broadcast: finalized.broadcast,
+      parties: signed.parties,
+      threshold: key.threshold,
+    };
+  }
+
+  async solanaTransactionStatus(customer: Customer, keyId: string, signature: string) {
+    await this.requireOwnedKey(customer, keyId);
+    try {
+      return await this.chainSigner.solanaStatus(signature);
+    } catch (err) {
+      throw this.translateSignerError(err, 'reading the Solana transaction status');
+    }
+  }
+
+  // Sends a bank denomination from a threshold secp256k1 key on a Cosmos SDK
+  // chain, in SIGN_MODE_DIRECT. One MsgSend; staking, IBC and CosmWasm are
+  // not offered.
+  async sendCosmos(customer: Customer, keyId: string, req: CosmosTransactionDto) {
+    const requestId = req.idempotencyKey ?? uuidv4();
+    const key = await this.loadSignableKey(keyId, customer.customer_id);
+    if (key.blockchain !== 'cosmos') {
+      throw new BadRequestException(`key ${keyId} is a ${key.blockchain} key; this route spends on a Cosmos chain`);
+    }
+    if (!key.public_key) {
+      throw new ConflictException(`key ${keyId} has no public key recorded`);
+    }
+
+    let from: string;
+    try {
+      from = (await this.chainSigner.cosmosAddress(key.public_key)).address;
+    } catch (err) {
+      throw this.translateSignerError(err, 'deriving the Cosmos address');
+    }
+
+    // Policy and Travel Rule see the amount in the chain's 18-decimal
+    // equivalent. Cosmos denominations are mostly 6-decimal; a non-native
+    // denom is governed the same way, which is conservative rather than
+    // priced.
+    const travelRecord = await this.governNativeSpend(
+      customer, requestId, NATIVE_CHAINS.cosmos, from, req.destination, req.amount, req.country, req.travelRule,
+    );
+
+    let prepared;
+    try {
+      prepared = await this.chainSigner.cosmosPrepare({
+        pubkey_hex: key.public_key, destination: req.destination, amount: req.amount,
+        denom: req.denom, memo: req.memo,
+      });
+    } catch (err) {
+      throw this.translateSignerError(err, 'preparing the Cosmos transaction');
+    }
+
+    const signed = await this.runSigningCeremony(
+      key, keyId, customer.customer_id, requestId, prepared.plan.digest_hex,
+    );
+    const { r, s } = splitSignature(signed.signature);
+
+    let finalized;
+    try {
+      finalized = await this.chainSigner.cosmosFinalize({
+        plan: prepared.plan, r, s, pubkey_hex: key.public_key, broadcast: req.broadcast ?? true,
+      });
+    } catch (err) {
+      throw this.translateSignerError(err, 'assembling the Cosmos transaction');
+    }
+
+    await this.recordTransfer(customer, requestId, NATIVE_CHAINS.cosmos.chainId, 'cosmos', {
+      to: req.destination, value: req.amount, data: null,
+      signedTx: finalized.raw_tx_base64, txHash: finalized.txhash,
+      intent: nativeIntent(prepared.denom, 6, req.destination, req.amount),
+    });
+    const travelRule = travelRecord
+      ? { record_id: travelRecord, ...(await this.travelRule!.completeAfterSigning(customer.customer_id, travelRecord, finalized.txhash)) }
+      : undefined;
+
+    if (finalized.broadcast) {
+      this.announce(customer.customer_id, 'transaction.broadcast', {
+        key_id: keyId, blockchain: 'cosmos', txhash: finalized.txhash,
+        to: req.destination, amount: req.amount, denom: prepared.denom, fee: prepared.fee,
+      });
+    }
+    return {
+      travel_rule: travelRule,
+      request_id: requestId,
+      key_id: keyId,
+      from,
+      to: req.destination,
+      amount: req.amount,
+      denom: prepared.denom,
+      fee: prepared.fee,
+      fee_denom: prepared.fee_denom,
+      gas_limit: prepared.gas_limit,
+      chain_id: prepared.plan.chain_id,
+      balance_before: prepared.balance,
+      txhash: finalized.txhash,
+      raw_transaction: finalized.raw_tx_base64,
+      broadcast: finalized.broadcast,
+      parties: signed.parties,
+      threshold: key.threshold,
+    };
+  }
+
+  async cosmosTransactionStatus(customer: Customer, keyId: string, txhash: string) {
+    await this.requireOwnedKey(customer, keyId);
+    try {
+      return await this.chainSigner.cosmosStatus(txhash);
+    } catch (err) {
+      throw this.translateSignerError(err, 'reading the Cosmos transaction status');
+    }
+  }
+
+  private async requireOwnedKey(customer: Customer, keyId: string) {
+    const key = await this.postgres.getKey(keyId, customer.customer_id);
+    if (!key) throw new NotFoundException(`no key ${keyId}`);
+    return key;
+  }
+
+  // The routes that build EVM transactions must not be handed another
+  // family's key. Without this a Solana or Cosmos key would have an Ethereum
+  // transaction built and hashed for it and signed -- a valid signature over
+  // something no chain will ever accept.
+  private requireEvmKey(key: { blockchain: string }, keyId: string, what: string) {
+    if (!EVM_BLOCKCHAINS.has(key.blockchain)) {
+      throw new BadRequestException(
+        `key ${keyId} is a ${key.blockchain} key; this route ${what}. ` +
+          `Use the ${key.blockchain}-specific route instead.`,
+      );
+    }
+  }
+
+  // What the balances route calls: an EVM key needs a chain id and returns
+  // native plus token balances; a Solana or Cosmos key has no EVM chain id and
+  // returns its native balance(s) through the signer.
+  async getBalancesForKey(customer: Customer, keyId: string, chainId?: number, denom?: string) {
+    const key = await this.requireOwnedKey(customer, keyId);
+    if (key.blockchain === 'solana' || key.blockchain === 'cosmos') {
+      if (!key.address) {
+        throw new ConflictException(`key ${keyId} is ${key.status}; it has no address until its DKG ceremony completes`);
+      }
+      return this.nativeChainBalance(key, keyId, denom);
+    }
+    if (chainId === undefined) {
+      throw new BadRequestException('chainId is required for an EVM key');
+    }
+    return this.getBalances(customer, keyId, chainId);
+  }
+
+  // Live balance for a Solana or Cosmos key, read through the signer so the
+  // address and the node client are the ones that sign and relay.
+  private async nativeChainBalance(
+    key: { blockchain: string; public_key: string },
+    keyId: string,
+    denom?: string,
+  ) {
+    if (!key.public_key) {
+      throw new ConflictException(`key ${keyId} has no public key recorded`);
+    }
+    try {
+      if (key.blockchain === 'solana') {
+        const { address } = await this.chainSigner.solanaAddress(key.public_key);
+        const b = await this.chainSigner.solanaBalance(address);
+        return { key_id: keyId, blockchain: 'solana', address, balances: [{ asset: 'SOL', amount: b.lamports, decimals: b.decimals }] };
+      }
+      const { address } = await this.chainSigner.cosmosAddress(key.public_key);
+      const b = await this.chainSigner.cosmosBalance(address, denom);
+      return { key_id: keyId, blockchain: 'cosmos', address, balances: [{ asset: b.denom, amount: b.amount, decimals: 6 }] };
+    } catch (err) {
+      throw this.translateSignerError(err, `reading the ${key.blockchain} balance`);
+    }
   }
 
   // Maps a signer failure onto the right HTTP status.
@@ -1347,12 +1711,17 @@ export class KeysService {
     // for a Bitcoin spend it is "<key>:input-2", one per ceremony. The
     // row's own request_id is a UUID column and a different thing, so the
     // two are kept apart rather than one being forced into the other.
+    // What the audit row and the idempotency check hold. A digest is 64 hex
+    // characters; a Solana message is several hundred bytes and does not fit
+    // the column, so those are recorded by their SHA-256 while the full
+    // message is still what gets signed and kept in transaction_data.
+    const recordedHash = recordedDigest(messageHash);
     const existing = await this.postgres.findSigningRequestByIdempotencyKey(
       customerId,
       requestId,
     );
     if (existing) {
-      if (existing.transaction_hash !== messageHash) {
+      if (existing.transaction_hash !== recordedHash) {
         throw new ConflictException(
           `idempotency key ${requestId} was already used for a different message; ` +
             'reusing it would return a signature over something else',
@@ -1388,7 +1757,7 @@ export class KeysService {
           customerId,
           keyId,
           blockchain: key.blockchain,
-          transactionHash: messageHash,
+          transactionHash: recordedHash,
           transactionData: Buffer.from(messageHash, 'hex'),
           idempotencyKey: requestId,
           workflowId: `threshold-sign-${requestId}`,

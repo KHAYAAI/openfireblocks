@@ -179,9 +179,22 @@ describe('KeysService.sendBitcoin', () => {
 
     await service.sendBitcoin(customer, 'key-1', { destination: DEST, amount: '50000' });
 
+    // 50,000 sats in 18-decimal units (x1e10), because the policy thresholds
+    // are written in wei. Passing satoshis through unscaled made 1 BTC look
+    // like 1e-10 ETH, so no limit or approval rule could ever fire.
     expect(policy.evaluate).toHaveBeenCalledWith(
-      expect.objectContaining({ to: DEST, value: '50000', customerId: 'cust-1' }),
+      expect.objectContaining({ to: DEST, value: '500000000000000', customerId: 'cust-1' }),
     );
+  });
+
+  it('presents ten bitcoin to policy as ten whole coins, so the high-value rule can fire', async () => {
+    mockSigner();
+    const { service, policy } = build();
+
+    await service.sendBitcoin(customer, 'key-1', { destination: DEST, amount: '1000000000' });
+
+    const value = (policy.evaluate as jest.Mock).mock.calls[0][0].value;
+    expect(BigInt(value)).toBe(10n * 10n ** 18n);
   });
 
   // The whole argument for this route over the raw-digest one: the platform
