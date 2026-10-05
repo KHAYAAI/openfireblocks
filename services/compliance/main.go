@@ -1,9 +1,11 @@
 package main
 
 import (
+	"encoding/json"
 	"log"
 	"net/http"
 	"os"
+	"time"
 )
 
 func main() {
@@ -15,7 +17,23 @@ func main() {
 
 	onfidoAPIKey := os.Getenv("ONFIDO_API_KEY")
 	onfido := NewOnfidoService(onfidoAPIKey, db)
-	kycaml := NewKYCAMLService(db)
+	sanctions, err := NewSanctionsListFromEnv(os.Getenv)
+	if err != nil {
+		log.Fatalf("sanctions configuration: %v", err)
+	}
+	if st := sanctions.Status(); st.Entries == 0 {
+		log.Printf("WARNING: no sanctions list loaded (SANCTIONS_FILE unset or unreadable); every screening check will refuse")
+	} else {
+		log.Printf("sanctions list: %d entries from %s, age %s %s", st.Entries, st.Source, st.Age, st.Warning)
+	}
+	reloadEvery := time.Hour
+	if v := os.Getenv("SANCTIONS_RELOAD_INTERVAL"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			reloadEvery = d
+		}
+	}
+	sanctions.StartReload(reloadEvery, make(chan struct{}), log.Printf)
+	kycaml := NewKYCAMLService(db, sanctions)
 	reports := NewComplianceReportService(db)
 	audits := NewAuditManager(db)
 	incidents := NewIncidentManager(db)
@@ -27,6 +45,11 @@ func main() {
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"status":"ok","service":"compliance"}`))
+	})
+
+	mux.HandleFunc("/v1/sanctions/status", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(sanctions.Status())
 	})
 
 	mux.HandleFunc("/v1/kyc/onfido/start", onfido.HandleKYCStart)

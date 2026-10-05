@@ -294,49 +294,31 @@ func (a *AMLChecker) countSuspiciousTransactions(ctx context.Context, customerID
 
 // OFACClient provides integration with OFAC sanctions lists
 type OFACClient struct {
-	baseURL string
-	apiKey  string
-	cache   map[string][]string
-	kvStore KVStore
+	list *SanctionsList
 }
 
-// NewOFACClient creates a new OFAC client
-func NewOFACClient(baseURL, apiKey string, kvStore KVStore) *OFACClient {
-	return &OFACClient{
-		baseURL: baseURL,
-		apiKey:  apiKey,
-		cache:   make(map[string][]string),
-		kvStore: kvStore,
-	}
+// NewOFACClient creates an OFAC client backed by a synced sanctions list.
+// A nil list refuses every check rather than passing it.
+func NewOFACClient(list *SanctionsList) *OFACClient {
+	return &OFACClient{list: list}
 }
 
-// CheckSDN checks if an address matches OFAC SDN (Specially Designated Nationals) list.
+// CheckSDN checks whether an address is on the OFAC SDN list, using the
+// synced list file (see sanctions_list.go).
 //
-// If no screening provider is configured (baseURL/apiKey empty), this
-// returns an error rather than an empty match list. An empty result here
-// means "not sanctioned" to every caller (see CheckAddress, which sets
-// AMLStatusClean on a nil error with zero matches) -- silently returning
-// that for every address just because no real provider is wired up would
-// make every AML check pass by default, the opposite of fail-safe for a
-// sanctions control. Wire in a real screening provider (e.g. Chainalysis,
-// ComplyAdvantage, TRM Labs) before deploying this to handle real funds.
+// An error means "screening unavailable" (not configured, unreadable, or
+// stale) and callers must block. It must never be read as "clean": CheckAddress
+// sets AMLStatusClean on a nil error with zero matches, so a silent empty
+// result here would make every AML check pass by default.
 func (o *OFACClient) CheckSDN(ctx context.Context, address string) ([]string, error) {
-	if o.baseURL == "" || o.apiKey == "" {
-		return nil, fmt.Errorf("OFAC/sanctions screening not configured: no provider baseURL/apiKey set")
+	hit, err := o.list.Check(address)
+	if err != nil {
+		return nil, err
 	}
-
-	// Check cache first so repeated screens of the same address within the
-	// TTL don't re-hit the (rate-limited, billed-per-call) provider.
-	if matches, exists := o.cache[address]; exists {
-		return matches, nil
+	if hit {
+		return []string{"OFAC SDN: designated digital currency address"}, nil
 	}
-
-	// TODO: call the configured screening provider's API here. Left
-	// unimplemented rather than guessing at a request/response shape for a
-	// vendor this codebase hasn't picked yet -- a fabricated call against an
-	// unverified contract would be exactly the kind of code that looks done
-	// but silently isn't.
-	return nil, fmt.Errorf("OFAC/sanctions screening provider configured but CheckSDN is not yet implemented")
+	return nil, nil
 }
 
 // Utility functions

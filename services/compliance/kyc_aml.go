@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -18,6 +20,7 @@ import (
 type KYCAMLService struct {
 	db           *PostgresDB
 	thirdparties map[string]ThirdPartyProvider
+	sanctions    *SanctionsList
 }
 
 // ThirdPartyProvider is an interface for KYC/AML service providers.
@@ -98,9 +101,10 @@ type ProviderStatus struct {
 }
 
 // NewKYCAMLService creates a new KYC/AML service.
-func NewKYCAMLService(db *PostgresDB) *KYCAMLService {
+func NewKYCAMLService(db *PostgresDB, sanctions *SanctionsList) *KYCAMLService {
 	return &KYCAMLService{
 		db:           db,
+		sanctions:    sanctions,
 		thirdparties: make(map[string]ThirdPartyProvider),
 	}
 }
@@ -221,29 +225,39 @@ func (k *KYCAMLService) VerifyTransaction(ctx context.Context, req *TransactionV
 	return assessment, nil
 }
 
-// ListRestrictedCountries returns a list of restricted/sanctioned countries.
+// defaultRestrictedCountries are the jurisdictions under comprehensive
+// US sanctions programmes. It is a floor, not a policy: a deployment's own
+// counsel decides the real list, supplied through RESTRICTED_COUNTRIES
+// (comma-separated ISO 3166-1 alpha-2 codes), which replaces this default.
+var defaultRestrictedCountries = []string{"KP", "IR", "SY", "CU"}
+
+// ListRestrictedCountries returns the restricted jurisdictions.
 func (k *KYCAMLService) ListRestrictedCountries(ctx context.Context) ([]string, error) {
-	// Typically loaded from external compliance databases
-	// This is a placeholder
-	return []string{
-		"KP", // North Korea
-		"IR", // Iran
-		"SY", // Syria
-		"CU", // Cuba
-	}, nil
+	return restrictedCountriesFromEnv(os.Getenv), nil
 }
 
-// CheckSanctionsList checks if an address is on a sanctions list.
-//
-// No sanctions data source is wired up in this service (that lives in
-// AMLChecker/OFACClient in aml_kyc.go, which has the same limitation --
-// see the comment there). This deliberately returns an error rather than
-// (true/false, nil): a stub that silently answered "false" would tell every
-// caller "not sanctioned" for every address, which is a false negative on a
-// control this platform's compliance posture depends on. Callers must treat
-// an error here as "screening unavailable" and block, not proceed.
+func restrictedCountriesFromEnv(getenv func(string) string) []string {
+	raw := strings.TrimSpace(getenv("RESTRICTED_COUNTRIES"))
+	if raw == "" {
+		return append([]string(nil), defaultRestrictedCountries...)
+	}
+	var out []string
+	for _, c := range strings.Split(raw, ",") {
+		if c = strings.ToUpper(strings.TrimSpace(c)); len(c) == 2 {
+			out = append(out, c)
+		}
+	}
+	if len(out) == 0 {
+		return append([]string(nil), defaultRestrictedCountries...)
+	}
+	return out
+}
+
+// CheckSanctionsList reports whether an address is designated, from the
+// synced list. A non-nil error means screening is unavailable and the caller
+// must block; (false, err) is never "clean".
 func (k *KYCAMLService) CheckSanctionsList(ctx context.Context, address, blockchain string) (bool, error) {
-	return false, fmt.Errorf("sanctions screening not configured: no OFAC/EU/UN list provider is wired up for KYCAMLService")
+	return k.sanctions.Check(address)
 }
 
 // HandleKYCVerification is the HTTP handler for customer verification.

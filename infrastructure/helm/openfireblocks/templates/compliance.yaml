@@ -20,6 +20,29 @@ spec:
       serviceAccountName: {{ include "ofb.fullname" . }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- if .Values.policyService.ofacSync.enabled }}
+      initContainers:
+        # Same feed and same binary as policy-service, so both screen against
+        # one list with one notion of freshness. The pod is not Ready until it
+        # has a list; a replica that cannot reach Treasury has no current
+        # screening and must not report healthy.
+        - name: ofac-sync
+          image: {{ include "ofb.image" (dict "root" . "image" .Values.policyService.image "tag" .Values.policyService.tag) }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          command: ["/usr/local/bin/ofac-sync"]
+          args:
+            - "--source={{ .Values.policyService.ofacSync.sourceUrl }}"
+            - "--out=/var/lib/openfireblocks/sanctions.json"
+            - "--min-addresses={{ .Values.policyService.ofacSync.minAddresses }}"
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          volumeMounts:
+            - name: sanctions
+              mountPath: /var/lib/openfireblocks
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits: { cpu: 500m, memory: 256Mi }
+      {{- end }}
       containers:
         - name: compliance
           image: {{ include "ofb.image" (dict "root" . "image" .Values.compliance.image "tag" .Values.compliance.tag) }}
@@ -48,6 +71,16 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.external.databaseAdminUrlSecret }}
                   key: database-admin-url
+            {{- if .Values.policyService.ofacSync.enabled }}
+            - name: SANCTIONS_FILE
+              value: /var/lib/openfireblocks/sanctions.json
+            - name: SANCTIONS_WARN_AFTER
+              value: {{ .Values.policyService.ofacSync.warnAfter | quote }}
+            - name: SANCTIONS_DENY_AFTER
+              value: {{ .Values.policyService.ofacSync.denyAfter | quote }}
+            - name: SANCTIONS_RELOAD_INTERVAL
+              value: {{ .Values.policyService.ofacSync.reloadInterval | quote }}
+            {{- end }}
           livenessProbe:
             httpGet: { path: /health, port: http }
             initialDelaySeconds: 3
@@ -58,6 +91,32 @@ spec:
             periodSeconds: 5
           resources:
             {{- toYaml .Values.compliance.resources | nindent 12 }}
+          {{- if .Values.policyService.ofacSync.enabled }}
+          volumeMounts:
+            - name: sanctions
+              mountPath: /var/lib/openfireblocks
+              readOnly: true
+        - name: ofac-refresh
+          image: {{ include "ofb.image" (dict "root" . "image" .Values.policyService.image "tag" .Values.policyService.tag) }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          command: ["/usr/local/bin/ofac-sync"]
+          args:
+            - "--source={{ .Values.policyService.ofacSync.sourceUrl }}"
+            - "--out=/var/lib/openfireblocks/sanctions.json"
+            - "--min-addresses={{ .Values.policyService.ofacSync.minAddresses }}"
+            - "--interval={{ .Values.policyService.ofacSync.refreshInterval }}"
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          volumeMounts:
+            - name: sanctions
+              mountPath: /var/lib/openfireblocks
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { cpu: 500m, memory: 256Mi }
+      volumes:
+        - name: sanctions
+          emptyDir: {}
+          {{- end }}
 ---
 apiVersion: v1
 kind: Service
