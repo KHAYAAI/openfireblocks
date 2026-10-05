@@ -8,6 +8,7 @@ import { MfaChallengesService } from './mfa-challenges.service';
 import { JwtAuthStrategy, jwtSecret } from './jwt.strategy';
 import { WorkosSsoController } from './workos-sso.controller';
 import { WorkosSsoService } from './workos-sso.service';
+import { OidcSsoService } from './oidc-sso.service';
 
 // Human dashboard identity: registration, password + TOTP MFA login,
 // enterprise SSO via WorkOS AuthKit, and the JWT strategy/guard other
@@ -28,7 +29,8 @@ import { WorkosSsoService } from './workos-sso.service';
     MfaChallengesService,
     JwtAuthStrategy,
     WorkosSsoService,
+    OidcSsoService,
   ],
-  exports: [AuthService, UsersService, WorkosSsoService],
+  exports: [AuthService, UsersService, WorkosSsoService, OidcSsoService],
 })
 export class IdentityModule {}

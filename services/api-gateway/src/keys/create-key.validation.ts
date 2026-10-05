@@ -20,4 +20,16 @@ export function validateCreateKey(req: CreateKeyRequest): void {
   if (req.threshold < 2 && req.total_parties > 1) {
     throw new BadRequestException('For multi-party keys, threshold must be >= 2');
   }
+  // A key with one party is one machine holding one key.
+  if (req.total_parties < 2 && process.env.ALLOW_SINGLE_PARTY_KEYS !== 'true') {
+    throw new BadRequestException('total_parties must be >= 2: a single-party key is not threshold custody');
+  }
+  // A majority must be needed to sign. With 2-of-5, any two compromised
+  // parties could spend, and the other three could not stop them; the
+  // same rule Mpcium enforces (t >= floor(n/2) + 1).
+  if (req.threshold < Math.floor(req.total_parties / 2) + 1) {
+    throw new BadRequestException(
+      `threshold ${req.threshold} is too low for ${req.total_parties} parties: a majority (at least ${Math.floor(req.total_parties / 2) + 1}) must be required to sign`,
+    );
+  }
 }

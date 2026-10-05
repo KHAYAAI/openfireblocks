@@ -182,6 +182,29 @@ spec:
               {{- else }}
               value: {{ printf "http://party-{id}:%d" (int .Values.mpcParty.port) | quote }}
               {{- end }}
+            {{- if .Values.oidc.enabled }}
+            # Sign-in through the customer's own OpenID Connect provider
+            # (services/api-gateway/src/identity/oidc-sso.service.ts).
+            - name: OIDC_ISSUER
+              value: {{ required "oidc.issuer is required when oidc.enabled" .Values.oidc.issuer | quote }}
+            - name: OIDC_CLIENT_ID
+              value: {{ required "oidc.clientId is required when oidc.enabled" .Values.oidc.clientId | quote }}
+            - name: OIDC_REDIRECT_URI
+              value: {{ required "oidc.redirectUri is required when oidc.enabled" .Values.oidc.redirectUri | quote }}
+            - name: OIDC_SCOPES
+              value: {{ .Values.oidc.scopes | quote }}
+            {{- if .Values.oidc.allowedEmailDomains }}
+            - name: OIDC_ALLOWED_EMAIL_DOMAINS
+              value: {{ .Values.oidc.allowedEmailDomains | quote }}
+            {{- end }}
+            {{- if .Values.oidc.clientSecretSecret }}
+            - name: OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.oidc.clientSecretSecret }}
+                  key: oidc-client-secret
+            {{- end }}
+            {{- end }}
             {{- if .Values.workos.enabled }}
             # Enterprise SSO via WorkOS AuthKit
             # (services/api-gateway/src/identity/workos-sso.service.ts).

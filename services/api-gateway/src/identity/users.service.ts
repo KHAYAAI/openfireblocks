@@ -72,6 +72,35 @@ export class UsersService {
     return result.rows[0] ?? null;
   }
 
+  async findByOidcIdentity(issuer: string, subject: string): Promise<User | null> {
+    const r = await this.pool.query(`SELECT * FROM users WHERE oidc_issuer = $1 AND oidc_subject = $2`, [issuer, subject]);
+    return r.rows[0] ?? null;
+  }
+
+  // Provisioned on first OIDC login (see OidcSsoService); no password.
+  async createOidcUser(input: { email: string; fullName: string; issuer: string; subject: string; role?: string }): Promise<User> {
+    const r = await this.pool.query(
+      `INSERT INTO users (email, full_name, role, auth_provider, oidc_issuer, oidc_subject)
+       VALUES ($1, $2, $3, 'oidc', $4, $5) RETURNING *`,
+      [input.email.toLowerCase(), input.fullName, input.role ?? 'user', input.issuer, input.subject],
+    );
+    return r.rows[0];
+  }
+
+  // Links an existing password account to an OIDC identity. The caller has
+  // established that this is safe (the provider verified the email). Only a
+  // password account is ever linked, and the row stays a password account
+  // until then: the CHECK constraint requires the identity pair to be whole.
+  async linkOidcIdentity(userId: string, issuer: string, subject: string): Promise<User> {
+    const r = await this.pool.query(
+      `UPDATE users SET oidc_issuer = $2, oidc_subject = $3, updated_at = now()
+       WHERE id = $1 AND oidc_issuer IS NULL RETURNING *`,
+      [userId, issuer, subject],
+    );
+    if (!r.rows[0]) throw new Error('account is already linked to an identity');
+    return r.rows[0];
+  }
+
   // Provisioned on first SSO login (see WorkosSsoService). No password is
   // set -- migration 015 makes password_hash nullable for exactly this, and
   // its CHECK constraint requires an SSO row to carry a workos_user_id.

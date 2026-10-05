@@ -19,7 +19,7 @@ export interface SsoLoginResult {
   user: PublicUser;
 }
 
-function toPublicUser(user: User): PublicUser {
+export function toPublicUser(user: User): PublicUser {
   return {
     id: user.id,
     email: user.email,

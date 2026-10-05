@@ -230,6 +230,8 @@
     return 'req-' + Date.now() + '-' + Math.random().toString(16).slice(2);
   }
 
+  function isSsoProvider(p) { return p === 'workos_sso' || p === 'oidc'; }
+
   function field(id, label, input) { return [el('label', { for: id, text: label }), input]; }
 
   function keyCreateForm(content) {
@@ -644,7 +646,7 @@
     if (initiatedByMe) return notice('You requested this transfer, so you cannot approve or reject it. Someone else must.');
     if (mine) return notice('You ' + (mine.decision === 'approve' ? 'approved' : 'rejected') + ' this. Waiting for others.', 'ok');
     if (!O.canDecide()) return notice('Your role (' + O.role() + ') can see approvals but not decide on them.');
-    var sso = O.state.me.authProvider === 'workos_sso';
+    var sso = isSsoProvider(O.state.me.authProvider);
     if (!sso && !O.state.me.mfaEnabled) return notice('Turn on two-factor authentication before approving or rejecting transfers.', 'error');
 
     var code = sso ? null : el('input', { inputmode: 'numeric', autocomplete: 'one-time-code', pattern: '[0-9]{6}', maxlength: '6', id: 'totp' });
@@ -792,7 +794,7 @@
         return el('tr', null, [
           el('td', null, [el('div', { text: m.fullName }), el('div', { className: 'muted mono', style: 'font-size:11.5px', text: m.email })]),
           el('td', null, [tag('info', m.role)]),
-          el('td', { className: 'muted hide-sm', text: m.authProvider === 'workos_sso' ? 'SSO' : (m.mfaEnabled ? '2FA on' : '2FA off') }),
+          el('td', { className: 'muted hide-sm', text: isSsoProvider(m.authProvider) ? 'SSO' : (m.mfaEnabled ? '2FA on' : '2FA off') }),
           el('td', null, [removeBtn]),
         ]);
       });

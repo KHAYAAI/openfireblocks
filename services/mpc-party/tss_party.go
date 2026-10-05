@@ -180,6 +180,17 @@ func (m *TSSPartyManager) startKeygen(ceremonyID string, threshold int, peers ma
 		return fmt.Errorf("peers map does not include this party's own id %d", m.partyID)
 	}
 
+	// A majority must be needed to sign. In tss-lib's terms `threshold` is t
+	// and t+1 parties sign, so t+1 must be at least floor(n/2)+1: with
+	// 2-of-5 any two compromised parties could spend and the other three
+	// could not stop them. The gateway refuses such keys too; this is the
+	// same rule enforced where the shares are actually made, because a
+	// compromised or buggy orchestrator is exactly what this service must
+	// not trust.
+	if n := len(peers); n >= 2 && threshold+1 < n/2+1 {
+		return fmt.Errorf("threshold %d (%d-of-%d) is not a majority: at least %d parties must be required to sign", threshold, threshold+1, n, n/2+1)
+	}
+
 	// Validated before anything starts. A ceremony on a curve this build
 	// does not know would otherwise run to completion and produce a share
 	// nothing can sign with -- discovered by a customer whose key never

@@ -111,7 +111,7 @@ export class ApprovalsController {
     @CurrentUser() claims: JwtClaims,
     @Body() dto: DecisionDto,
   ) {
-    const stepUp = await this.stepUp(claims.sub, dto.totpCode);
+    const stepUp = await this.stepUp(claims.sub, dto.totpCode, claims);
 
     const { request, alreadyRecorded } = await this.approvals.recordDecision({
       customerId,
@@ -190,10 +190,18 @@ export class ApprovalsController {
   // Password accounts prove presence with a fresh one-time code on each
   // decision. SSO accounts rely on the identity provider, which is where
   // an enterprise enforces its own MFA; the decision records which.
-  private async stepUp(userId: string, totpCode?: string): Promise<'totp' | 'sso'> {
+  private async stepUp(userId: string, totpCode?: string, claims?: JwtClaims & { iat?: number }): Promise<'totp' | 'sso'> {
     const user = await this.users.findById(userId);
     if (!user || user.status !== 'active') throw new UnauthorizedException();
-    if (user.auth_provider === 'workos_sso') return 'sso';
+    if (user.auth_provider === 'workos_sso' || user.auth_provider === 'oidc') {
+      // The identity provider vouched for this person when the session
+      // began, so a session hours old is not proof they are at the keyboard
+      // now. Deciding on a transfer needs a recent sign-in.
+      const maxAge = Number(process.env.SSO_STEP_UP_MAX_AGE_SECONDS ?? 900);
+      const age = claims?.iat ? Math.floor(Date.now() / 1000) - claims.iat : Number.POSITIVE_INFINITY;
+      if (!(age <= maxAge)) throw new UnauthorizedException('sign in again with your identity provider to decide on a transfer (your session is too old)');
+      return 'sso';
+    }
     if (!user.mfa_enabled || !user.mfa_secret) {
       throw new ForbiddenException('turn on two-factor authentication before approving or rejecting transfers');
     }

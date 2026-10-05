@@ -203,6 +203,8 @@
 
   // ------------------------------------------------------------- roles
 
+  function isSsoProvider(p) { return p === 'workos_sso' || p === 'oidc'; }
+
   function role() { return OFB.state.org ? OFB.state.org.role : null; }
   OFB.role = role;
   function isAdmin() { return role() === 'admin'; }
@@ -342,7 +344,7 @@
       el('div', { className: 'sidebar-foot' }, [
         el('div', { className: 'whoami' }, [
           el('div', { text: OFB.state.me.email }),
-          el('div', { className: 'role', text: OFB.state.me.authProvider === 'workos_sso' ? 'SSO' : (OFB.state.me.mfaEnabled ? '2FA on' : '2FA off') }),
+          el('div', { className: 'role', text: isSsoProvider(OFB.state.me.authProvider) ? 'SSO' : (OFB.state.me.mfaEnabled ? '2FA on' : '2FA off') }),
         ]),
         el('button', { type: 'button', className: 'ghost sm signout', text: 'Sign out', onclick: signOut }),
       ]),

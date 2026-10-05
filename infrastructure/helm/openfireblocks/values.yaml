@@ -435,6 +435,22 @@ compliance:
 # enabled:false rather than half-working. clientId is not a secret (it
 # appears in the authorization URL the browser is redirected to); the API
 # key is, and comes from a Secret.
+# Sign-in through the customer's own OpenID Connect provider (Keycloak,
+# Microsoft Entra ID, Okta, ...), with no third-party broker. Takes
+# precedence over workos when enabled. The gateway's redirect URI must be
+# registered with the provider as the console's /console/sso-callback.
+oidc:
+  enabled: false
+  issuer: ""            # e.g. https://id.bank.example/realms/treasury
+  clientId: ""
+  redirectUri: ""       # https://<console host>/console/sso-callback
+  scopes: "openid email profile"
+  # Optional: refuse sign-in from any other email domain.
+  allowedEmailDomains: ""
+  # Optional for a public client (PKCE is always used). Secret holding key
+  # "oidc-client-secret".
+  clientSecretSecret: ""
+
 workos:
   enabled: false
   # The OpenFireblocks WorkOS project's Staging environment
