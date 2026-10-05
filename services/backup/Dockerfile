@@ -27,12 +27,13 @@ FROM postgres:16-bookworm
 
 COPY --from=build /out/backup-server /usr/local/bin/backup-server
 
-# Not root. The data directory is a mounted volume the chart chowns via
-# fsGroup, so 65532 needs no write access to anything in the image.
+# Not root, and the same uid the chart runs every workload as (1000). The dump
+# directory is a mounted volume the chart makes group-writable via fsGroup, and
+# the root filesystem is read-only, so nothing in the image needs to be writable.
 RUN rm -rf /docker-entrypoint-initdb.d /var/lib/postgresql/data \
  && mkdir -p /var/lib/openfireblocks-backup \
- && chown 65532:65532 /var/lib/openfireblocks-backup
-USER 65532:65532
+ && chown 1000:1000 /var/lib/openfireblocks-backup
+USER 1000:1000
 
 ENV PORT=8088 BACKUP_DUMP_DIR=/var/lib/openfireblocks-backup
 EXPOSE 8088

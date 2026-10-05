@@ -116,12 +116,28 @@ jobs:
           context: ./services/${{ matrix.service }}
           file: ./services/${{ matrix.service }}/Dockerfile
           push: true
+          # One repository per service, tagged with the commit: the layout the
+          # chart and scripts/build-images.sh use (registry/<service>:<tag>).
+          # The repositories must exist before the first push.
           tags: |
-            ${{ secrets.ECR_REGISTRY }}/openfireblocks:${{ matrix.service }}-${{ github.sha }}
-            ${{ secrets.ECR_REGISTRY }}/openfireblocks:${{ matrix.service }}-latest
+            ${{ secrets.ECR_REGISTRY }}/${{ matrix.service }}:${{ github.sha }}
+            ${{ secrets.ECR_REGISTRY }}/${{ matrix.service }}:latest
           cache-from: type=gha,scope=${{ matrix.service }}
           cache-to: type=gha,mode=max,scope=${{ matrix.service }}
 
+  # Deploys with the Helm chart, because the chart is the documented runtime
+  # (docs/deployment). This pipeline used to update a single ECS service and
+  # then "shift traffic" with sleeps, which deployed one of thirteen services
+  # and did not shift anything. NEITHER the old path nor this one has run
+  # against a real cluster or AWS account: expect to fix the first run.
+  #
+  # Needs: a kubeconfig for each environment as a base64 secret
+  # (KUBE_CONFIG_STAGING, KUBE_CONFIG_PRODUCTION), ECR_REGISTRY, and the
+  # secrets the chart references already present in the cluster.
+  #
+  # --atomic rolls the release back if the upgrade does not become ready in
+  # time, which is the rollback this job has: Kubernetes' own rolling update
+  # replaces pods only as the new ones pass their readiness probes.
   deploy-staging:
     name: Deploy to Staging
     needs: build
@@ -131,165 +147,84 @@ jobs:
       url: https://staging.openfireblocks.io
     steps:
       - uses: actions/checkout@v4
-      
+
+      - uses: azure/setup-helm@v4
+
+      - name: Render the chart before touching the cluster
+        run: |
+          helm lint infrastructure/helm/openfireblocks
+          helm template ci infrastructure/helm/openfireblocks \
+            --set imageRegistry=${{ secrets.ECR_REGISTRY }} --set imageTag=${{ github.sha }} > /dev/null
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v2
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN_STAGING }}
           aws-region: us-east-1
-      
+
       - name: Run database migrations
         run: |
           AWS_REGION=us-east-1 make db-migrate-staging
-      
-      - name: Deploy to ECS
+
+      - name: Deploy the chart
         run: |
-          aws ecs update-service \
-            --cluster openfireblocks-staging \
-            --service api-gateway \
-            --force-new-deployment \
-            --region us-east-1
-      
-      - name: Wait for deployment
-        run: |
-          aws ecs wait services-stable \
-            --cluster openfireblocks-staging \
-            --services api-gateway \
-            --region us-east-1
-      
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBE_CONFIG_STAGING }}" | base64 -d > ~/.kube/config
+          chmod 600 ~/.kube/config
+          helm upgrade --install openfireblocks infrastructure/helm/openfireblocks \
+            --namespace openfireblocks --create-namespace \
+            --set imageRegistry=${{ secrets.ECR_REGISTRY }} \
+            --set imageTag=${{ github.sha }} \
+            --atomic --wait --timeout 15m
+
       - name: Run smoke tests
         run: make test-staging
         env:
           STAGING_URL: https://staging.openfireblocks.io
 
   deploy-production:
-    name: Deploy to Production (Blue-Green)
+    name: Deploy to Production
     needs: deploy-staging
     runs-on: ubuntu-latest
+    # The environment's required reviewers are the production approval gate.
     environment:
       name: production
       url: https://api.openfireblocks.io
     steps:
       - uses: actions/checkout@v4
-      
+
+      - uses: azure/setup-helm@v4
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v2
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN_PRODUCTION }}
           aws-region: us-east-1
-      
-      - name: Pre-deployment checks
+
+      - name: Record what is running now
         run: |
-          # Verify current version
-          CURRENT=$(aws ecs describe-services \
-            --cluster openfireblocks-prod \
-            --services api-gateway \
-            --query 'services[0].taskDefinition' \
-            --output text)
-          echo "Current version: $CURRENT"
-          
-          # Check service health
-          HEALTHY=$(aws ecs describe-services \
-            --cluster openfireblocks-prod \
-            --services api-gateway \
-            --query 'services[0].desiredCount' \
-            --output text)
-          echo "Healthy instances: $HEALTHY"
-      
-      - name: Create new task definition (Blue)
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBE_CONFIG_PRODUCTION }}" | base64 -d > ~/.kube/config
+          chmod 600 ~/.kube/config
+          helm status openfireblocks --namespace openfireblocks || echo "no existing release"
+          helm history openfireblocks --namespace openfireblocks --max 5 || true
+
+      - name: Deploy the chart
         run: |
-          # Register new task definition
-          aws ecs register-task-definition \
-            --cli-input-json file://task-definition-blue.json
-      
-      - name: Update service to new version (Blue)
-        run: |
-          aws ecs update-service \
-            --cluster openfireblocks-prod \
-            --service api-gateway \
-            --task-definition api-gateway:latest \
-            --region us-east-1
-      
-      - name: Monitor deployment
-        run: |
-          # Wait for 50% healthy
-          for i in {1..60}; do
-            RUNNING=$(aws ecs describe-services \
-              --cluster openfireblocks-prod \
-              --services api-gateway \
-              --query 'services[0].runningCount' \
-              --output text)
-            DESIRED=$(aws ecs describe-services \
-              --cluster openfireblocks-prod \
-              --services api-gateway \
-              --query 'services[0].desiredCount' \
-              --output text)
-            
-            if [ $RUNNING -ge $((DESIRED / 2)) ]; then
-              echo "Blue deployment healthy, proceeding with traffic shift..."
-              break
-            fi
-            
-            echo "Waiting for deployment... ($i/60)"
-            sleep 10
-          done
-      
-      - name: Shift traffic gradually
-        run: |
-          # Shift 25% traffic to new version
-          aws elbv2 modify-target-group \
-            --target-group-arn ${{ secrets.BLUE_TARGET_GROUP_ARN }} \
-            --health-check-interval-seconds 5
-          
-          sleep 300 # Monitor for 5 minutes
-          
-          # Shift 50% traffic
-          sleep 300
-          
-          # Shift 75% traffic
-          sleep 300
-          
-          # Shift 100% traffic
-          echo "Traffic fully shifted to new version"
-      
-      - name: Verify production stability
-        run: |
-          # Check error rates
-          ERROR_RATE=$(aws cloudwatch get-metric-statistics \
-            --namespace OpenFireblocks \
-            --metric-name ErrorRate \
-            --statistics Average \
-            --start-time $(date -u -d '5 minutes ago' +%Y-%m-%dT%H:%M:%S) \
-            --end-time $(date -u +%Y-%m-%dT%H:%M:%S) \
-            --period 60 \
-            --query 'Datapoints[0].Average' \
-            --output text)
-          
-          if (( $(echo "$ERROR_RATE > 1.0" | bc -l) )); then
-            echo "Error rate too high: $ERROR_RATE%, rolling back..."
-            aws ecs update-service \
-              --cluster openfireblocks-prod \
-              --service api-gateway \
-              --task-definition api-gateway:previous
-            exit 1
-          fi
-      
+          helm upgrade --install openfireblocks infrastructure/helm/openfireblocks \
+            --namespace openfireblocks --create-namespace \
+            --set imageRegistry=${{ secrets.ECR_REGISTRY }} \
+            --set imageTag=${{ github.sha }} \
+            --atomic --wait --timeout 20m
+
       - name: Send deployment notification
+        if: success()
         uses: slackapi/slack-github-action@v1.24.0
         with:
           webhook-url: ${{ secrets.SLACK_WEBHOOK }}
           payload: |
             {
-              "text": "🚀 Production deployment successful",
-              "blocks": [
-                {
-                  "type": "section",
-                  "text": {
-                    "type": "mrkdwn",
-                    "text": "*Production Deployment*\n*Status*: ✅ Successful\n*Version*: ${{ github.sha }}\n*Time*: ${{ job.container.network.created_at }}"
-                  }
-                }
-              ]
+              "text": "Production deployed: ${{ github.sha }}"
             }
 
   post-deployment:

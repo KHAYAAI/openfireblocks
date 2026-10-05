@@ -1,6 +1,9 @@
 # Default values for the OpenFireblocks chart.
 
 imageRegistry: openfireblocks
+# When set, every component uses this tag instead of its own. A release sets it
+# to the commit it built, so all images move together.
+imageTag: ""
 imagePullPolicy: IfNotPresent
 imagePullSecrets: []
 
@@ -380,6 +383,10 @@ billing:
     requests: { cpu: 100m, memory: 128Mi }
     limits: { cpu: 500m, memory: 256Mi }
   stripeApiKeySecret: openfireblocks-secrets # secret holding key "stripe-api-key"
+  apiTokenSecret: openfireblocks-secrets # secret holding key "billing-api-token"
+  # Comma-separated hosts a customer may be returned to after saving a card.
+  # Empty refuses every URL, which switches card collection off.
+  returnHosts: ""
 
 webhooks:
   enabled: true

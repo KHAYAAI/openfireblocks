@@ -106,13 +106,28 @@ func main() {
 	// stop invoices being raised -- see collect.go.
 	mux.HandleFunc("/v1/billing/collect", svc.HandleCollectPayments)
 	mux.HandleFunc("/v1/billing/stripe-customer", svc.HandleSetStripeCustomer)
+	// A Stripe-hosted page for a customer to save the card collection charges.
+	mux.HandleFunc("/v1/billing/card-session", svc.HandleCreateCardSession)
 
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8085"
 	}
+	token := os.Getenv("BILLING_API_TOKEN")
+	allowOpen := os.Getenv("BILLING_ALLOW_UNAUTHENTICATED") == "true"
+	if allowOpen {
+		for _, k := range []string{"APP_ENV", "ENVIRONMENT"} {
+			if v := os.Getenv(k); v == "production" || v == "prod" {
+				log.Fatalf("BILLING_ALLOW_UNAUTHENTICATED is set in a production environment (%s); refusing to start", k)
+			}
+		}
+		log.Printf("WARNING: BILLING_ALLOW_UNAUTHENTICATED is set; every billing route is open")
+	}
+	if token == "" && !allowOpen {
+		log.Printf("BILLING_API_TOKEN is not set: every route but /health will answer 503")
+	}
 	log.Printf("billing service listening on :%s", port)
-	if err := http.ListenAndServe(":"+port, mux); err != nil {
+	if err := http.ListenAndServe(":"+port, requireToken(mux, token, allowOpen)); err != nil {
 		log.Fatalf("server failed: %v", err)
 	}
 }

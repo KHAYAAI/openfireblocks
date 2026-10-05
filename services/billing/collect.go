@@ -2,12 +2,16 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"net/http"
+	neturl "net/url"
+	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -258,6 +262,16 @@ func collectPayments(ctx context.Context, store collectionStore, charger invoice
 				})
 				continue
 			}
+			// No saved card is the customer's to fix, not a fault: skipped
+			// with the reason, so someone can ask them to add one.
+			if errors.Is(err, ErrNoPaymentMethod) {
+				const reason = "no saved card; the customer has to add one before this can be charged"
+				result.Skipped = append(result.Skipped, SkippedLine{
+					InvoiceID: inv.InvoiceID, CustomerID: inv.CustomerID, AmountCents: inv.Amount, Reason: reason,
+				})
+				recordChargeQuietly(ctx, store, inv, "", "skipped", reason)
+				continue
+			}
 			result.Failed = append(result.Failed, CollectedFailed{
 				InvoiceID:  inv.InvoiceID,
 				CustomerID: inv.CustomerID,
@@ -386,4 +400,88 @@ func (b *BillingService) HandleSetStripeCustomer(w http.ResponseWriter, r *http.
 		"customer_id":        req.CustomerID,
 		"stripe_customer_id": req.StripeCustomerID,
 	})
+}
+
+// StripeCustomerID reads a customer's payment identity, "" if none.
+func (p *PostgresDB) StripeCustomerID(ctx context.Context, customerID string) (string, error) {
+	var id string
+	err := p.admin.QueryRowContext(ctx,
+		`SELECT COALESCE(stripe_customer_id, '') FROM customers WHERE customer_id = $1::uuid`, customerID).Scan(&id)
+	if err == sql.ErrNoRows {
+		return "", fmt.Errorf("%w: no customer %s", ErrNotFound, customerID)
+	}
+	if err != nil {
+		return "", fmt.Errorf("reading the stripe customer id: %w", err)
+	}
+	return id, nil
+}
+
+// returnURLAllowed reports whether url may be used as a Stripe redirect.
+//
+// The success and cancel URLs are where Stripe sends a customer after they
+// have entered a card. If a caller could choose any address, this endpoint
+// would send people from a genuine Stripe page to wherever the caller liked.
+// Only https URLs on a host listed in BILLING_RETURN_HOSTS (comma-separated)
+// are allowed; with the list empty none are, so the feature is off until an
+// operator says where customers may be returned to.
+func returnURLAllowed(rawURL string, allowedHosts string) bool {
+	u, err := neturl.Parse(rawURL)
+	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil {
+		return false
+	}
+	for _, h := range strings.Split(allowedHosts, ",") {
+		if h = strings.TrimSpace(h); h != "" && strings.EqualFold(u.Host, h) {
+			return true
+		}
+	}
+	return false
+}
+
+// HandleCreateCardSession returns a Stripe-hosted page where a customer saves
+// a card. The card is then used by the next collection run.
+func (b *BillingService) HandleCreateCardSession(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		CustomerID string `json:"customer_id"`
+		SuccessURL string `json:"success_url"`
+		CancelURL  string `json:"cancel_url"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if err := requireUUID("customer_id", req.CustomerID); err != nil {
+		writeError(w, "creating a card session", err)
+		return
+	}
+	hosts := os.Getenv("BILLING_RETURN_HOSTS")
+	if !returnURLAllowed(req.SuccessURL, hosts) || !returnURLAllowed(req.CancelURL, hosts) {
+		http.Error(w, "success_url and cancel_url must be https URLs on a host in BILLING_RETURN_HOSTS", http.StatusBadRequest)
+		return
+	}
+	if !b.stripe.Configured() {
+		writeError(w, "creating a card session", fmt.Errorf("%w: no payment processor is configured", ErrUnavailable))
+		return
+	}
+	stripeID, err := b.db.StripeCustomerID(r.Context(), req.CustomerID)
+	if err != nil {
+		writeError(w, "creating a card session", err)
+		return
+	}
+	if stripeID == "" {
+		writeError(w, "creating a card session", fmt.Errorf("%w: this customer has no payment identity; set one first", ErrInvalidInput))
+		return
+	}
+	// A session is cheap and short-lived; the key only stops a double click
+	// creating two within the minute.
+	session, err := b.stripe.CreateSetupSession(r.Context(), stripeID, req.SuccessURL, req.CancelURL,
+		"card-session:"+req.CustomerID+":"+time.Now().UTC().Format("200601021504"))
+	if err != nil {
+		writeError(w, "creating a card session", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"session_id": session.ID, "url": session.URL})
 }

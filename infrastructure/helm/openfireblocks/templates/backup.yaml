@@ -33,7 +33,6 @@ spec:
       serviceAccountName: {{ include "ofb.fullname" . }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
-        fsGroup: 65532
       containers:
         - name: backup
           image: {{ include "ofb.image" (dict "root" . "image" .Values.backup.image "tag" .Values.backup.tag) }}

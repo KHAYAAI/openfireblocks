@@ -122,7 +122,7 @@ func TestOurPaymentIntentFieldsExistInStripesSpec(t *testing.T) {
 	stub, client, done := newStubStripe(t)
 	defer done()
 
-	_, err := client.CreatePaymentIntent(context.Background(), 7500, "USD", "cus_spec",
+	_, err := client.CreatePaymentIntent(context.Background(), 7500, "USD", "cus_spec", "pm_spec",
 		"invoice:inv-spec", map[string]string{"openfireblocks_invoice_id": "inv-spec"})
 	if err != nil {
 		t.Fatalf("building the request: %v", err)

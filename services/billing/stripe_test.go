@@ -23,6 +23,8 @@ type stubStripe struct {
 	paths    []string
 	forms    []url.Values
 	headers  []http.Header
+	methods  []string
+	queries  []string
 	respond  func(path string) (int, string)
 	requests int
 }
@@ -32,10 +34,18 @@ func newStubStripe(t *testing.T) (*stubStripe, *StripeClient, func()) {
 	stub := &stubStripe{
 		respond: func(path string) (int, string) {
 			switch {
+			case strings.HasSuffix(path, "/payment_intents/search"):
+				return 200, `{"data":[]}`
 			case strings.HasSuffix(path, "/payment_intents"):
-				return 200, `{"id":"pi_test_123","amount":2500,"currency":"usd","status":"requires_payment_method","client_secret":"pi_test_123_secret","customer":"cus_test"}`
+				return 200, `{"id":"pi_test_123","amount":2500,"currency":"usd","status":"succeeded","client_secret":"pi_test_123_secret","customer":"cus_test"}`
+			case strings.HasSuffix(path, "/payment_methods"):
+				return 200, `{"data":[{"id":"pm_saved_1"}]}`
+			case strings.HasPrefix(path, "/v1/customers/"):
+				return 200, `{"id":"cus_test","invoice_settings":{"default_payment_method":null}}`
 			case strings.HasSuffix(path, "/customers"):
 				return 200, `{"id":"cus_test","email":"a@b.io"}`
+			case strings.HasSuffix(path, "/checkout/sessions"):
+				return 200, `{"id":"cs_test_1","url":"https://checkout.stripe.com/c/pay/cs_test_1"}`
 			}
 			return 404, `{"error":{"message":"no such endpoint"}}`
 		},
@@ -46,6 +56,8 @@ func newStubStripe(t *testing.T) (*stubStripe, *StripeClient, func()) {
 		stub.paths = append(stub.paths, r.URL.Path)
 		stub.forms = append(stub.forms, r.PostForm)
 		stub.headers = append(stub.headers, r.Header.Clone())
+		stub.methods = append(stub.methods, r.Method)
+		stub.queries = append(stub.queries, r.URL.RawQuery)
 		stub.requests++
 		respond := stub.respond
 		stub.mu.Unlock()
@@ -60,11 +72,29 @@ func newStubStripe(t *testing.T) (*stubStripe, *StripeClient, func()) {
 	return stub, client, srv.Close
 }
 
+// postedIntents returns the indices of requests that tried to create a payment
+// intent -- the only requests that move money.
+func (s *stubStripe) postedIntents() []int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.postedIntentsLocked()
+}
+
+func (s *stubStripe) postedIntentsLocked() []int {
+	var out []int
+	for i, p := range s.paths {
+		if s.methods[i] == http.MethodPost && strings.HasSuffix(p, "/payment_intents") {
+			out = append(out, i)
+		}
+	}
+	return out
+}
+
 func TestCreatePaymentIntentSendsTheRequestStripeExpects(t *testing.T) {
 	stub, client, done := newStubStripe(t)
 	defer done()
 
-	pi, err := client.CreatePaymentIntent(context.Background(), 2500, "USD", "cus_test",
+	pi, err := client.CreatePaymentIntent(context.Background(), 2500, "USD", "cus_test", "pm_saved_1",
 		"invoice:inv-1", map[string]string{"openfireblocks_invoice_id": "inv-1"})
 	if err != nil {
 		t.Fatalf("CreatePaymentIntent: %v", err)
@@ -131,15 +161,16 @@ func TestChargingAnInvoiceTwiceReusesTheIdempotencyKey(t *testing.T) {
 
 	stub.mu.Lock()
 	defer stub.mu.Unlock()
-	if stub.requests != 2 {
-		t.Fatalf("stub saw %d requests, want 2", stub.requests)
+	posts := stub.postedIntentsLocked()
+	if len(posts) != 2 {
+		t.Fatalf("stub saw %d charge requests, want 2", len(posts))
 	}
-	if stub.headers[0].Get("Idempotency-Key") != stub.headers[1].Get("Idempotency-Key") {
-		t.Fatalf("two charges for the same invoice used different idempotency keys (%q, %q) -- Stripe would charge twice",
-			stub.headers[0].Get("Idempotency-Key"), stub.headers[1].Get("Idempotency-Key"))
+	if stub.headers[posts[0]].Get("Idempotency-Key") != stub.headers[posts[1]].Get("Idempotency-Key") {
+		t.Fatalf("two charges for the same invoice and card used different idempotency keys (%q, %q) -- Stripe would charge twice",
+			stub.headers[posts[0]].Get("Idempotency-Key"), stub.headers[posts[1]].Get("Idempotency-Key"))
 	}
-	if got := stub.headers[0].Get("Idempotency-Key"); got != "invoice:inv-42" {
-		t.Errorf("idempotency key = %q, want it derived from the invoice id", got)
+	if got := stub.headers[posts[0]].Get("Idempotency-Key"); got != "invoice:inv-42:pm_saved_1" {
+		t.Errorf("idempotency key = %q, want it derived from the invoice id and the card", got)
 	}
 }
 
@@ -173,7 +204,7 @@ func TestStripeErrorsAreReportedWithStripesOwnMessage(t *testing.T) {
 	}
 	stub.mu.Unlock()
 
-	_, err := client.CreatePaymentIntent(context.Background(), 100, "usd", "cus_test", "k", nil)
+	_, err := client.CreatePaymentIntent(context.Background(), 100, "usd", "cus_test", "pm_x", "k", nil)
 	if err == nil {
 		t.Fatal("a 402 was treated as success")
 	}
@@ -190,7 +221,7 @@ func TestRefusesNonsenseAmounts(t *testing.T) {
 	defer done()
 
 	for _, amount := range []int{0, -1, -2500} {
-		if _, err := client.CreatePaymentIntent(context.Background(), amount, "usd", "cus_test", "k", nil); err == nil {
+		if _, err := client.CreatePaymentIntent(context.Background(), amount, "usd", "cus_test", "pm_x", "k", nil); err == nil {
 			t.Errorf("accepted an amount of %d cents", amount)
 		}
 	}

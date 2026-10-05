@@ -37,6 +37,23 @@ spec:
               value: production
             - name: PORT
               value: {{ .Values.billing.port | quote }}
+            # Every route but /health needs this bearer token. Optional so the
+            # pod still starts without it -- but then the service refuses to
+            # act, which is the safe state, and the log says why. Nothing in
+            # the platform calls this service over HTTP today (the schedules
+            # below run the binary directly), so there is no caller to break.
+            - name: BILLING_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.billing.apiTokenSecret }}
+                  key: billing-api-token
+                  optional: true
+            {{- if .Values.billing.returnHosts }}
+            # Where /v1/billing/card-session may send a customer after they
+            # save a card. Empty (the default) refuses every URL.
+            - name: BILLING_RETURN_HOSTS
+              value: {{ .Values.billing.returnHosts | quote }}
+            {{- end }}
             # app_admin (BYPASSRLS): billing evaluates usage/invoices across
             # whichever customer a request or scheduled job names, not one
             # authenticated tenant session -- see the dsn comment in

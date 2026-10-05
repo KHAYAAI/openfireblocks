@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -117,9 +118,31 @@ func (s *StripeClient) post(ctx context.Context, path string, form url.Values, i
 	if err != nil {
 		return fmt.Errorf("failed to build Stripe request: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+s.apiKey)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Idempotency-Key", idempotencyKey)
+	return s.do(req, out)
+}
+
+// get reads from Stripe. No idempotency key: a read has nothing to
+// deduplicate.
+func (s *StripeClient) get(ctx context.Context, path string, query url.Values, out interface{}) error {
+	if !s.Configured() {
+		return fmt.Errorf("stripe is not configured: no API key set")
+	}
+	u := s.baseURL + path
+	if len(query) > 0 {
+		u += "?" + query.Encode()
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return fmt.Errorf("failed to build Stripe request: %w", err)
+	}
+	return s.do(req, out)
+}
+
+// do sends a prepared request with the pinned version and credentials.
+func (s *StripeClient) do(req *http.Request, out interface{}) error {
+	req.Header.Set("Authorization", "Bearer "+s.apiKey)
 	req.Header.Set("Stripe-Version", stripeAPIVersion)
 
 	resp, err := s.client.Do(req)
@@ -178,7 +201,20 @@ func (s *StripeClient) CreateCustomer(ctx context.Context, customerID, email, na
 	return &out, nil
 }
 
-// CreatePaymentIntent starts a payment.
+// CreatePaymentIntent charges a saved payment method, now.
+//
+// It used to create an intent and stop. With no payment_method and no
+// confirm, Stripe leaves the intent in requires_payment_method forever, and
+// nothing in the platform ever collected a card to attach -- so no invoice
+// could ever have been paid, whatever the account or the keys. This charges:
+//
+//   - payment_method is the customer's saved card;
+//   - confirm=true takes the money in this call rather than leaving an intent
+//     for a front end that does not exist;
+//   - off_session=true says the customer is not present, which is true of a
+//     scheduled run and tells the issuer this is a merchant-initiated charge;
+//   - error_on_requires_action=true makes a card that wants 3-D Secure fail
+//     the call instead of leaving a half-finished intent no one will finish.
 //
 // amountCents is an integer count of the currency's smallest unit, which is
 // what Stripe expects and what Invoice.Amount already holds. Taking a float
@@ -188,6 +224,7 @@ func (s *StripeClient) CreatePaymentIntent(
 	amountCents int,
 	currency string,
 	stripeCustomerID string,
+	paymentMethodID string,
 	idempotencyKey string,
 	metadata map[string]string,
 ) (*PaymentIntent, error) {
@@ -197,19 +234,113 @@ func (s *StripeClient) CreatePaymentIntent(
 	if currency == "" {
 		return nil, fmt.Errorf("currency is required")
 	}
+	if stripeCustomerID == "" || paymentMethodID == "" {
+		return nil, fmt.Errorf("a charge needs both a customer and a payment method")
+	}
 
 	form := url.Values{}
 	form.Set("amount", strconv.Itoa(amountCents))
 	form.Set("currency", strings.ToLower(currency))
-	if stripeCustomerID != "" {
-		form.Set("customer", stripeCustomerID)
-	}
+	form.Set("customer", stripeCustomerID)
+	form.Set("payment_method", paymentMethodID)
+	form.Set("confirm", "true")
+	form.Set("off_session", "true")
+	form.Set("error_on_requires_action", "true")
 	for k, v := range metadata {
 		form.Set("metadata["+k+"]", v)
 	}
 
 	var out PaymentIntent
 	if err := s.post(ctx, "/v1/payment_intents", form, idempotencyKey, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// ErrNoPaymentMethod means the customer has no saved card to charge. Not a
+// fault in the run: the customer has to add one, which they do through a
+// setup session (CreateSetupSession).
+var ErrNoPaymentMethod = errors.New("no payment method on file")
+
+// DefaultPaymentMethod returns the card to charge for a customer: the one
+// they marked as their invoicing default, else their first saved card. Empty
+// when they have none.
+func (s *StripeClient) DefaultPaymentMethod(ctx context.Context, stripeCustomerID string) (string, error) {
+	var c struct {
+		InvoiceSettings struct {
+			DefaultPaymentMethod string `json:"default_payment_method"`
+		} `json:"invoice_settings"`
+	}
+	if err := s.get(ctx, "/v1/customers/"+url.PathEscape(stripeCustomerID), nil, &c); err != nil {
+		return "", err
+	}
+	if c.InvoiceSettings.DefaultPaymentMethod != "" {
+		return c.InvoiceSettings.DefaultPaymentMethod, nil
+	}
+	var list struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	q := url.Values{"customer": {stripeCustomerID}, "type": {"card"}, "limit": {"1"}}
+	if err := s.get(ctx, "/v1/payment_methods", q, &list); err != nil {
+		return "", err
+	}
+	if len(list.Data) == 0 {
+		return "", nil
+	}
+	return list.Data[0].ID, nil
+}
+
+// SucceededIntentForInvoice finds a payment that already took this invoice's
+// money, or nil.
+//
+// An idempotency key only protects a retry that sends the same request. If an
+// invoice was paid but marking it paid failed, and the customer then changed
+// their card, the next attempt is a different request and would charge twice.
+// Looking for the payment first closes that: the invoice id is in the intent's
+// metadata, and a success found here is returned for the collector to mark
+// paid instead of charging again. Search is eventually consistent (seconds to
+// a minute), which is why the idempotency key stays as well.
+func (s *StripeClient) SucceededIntentForInvoice(ctx context.Context, invoiceID string) (*PaymentIntent, error) {
+	var out struct {
+		Data []PaymentIntent `json:"data"`
+	}
+	q := url.Values{"query": {fmt.Sprintf("metadata['openfireblocks_invoice_id']:'%s' AND status:'succeeded'", strings.ReplaceAll(invoiceID, "'", ""))}}
+	if err := s.get(ctx, "/v1/payment_intents/search", q, &out); err != nil {
+		return nil, err
+	}
+	if len(out.Data) == 0 {
+		return nil, nil
+	}
+	return &out.Data[0], nil
+}
+
+// SetupSession is a Stripe-hosted page where a customer saves a card.
+type SetupSession struct {
+	ID  string `json:"id"`
+	URL string `json:"url"`
+}
+
+// CreateSetupSession starts a Stripe Checkout session in setup mode.
+//
+// Hosted by Stripe rather than built on Stripe.js: the console's content
+// security policy allows scripts from this origin only, and a card form on a
+// page we serve would put card entry in our PCI scope. The customer is sent
+// to Stripe, saves a card, and is sent back; the card is then on the Stripe
+// customer and DefaultPaymentMethod finds it.
+func (s *StripeClient) CreateSetupSession(ctx context.Context, stripeCustomerID, successURL, cancelURL, idempotencyKey string) (*SetupSession, error) {
+	if stripeCustomerID == "" || successURL == "" || cancelURL == "" {
+		return nil, fmt.Errorf("a setup session needs a customer, a success URL and a cancel URL")
+	}
+	form := url.Values{}
+	form.Set("mode", "setup")
+	form.Set("customer", stripeCustomerID)
+	form.Add("payment_method_types[]", "card")
+	form.Set("success_url", successURL)
+	form.Set("cancel_url", cancelURL)
+	var out SetupSession
+	if err := s.post(ctx, "/v1/checkout/sessions", form, idempotencyKey, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -238,8 +369,29 @@ func (b *BillingService) ChargeInvoice(ctx context.Context, invoice *Invoice, st
 			ErrUnavailable, invoice.InvoiceID)
 	}
 
-	return b.stripe.CreatePaymentIntent(ctx, invoice.Amount, invoice.Currency, stripeCustomerID,
-		"invoice:"+invoice.InvoiceID,
+	// A payment already taken for this invoice is returned, not repeated.
+	if done, err := b.stripe.SucceededIntentForInvoice(ctx, invoice.InvoiceID); err != nil {
+		// Fail closed: if we cannot tell whether it was already paid, charging
+		// risks charging twice. The next run retries.
+		return nil, fmt.Errorf("could not check whether invoice %s was already paid: %w", invoice.InvoiceID, err)
+	} else if done != nil {
+		return done, nil
+	}
+
+	pm, err := b.stripe.DefaultPaymentMethod(ctx, stripeCustomerID)
+	if err != nil {
+		return nil, fmt.Errorf("could not read the customer's payment method: %w", err)
+	}
+	if pm == "" {
+		return nil, fmt.Errorf("%w: customer %s has no saved card, so invoice %s cannot be charged",
+			ErrNoPaymentMethod, stripeCustomerID, invoice.InvoiceID)
+	}
+
+	// The key carries the card, so a customer who replaces a declined card is
+	// retried with the new one instead of Stripe rejecting the changed request
+	// for the rest of the key's 24 hours.
+	return b.stripe.CreatePaymentIntent(ctx, invoice.Amount, invoice.Currency, stripeCustomerID, pm,
+		"invoice:"+invoice.InvoiceID+":"+pm,
 		map[string]string{
 			"openfireblocks_invoice_id":      invoice.InvoiceID,
 			"openfireblocks_customer_id":     invoice.CustomerID,

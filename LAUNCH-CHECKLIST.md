@@ -61,7 +61,7 @@ Every row blocks "production ready". None of them is an engineering task.
 | vault-pki-init | Verified | mTLS leaf issuance |
 | compliance | Pilot: OFAC address screening works and fails closed; KYC vendor and filings unverified | See section 4 |
 | billing | Not done for production | Never charged a card; gateway has a separate billing module |
-| backup | Not deployable: no image or chart | See section 4 |
+| backup | Deployable (image, chart, daily schedule, token auth); image not built here | Dumps stay in the same cluster; only Postgres failover is real |
 | vault-unseal | Dev only | Source says "NOT PRODUCTION-GRADE KEY HANDLING" |
 | policy, settlement, marketplace | Not part of the launch path; off by default in the chart | Nothing calls them |
 
@@ -115,24 +115,58 @@ Fixed in this pass:
   SDK methods that always returned 404 were removed. `policyApi`, `settlement`
   and `marketplace`, which nothing calls, now default to off in the chart.
 
+Fixed in the second pass:
+
+- **Billing never charged a card because it could not.** The Stripe call
+  created a payment intent with no payment method, no `confirm` and no
+  `off_session`, and nothing collected a card, so every intent sat unpaid. It
+  now charges the customer's saved card and fails rather than leaving a
+  half-finished intent. It first looks for a payment already taken for the
+  invoice, so a changed card cannot cause a double charge, and a customer with
+  no saved card is skipped with a reason. Cards are saved through a
+  Stripe-hosted page (`/v1/billing/card-session`), not a form we serve, so the
+  console's script policy and our PCI scope are unchanged. The return URLs are
+  allowlisted. Live tests against Stripe's test mode exist and have not been
+  run (no key here).
+- The billing service had no authentication on any route, including charging
+  and repointing a tenant's Stripe customer. It now needs a bearer token and
+  refuses to act without one.
+- `services/backup` now has an image, a chart workload with a retained volume
+  and a daily schedule, and token auth (it exposed `/restore` and
+  `/dr/failover` unauthenticated).
+- Reconciliation now covers Solana and Cosmos, including a check for spends the
+  platform never signed (Cosmos, one key per organisation).
+- Bitcoin spends apply the Travel Rule.
+- The deploy pipeline deploys the Helm chart, with one repository per service
+  and a chart-wide `imageTag`, instead of updating one ECS service. It has
+  never run against a cluster or AWS account.
+- The console can create keys and send Bitcoin, Solana and Cosmos transfers.
+
 Still open:
 
-- Only Postgres failover is real. Vault, gateway and Temporal failover are not
-  implemented, and `services/backup` has no image or chart, so nothing runs it.
-- `deploy.yaml` still deploys the gateway to ECS while the documented runtime
-  is the Helm chart; the ECS path has never run against an AWS account.
-- Billing has never charged a card, and the gateway has a separate billing
-  module that does not call `services/billing`.
-- Bitcoin spends skip the Travel Rule (the route has no field for it).
+- Backups land on a volume in the same cluster, so losing the cluster loses
+  them. Only Postgres failover is real; Vault, gateway and Temporal failover
+  are not implemented. The backup image has not been built (no Docker daemon
+  where this was written).
+- No pipeline step has run against a real cluster or AWS account.
+- Billing has not been run against Stripe. The gateway also has its own
+  billing module that does not call `services/billing`, and nothing calls the
+  billing service over HTTP yet, so card saving has no console button.
+- Bitcoin, Solana and Cosmos transfers have no approval step: a transfer that
+  policy says needs approval is refused. Only EVM settlements route to
+  approvers.
+- The console starts no EVM transfers directly: they begin as settlements,
+  which need a nonce and gas fields the console does not collect.
 - Solana and Cosmos amounts are governed by unit-normalised policy, not by
   price. A deployment that wants USD limits needs a price source.
+- Cosmos' "spent without us" check needs exactly one Cosmos key per
+  organisation, because the ledger does not record which key signed.
 - `go vet` reports a lock copy at `mpc-party/tss_signing.go:257`
   (pre-existing).
 - Legacy duplicates remain: `sdks/go`, `sdks/javascript`, `sdks/python`.
 - `apps/web`, `apps/admin`, `apps/mobile`, `apps/customer` are unbuilt
   scaffolds that call routes the gateway does not have. The working UI is the
-  gateway console (`/console`), which has no screen yet for creating keys or
-  sending transfers.
+  gateway console (`/console`).
 
 ## 5. Minimum bar to call it production ready
 

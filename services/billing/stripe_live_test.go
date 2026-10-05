@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -54,6 +55,29 @@ func liveClient(t *testing.T) *StripeClient {
 	return NewStripeClient(key)
 }
 
+// liveCardCustomer makes a customer with Stripe's test Visa saved on it, the
+// state a customer is in after using the card-session page. Test tokens only:
+// pm_card_visa is a Stripe-published token that works in test mode and nowhere
+// else.
+func liveCardCustomer(t *testing.T, client *StripeClient, token string) (customerID, paymentMethodID string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	tenant := "drill-" + time.Now().UTC().Format("20060102150405.000000")
+	c, err := client.CreateCustomer(ctx, tenant, tenant+"@example.com", "Live drill "+tenant)
+	if err != nil {
+		t.Fatalf("creating the customer: %v", err)
+	}
+	var pm struct {
+		ID string `json:"id"`
+	}
+	form := url.Values{"customer": {c.ID}}
+	if err := client.post(ctx, "/v1/payment_methods/"+token+"/attach", form, "attach:"+tenant+":"+token, &pm); err != nil {
+		t.Fatalf("saving the test card: %v", err)
+	}
+	return c.ID, pm.ID
+}
+
 func TestLiveStripeAcceptsOurCustomerCreation(t *testing.T) {
 	client := liveClient(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -79,10 +103,11 @@ func TestLiveStripeAcceptsOurCustomerCreation(t *testing.T) {
 
 func TestLiveStripeAcceptsOurPaymentIntent(t *testing.T) {
 	client := liveClient(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
+	cust, pm := liveCardCustomer(t, client, "pm_card_visa")
 
-	intent, err := client.CreatePaymentIntent(ctx, 51_400, "usd", "",
+	intent, err := client.CreatePaymentIntent(ctx, 51_400, "usd", cust, pm,
 		"live-drill-"+time.Now().UTC().Format("20060102150405.000000"),
 		map[string]string{"openfireblocks_invoice_id": "drill"})
 	if err != nil {
@@ -100,27 +125,99 @@ func TestLiveStripeAcceptsOurPaymentIntent(t *testing.T) {
 	if !strings.EqualFold(intent.Currency, "usd") {
 		t.Errorf("currency came back as %q", intent.Currency)
 	}
+	// The assertion that was missing: the intent used to be created and left
+	// unpaid. A charge that does not end in "succeeded" has not taken money.
+	if intent.Status != "succeeded" {
+		t.Fatalf("the intent is %q, not succeeded: nothing was charged", intent.Status)
+	}
+}
+
+// The whole path a nightly run takes: find the saved card, charge the
+// invoice, and on a second run get the same payment back instead of another.
+func TestLiveChargingAnInvoiceCollectsOnceAndOnlyOnce(t *testing.T) {
+	client := liveClient(t)
+	svc := &BillingService{stripe: client}
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	cust, _ := liveCardCustomer(t, client, "pm_card_visa")
+	inv := &Invoice{InvoiceID: "inv-live-" + time.Now().UTC().Format("20060102150405.000000"), SubscriptionID: "sub", CustomerID: "c", Amount: 2_500, Currency: "usd", Status: "unpaid"}
+
+	first, err := svc.ChargeInvoice(ctx, inv, cust)
+	if err != nil {
+		t.Fatalf("the first charge failed: %v", err)
+	}
+	if first.Status != "succeeded" {
+		t.Fatalf("first charge is %q, want succeeded", first.Status)
+	}
+	second, err := svc.ChargeInvoice(ctx, inv, cust)
+	if err != nil {
+		t.Fatalf("the repeat failed: %v", err)
+	}
+	if second.ID != first.ID {
+		t.Fatalf("charging the same invoice twice produced two payments (%s, %s)", first.ID, second.ID)
+	}
+}
+
+func TestLiveACustomerWithNoCardIsNotCharged(t *testing.T) {
+	client := liveClient(t)
+	svc := &BillingService{stripe: client}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	c, err := client.CreateCustomer(ctx, "nocard-"+time.Now().UTC().Format("20060102150405.000000"), "nocard@example.com", "No card")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = svc.ChargeInvoice(ctx, &Invoice{InvoiceID: "inv-nocard-" + time.Now().UTC().Format("150405.000000"), Amount: 100, Currency: "usd", Status: "unpaid"}, c.ID)
+	if !errors.Is(err, ErrNoPaymentMethod) {
+		t.Fatalf("got %v, want ErrNoPaymentMethod", err)
+	}
+}
+
+func TestLiveADeclinedCardIsAFailureNotASuccess(t *testing.T) {
+	client := liveClient(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	cust, pm := liveCardCustomer(t, client, "pm_card_chargeCustomerFail")
+	_, err := client.CreatePaymentIntent(ctx, 1_000, "usd", cust, pm, "live-decline-"+time.Now().UTC().Format("150405.000000"), nil)
+	if err == nil {
+		t.Fatal("a card Stripe declines was reported as charged")
+	}
+}
+
+func TestLiveACardSessionCanBeCreated(t *testing.T) {
+	client := liveClient(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cust, _ := liveCardCustomer(t, client, "pm_card_visa")
+	s, err := client.CreateSetupSession(ctx, cust, "https://example.com/ok", "https://example.com/cancel", "live-session-"+time.Now().UTC().Format("150405.000000"))
+	if err != nil {
+		t.Fatalf("Stripe refused the setup session this platform builds: %v", err)
+	}
+	if !strings.HasPrefix(s.URL, "https://checkout.stripe.com/") {
+		t.Errorf("session URL %q is not a Stripe-hosted page", s.URL)
+	}
 }
 
 // The property the whole design rests on.
 //
-// ChargeInvoice derives its idempotency key from the invoice id precisely
-// so that a retry -- from the billing CronJob, an operator, a redelivered
-// webhook -- cannot charge a customer twice. That is a claim about Stripe's
-// behaviour, not ours, and until now nothing had ever checked it.
+// ChargeInvoice derives its idempotency key from the invoice id and the card
+// precisely so that a retry -- from the billing CronJob, an operator, a
+// redelivered webhook -- cannot charge a customer twice. That is a claim about
+// Stripe's behaviour, not ours.
 func TestLiveStripeIdempotencyKeyPreventsASecondCharge(t *testing.T) {
 	client := liveClient(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
+	cust, pm := liveCardCustomer(t, client, "pm_card_visa")
 
 	key := "live-idempotency-" + time.Now().UTC().Format("20060102150405.000000")
 
-	first, err := client.CreatePaymentIntent(ctx, 12_345, "usd", "", key, nil)
+	first, err := client.CreatePaymentIntent(ctx, 12_345, "usd", cust, pm, key, nil)
 	if err != nil {
 		t.Fatalf("the first charge failed: %v", err)
 	}
 
-	second, err := client.CreatePaymentIntent(ctx, 12_345, "usd", "", key, nil)
+	second, err := client.CreatePaymentIntent(ctx, 12_345, "usd", cust, pm, key, nil)
 	if err != nil {
 		t.Fatalf("the retry failed: %v", err)
 	}
@@ -138,14 +235,15 @@ func TestLiveStripeRefusesAReusedKeyForADifferentAmount(t *testing.T) {
 	client := liveClient(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
+	cust, pm := liveCardCustomer(t, client, "pm_card_visa")
 
 	key := "live-conflict-" + time.Now().UTC().Format("20060102150405.000000")
 
-	if _, err := client.CreatePaymentIntent(ctx, 1_000, "usd", "", key, nil); err != nil {
+	if _, err := client.CreatePaymentIntent(ctx, 1_000, "usd", cust, pm, key, nil); err != nil {
 		t.Fatalf("the first charge failed: %v", err)
 	}
 
-	_, err := client.CreatePaymentIntent(ctx, 9_999, "usd", "", key, nil)
+	_, err := client.CreatePaymentIntent(ctx, 9_999, "usd", cust, pm, key, nil)
 	if err == nil {
 		t.Fatal("Stripe accepted the same idempotency key for a different amount; " +
 			"an invoice whose total changed between attempts would charge the wrong one")
