@@ -90,6 +90,21 @@ mpcSigner:
     rpcUrl: "" # e.g. http://bitcoind:18443
     rpcUser: ""
     rpcPasswordSecret: openfireblocks-secrets # secret holding key "bitcoin-rpc-password"
+  # A Solana JSON-RPC endpoint. Empty means no node: addresses still derive
+  # and the routes that must see the chain answer 503. Not offered until it
+  # has been pointed at devnet and a funded key has actually sent a transfer.
+  solana:
+    rpcUrl: "" # e.g. https://api.devnet.solana.com
+    commitment: confirmed
+  # A Cosmos SDK REST (LCD) endpoint. Pin chainId: signing for the wrong
+  # chain wastes a ceremony, and the signer refuses if the node disagrees.
+  cosmos:
+    lcdUrl: "" # e.g. https://rest.sentry-01.theta-testnet.polypore.xyz
+    chainId: ""
+    bech32Prefix: cosmos
+    feeDenom: uatom
+    gasPrice: "0.025"
+    gasLimit: 200000
   # Hardware signing: the key lives in an HSM, reached over PKCS#11, and
   # signs there without ever leaving it. See
   # docs/engineering/PKCS11-HSM-SIGNING.md for what this does and does not
@@ -316,8 +331,9 @@ ceremonyAuthorizer:
 # word "policy" in both names is a pre-existing naming collision in the
 # services/ directory, not something this chart invented; kept distinct
 # component names here specifically to avoid compounding that confusion.
+# Off by default -- services/policy: nothing in the platform calls it. Enable it only if you call it directly.
 policyApi:
-  enabled: true
+  enabled: false
   image: policy
   tag: latest
   replicas: 2
@@ -326,8 +342,9 @@ policyApi:
     requests: { cpu: 100m, memory: 128Mi }
     limits: { cpu: 500m, memory: 256Mi }
 
+# Off by default -- services/settlement: the gateway settles through Temporal, not this REST service. Enable it only if you call it directly.
 settlement:
-  enabled: true
+  enabled: false
   image: settlement
   tag: latest
   replicas: 2
@@ -379,8 +396,9 @@ webhooks:
     requests: { cpu: 100m, memory: 128Mi }
     limits: { cpu: 500m, memory: 256Mi }
 
+# Off by default -- services/marketplace: nothing calls it. Enable it only if you call it directly.
 marketplace:
-  enabled: true
+  enabled: false
   image: marketplace
   tag: latest
   replicas: 2

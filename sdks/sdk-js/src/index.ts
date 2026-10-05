@@ -57,39 +57,57 @@ export interface AuditEvent {
   [key: string]: unknown;
 }
 
-export interface SignMultiChainRequest {
-  chainId: string;
-  message: string;
-  metadata?: {
-    network?: string;
-    [key: string]: unknown;
-  };
+export interface SolanaTransferRequest {
+  destination: string; // base58
+  amount: string; // lamports, base-10
+  broadcast?: boolean;
+  idempotencyKey?: string;
+  country?: string;
+  travelRule?: Record<string, unknown>;
 }
 
-export interface SignMultiChainResponse {
-  requestId: string;
-  chainId: string;
-  signature: string;
-  signedTx?: string;
+export interface CosmosTransferRequest {
+  destination: string; // bech32
+  amount: string; // base units (uatom), base-10
+  denom?: string;
+  memo?: string;
+  broadcast?: boolean;
+  idempotencyKey?: string;
+  country?: string;
+  travelRule?: Record<string, unknown>;
+}
+
+export interface SolanaTransferResult {
+  request_id: string;
+  key_id: string;
   from: string;
-  status: 'signed' | 'failed';
-  broadcasted: boolean;
-  error?: string;
+  to: string;
+  amount: string;
+  fee: string;
+  signature: string;
+  raw_transaction: string;
+  broadcast: boolean;
+  [key: string]: unknown;
 }
 
-export interface SupportedChainsResponse {
-  chains: string[];
-  count: number;
+export interface CosmosTransferResult {
+  request_id: string;
+  key_id: string;
+  from: string;
+  to: string;
+  amount: string;
+  denom: string;
+  fee: string;
+  chain_id: string;
+  txhash: string;
+  raw_transaction: string;
+  broadcast: boolean;
+  [key: string]: unknown;
 }
 
-export interface BroadcastRequest {
-  chainId: string;
-  signedTx: string;
-}
-
-export interface BroadcastResponse {
-  txHash: string;
-  status: string;
+export interface ChainTxStatus {
+  found: boolean;
+  [key: string]: unknown;
 }
 
 // Error thrown for any non-2xx response, carrying the parsed body when available.
@@ -213,22 +231,32 @@ export class OpenFireblocksClient {
     });
   }
 
-  // --- Multi-chain signing ---
+  // --- Solana and Cosmos spends from a threshold key ---
+  //
+  // The platform builds, prices and verifies the transaction; the caller says
+  // where the money goes and how much. Native SOL only, and one bank send on a
+  // Cosmos chain: no tokens, staking or IBC.
 
-  // Get list of supported blockchain networks.
-  getSupportedChains(): Promise<SupportedChainsResponse> {
-    return this.request<SupportedChainsResponse>('POST', '/sign-multi-chain/chains');
+  sendSolana(keyId: string, req: SolanaTransferRequest): Promise<SolanaTransferResult> {
+    return this.request('POST', `/keys/${encodeURIComponent(keyId)}/solana-transactions`, req);
   }
 
-  // Sign a transaction on any supported blockchain.
-  // Supports: ethereum, bitcoin, solana, cosmos-hub
-  signMultiChain(req: SignMultiChainRequest): Promise<SignMultiChainResponse> {
-    return this.request<SignMultiChainResponse>('POST', '/sign-multi-chain', req);
+  solanaTransactionStatus(keyId: string, signature: string): Promise<ChainTxStatus> {
+    return this.request(
+      'GET',
+      `/keys/${encodeURIComponent(keyId)}/solana-transactions/${encodeURIComponent(signature)}`,
+    );
   }
 
-  // Broadcast a signed transaction for any supported blockchain.
-  broadcastTransaction(req: BroadcastRequest): Promise<BroadcastResponse> {
-    return this.request<BroadcastResponse>('POST', '/sign-multi-chain/broadcast', req);
+  sendCosmos(keyId: string, req: CosmosTransferRequest): Promise<CosmosTransferResult> {
+    return this.request('POST', `/keys/${encodeURIComponent(keyId)}/cosmos-transactions`, req);
+  }
+
+  cosmosTransactionStatus(keyId: string, txhash: string): Promise<ChainTxStatus> {
+    return this.request(
+      'GET',
+      `/keys/${encodeURIComponent(keyId)}/cosmos-transactions/${encodeURIComponent(txhash)}`,
+    );
   }
 }
 

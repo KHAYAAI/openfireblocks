@@ -97,6 +97,26 @@ spec:
                   name: {{ .Values.mpcSigner.bitcoin.rpcPasswordSecret }}
                   key: bitcoin-rpc-password
             {{- end }}
+            {{- if .Values.mpcSigner.solana.rpcUrl }}
+            - name: SOLANA_RPC_URL
+              value: {{ .Values.mpcSigner.solana.rpcUrl | quote }}
+            - name: SOLANA_COMMITMENT
+              value: {{ .Values.mpcSigner.solana.commitment | quote }}
+            {{- end }}
+            {{- if .Values.mpcSigner.cosmos.lcdUrl }}
+            - name: COSMOS_LCD_URL
+              value: {{ .Values.mpcSigner.cosmos.lcdUrl | quote }}
+            - name: COSMOS_CHAIN_ID
+              value: {{ .Values.mpcSigner.cosmos.chainId | quote }}
+            - name: COSMOS_BECH32_PREFIX
+              value: {{ .Values.mpcSigner.cosmos.bech32Prefix | quote }}
+            - name: COSMOS_FEE_DENOM
+              value: {{ .Values.mpcSigner.cosmos.feeDenom | quote }}
+            - name: COSMOS_GAS_PRICE
+              value: {{ .Values.mpcSigner.cosmos.gasPrice | quote }}
+            - name: COSMOS_GAS_LIMIT
+              value: {{ .Values.mpcSigner.cosmos.gasLimit | quote }}
+            {{- end }}
           livenessProbe:
             httpGet: { path: /health, port: http }
             initialDelaySeconds: 5

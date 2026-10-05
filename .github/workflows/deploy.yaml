@@ -75,56 +75,52 @@ jobs:
         with:
           files: ./coverage.out
 
-  build:
-    name: Build Docker Images
-    needs: [security-scan, test]
+  # The image list comes from scripts/build-images.sh --list, the same list
+  # the chart and the kind cluster use. This job used to hand-write three
+  # images (gateway, compliance, settlement), which left the whole signing
+  # path -- mpc-signer, mpc-party, temporal-worker -- unbuilt and unpushed by
+  # the pipeline that claims to deploy the platform.
+  services:
+    name: List services
     runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.list.outputs.matrix }}
     steps:
       - uses: actions/checkout@v4
-      
+      - id: list
+        run: |
+          echo "matrix=$(./scripts/build-images.sh --list | jq -R . | jq -cs .)" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build ${{ matrix.service }}
+    needs: [security-scan, test, services]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJson(needs.services.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v2
-      
+
       - name: Login to ECR
         uses: aws-actions/amazon-ecr-login@v1
         with:
           registry-type: public
-      
-      - name: Build and push API Gateway
+
+      - name: Build and push ${{ matrix.service }}
         uses: docker/build-push-action@v4
         with:
-          context: ./services/api-gateway
-          file: ./services/api-gateway/Dockerfile
+          context: ./services/${{ matrix.service }}
+          file: ./services/${{ matrix.service }}/Dockerfile
           push: true
           tags: |
-            ${{ secrets.ECR_REGISTRY }}/openfireblocks:api-gateway-${{ github.sha }}
-            ${{ secrets.ECR_REGISTRY }}/openfireblocks:api-gateway-latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-      
-      - name: Build and push Compliance Service
-        uses: docker/build-push-action@v4
-        with:
-          context: ./services/compliance
-          file: ./services/compliance/Dockerfile
-          push: true
-          tags: |
-            ${{ secrets.ECR_REGISTRY }}/openfireblocks:compliance-${{ github.sha }}
-            ${{ secrets.ECR_REGISTRY }}/openfireblocks:compliance-latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-      
-      - name: Build and push Settlement Service
-        uses: docker/build-push-action@v4
-        with:
-          context: ./services/settlement
-          file: ./services/settlement/Dockerfile
-          push: true
-          tags: |
-            ${{ secrets.ECR_REGISTRY }}/openfireblocks:settlement-${{ github.sha }}
-            ${{ secrets.ECR_REGISTRY }}/openfireblocks:settlement-latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+            ${{ secrets.ECR_REGISTRY }}/openfireblocks:${{ matrix.service }}-${{ github.sha }}
+            ${{ secrets.ECR_REGISTRY }}/openfireblocks:${{ matrix.service }}-latest
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
 
   deploy-staging:
     name: Deploy to Staging

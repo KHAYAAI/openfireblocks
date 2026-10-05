@@ -52,44 +52,87 @@ Every row blocks "production ready". None of them is an engineering task.
 
 | Service | Status | Notes |
 |---|---|---|
-| mpc-signer | Verified (EVM, Bitcoin regtest, PKCS#11 on SoftHSM2) | See section 3 for Solana and Cosmos |
+| mpc-signer | Verified (EVM, Bitcoin regtest, PKCS#11 on SoftHSM2); Solana and Cosmos protocol-tested | See section 3 |
 | mpc-party | Verified (live multi-party DKG, signing, resharing over HTTP/mTLS) | Isolation only simulated on one host |
 | temporal-worker | Verified | Workflows run against a real Temporal dev server in CI |
 | api-gateway | Verified (29 specs, plus live specs on real Postgres) | JWT/role console; API-key API |
 | policy-service | Verified | OPA/Rego engine; sanctions list reloadable |
 | webhooks | Verified, thin tests | HMAC-signed delivery drilled in `webhook-drill.sh` |
 | vault-pki-init | Verified | mTLS leaf issuance |
-| compliance | See section 4 | |
+| compliance | Pilot: OFAC address screening works and fails closed; KYC vendor and filings unverified | See section 4 |
 | billing | Not done for production | Never charged a card; gateway has a separate billing module |
-| backup | See section 4 | |
+| backup | Not deployable: no image or chart | See section 4 |
 | vault-unseal | Dev only | Source says "NOT PRODUCTION-GRADE KEY HANDLING" |
-| policy, settlement, marketplace | Not part of the launch path | See section 4 |
+| policy, settlement, marketplace | Not part of the launch path; off by default in the chart | Nothing calls them |
 
 ## 3. Chains
 
-| Chain | Signing | Address | Broadcast | Real-network accepted |
+| Chain | Key generation | Address | Spend path | Real-network accepted |
 |---|---|---|---|---|
 | Ethereum / Polygon | Verified | Verified | Verified (dev chain) | Not from this repo |
 | Bitcoin | Verified | Verified | Verified (regtest) | Not from this repo |
-| Solana | Protocol-tested | Protocol-tested | Protocol-tested | **No** |
-| Cosmos | Protocol-tested | Protocol-tested | Protocol-tested | **No** |
+| Solana (native SOL) | Verified: real 3-party Ed25519 DKG, address is the base58 key | Verified | Protocol-tested: fake node, signature checked against the fee payer before relay | **No** |
+| Cosmos (bank send) | Verified: real 3-party secp256k1 DKG, bech32 address from the group key, threshold signature verifies as secp256k1 | Verified against independent known answers | Protocol-tested: SIGN_MODE_DIRECT decoded and verified the way a node does, low-S enforced, fake LCD | **No** |
 
-(This table is updated as Solana and Cosmos work lands; see git history.)
+What "protocol-tested" does and does not mean here. Nothing in this
+environment can reach a public chain, so no real Solana or Cosmos node has
+ever accepted a transaction from this code. The Solana wire format is the
+published legacy message format; the Cosmos encoding follows the SDK protos'
+field numbers but there is no SDK-published wire vector among the tests. The
+first thing to do with either chain is point it at devnet / a public testnet,
+fund a key, and send a transfer (`SOLANA_RPC_URL`, `COSMOS_LCD_URL`; see the
+chart values). Until that has happened, do not sell either as live.
+
+Not offered for Solana and Cosmos: SPL tokens, staking, IBC, CosmWasm, and
+reconciliation against the chain (it is EVM-only).
 
 ## 4. Known gaps in code
 
-Tracked here so they are not rediscovered. Each is fixed or stays listed.
+Each is fixed or stays listed.
 
-- Sanctions/AML screening in `services/compliance` previously always
-  returned an error, so it could never pass. Status below.
-- `temporal-worker/db/ceremony_rounds.go` round-data persistence was a stub.
-- Only Postgres failover is real. Vault, gateway and Temporal failover are
-  not implemented, and `services/backup` had no image or chart.
-- `deploy.yaml` built three of the images the platform needs.
+Fixed in this pass:
+
+- Sanctions screening in `services/compliance` always returned an error.
+  It now reads the same synced OFAC list as policy-service, refuses when
+  unconfigured, unreadable or stale, and the chart runs the sync for it.
+  Still not a vendor integration: it screens addresses against OFAC's list
+  only, with no Chainalysis/TRM-style risk scoring.
+- Keys for Solana were generated on the wrong curve (the worker sent the chain
+  name, mpc-party read a curve field). Fixed and tested over real HTTP parties.
+- The worker refused any message that was not 32 bytes, so no Solana
+  transaction could be signed.
+- The EVM transaction route would sign an Ethereum transaction for a Solana or
+  Cosmos key.
+- Bitcoin spends reached policy in satoshis, so amount limits and the
+  high-value approval rule could never fire. Non-EVM amounts now reach policy
+  in 18-decimal units. This is unit-correct but not price-aware: a limit of 10
+  is ten whole coins on every chain.
+- `ceremony_rounds.go` stubs that returned nil as if they persisted data were
+  deleted; nothing called them.
+- `deploy.yaml` built three of the thirteen images; it now builds every service
+  in `scripts/build-images.sh --list`.
+- The unmounted `multi-chain` module (with a hardcoded test API key) and the
+  SDK methods that always returned 404 were removed. `policyApi`, `settlement`
+  and `marketplace`, which nothing calls, now default to off in the chart.
+
+Still open:
+
+- Only Postgres failover is real. Vault, gateway and Temporal failover are not
+  implemented, and `services/backup` has no image or chart, so nothing runs it.
+- `deploy.yaml` still deploys the gateway to ECS while the documented runtime
+  is the Helm chart; the ECS path has never run against an AWS account.
+- Billing has never charged a card, and the gateway has a separate billing
+  module that does not call `services/billing`.
+- Bitcoin spends skip the Travel Rule (the route has no field for it).
+- Solana and Cosmos amounts are governed by unit-normalised policy, not by
+  price. A deployment that wants USD limits needs a price source.
+- `go vet` reports a lock copy at `mpc-party/tss_signing.go:257`
+  (pre-existing).
 - Legacy duplicates remain: `sdks/go`, `sdks/javascript`, `sdks/python`.
 - `apps/web`, `apps/admin`, `apps/mobile`, `apps/customer` are unbuilt
-  scaffolds that call routes the gateway does not have. The working UI is
-  the gateway console (`/console`).
+  scaffolds that call routes the gateway does not have. The working UI is the
+  gateway console (`/console`), which has no screen yet for creating keys or
+  sending transfers.
 
 ## 5. Minimum bar to call it production ready
 

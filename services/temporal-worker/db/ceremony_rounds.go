@@ -246,18 +246,3 @@ type RoundDataRecord struct {
 	Signature   string
 	SavedAt     time.Time
 }
-
-// SaveRoundData persists party data for a round.
-func (crs *CeremonyRoundStore) SaveRoundData(ctx context.Context, roundId string, partyId int, data map[string]interface{}) error {
-	// TODO: Create ceremony_round_data table
-	// INSERT INTO ceremony_round_data (round_id, party_id, commitments, dl_proof, public_key, signature)
-	// VALUES ($1, $2, $3, $4, $5, $6)
-
-	return nil
-}
-
-// GetRoundData retrieves all party data for a round.
-func (crs *CeremonyRoundStore) GetRoundData(ctx context.Context, roundId string) (map[int]map[string]interface{}, error) {
-	// TODO: Query ceremony_round_data table
-	return make(map[int]map[string]interface{}), nil
-}

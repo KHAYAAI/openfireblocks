@@ -33,61 +33,28 @@ const txs = await client.listTransactions();
 const audit = await client.getAuditTrail(result.requestId);
 ```
 
-## Multi-Chain Signing
+## Solana and Cosmos
 
-Sign transactions on multiple blockchains (Ethereum, Bitcoin, Solana, Cosmos):
+Spend from a threshold key on Solana or a Cosmos SDK chain. The platform
+builds the transaction, refuses what would fail (overdraft, rent, fee
+shortage) before any signing ceremony, and relays it once the signature
+verifies:
 
 ```ts
-// Get supported chains
-const chains = await client.getSupportedChains();
-console.log(chains.chains); // ['ethereum', 'bitcoin', 'solana', 'cosmos-hub']
-
-// Sign on Ethereum
-const ethResult = await client.signMultiChain({
-  chainId: 'ethereum',
-  message: '0xdeadbeef',
-  metadata: {
-    network: 'mainnet',
-  },
+const sol = await client.sendSolana(keyId, {
+  destination: '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM',
+  amount: '1000000000', // lamports
 });
+const status = await client.solanaTransactionStatus(keyId, sol.signature);
 
-// Sign on Bitcoin
-const btcResult = await client.signMultiChain({
-  chainId: 'bitcoin',
-  message: '0x...',
-  metadata: {
-    network: 'testnet',
-    utxos: [{ txid: '...', vout: 0, amount: 50000 }],
-  },
+const atom = await client.sendCosmos(keyId, {
+  destination: 'cosmos1qypqxpq9qcrsszg2pvxq6rs0zqg3yyc5lzv7xu',
+  amount: '1000000', // uatom
 });
-
-// Sign on Solana
-const solanaResult = await client.signMultiChain({
-  chainId: 'solana',
-  message: '0x...',
-  metadata: {
-    recentBlockhash: '...',
-  },
-});
-
-// Sign on Cosmos
-const cosmosResult = await client.signMultiChain({
-  chainId: 'cosmos-hub',
-  message: '0x...',
-  metadata: {
-    account_number: 123,
-    sequence: 0,
-  },
-});
-
-// Broadcast a signed transaction
-const broadcastResult = await client.broadcastTransaction({
-  chainId: 'ethereum',
-  signedTx: ethResult.signedTx!,
-});
-
-console.log(broadcastResult.txHash, broadcastResult.status);
 ```
+
+Native SOL and bank sends only. Both are protocol-tested but have not been
+accepted by a real network from this repository.
 
 Non-2xx responses throw `OpenFireblocksError` with `.status` and the parsed
 `.body` (e.g. policy denials return HTTP 403 with `{ denials: [...] }`).
