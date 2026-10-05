@@ -13,6 +13,8 @@ import { join } from 'path';
 const FILES: Record<string, string> = {
   'app.js': 'application/javascript; charset=utf-8',
   'views.js': 'application/javascript; charset=utf-8',
+  'showcase.js': 'application/javascript; charset=utf-8',
+  'showcase.css': 'text/css; charset=utf-8',
   'console.css': 'text/css; charset=utf-8',
   'icon.svg': 'image/svg+xml',
   'manifest.webmanifest': 'application/manifest+json',
@@ -50,6 +52,18 @@ export class ConsoleController {
   @Get('sso-callback')
   ssoCallback(@Res() res: Response) {
     this.page(res);
+  }
+
+  // A self-playing product walkthrough. Static and public: it carries no
+  // customer data and makes no API calls.
+  @Get('showcase')
+  showcase(@Res() res: Response) {
+    res
+      .status(200)
+      .type('html')
+      .setHeader('X-Frame-Options', 'DENY')
+      .setHeader('Cache-Control', 'no-store')
+      .send(load('showcase.html'));
   }
 
   @Get(':file')
