@@ -40,6 +40,8 @@ export interface PolicyDecision {
   approved: boolean;
   denials: string[];
   requiresApproval: boolean;
+  // Why approval is needed, for the approver to read.
+  approvalReasons?: string[];
   reason: string;
 }
 

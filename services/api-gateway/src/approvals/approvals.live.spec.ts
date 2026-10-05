@@ -8,6 +8,7 @@ import { randomUUID } from 'crypto';
 import { ApprovalsController } from './approvals.controller';
 import { OrganisationBootstrapController } from './bootstrap.controller';
 import { ApprovalsService } from './approvals.service';
+import { NativeApprovalHooks } from './native-approval-hooks';
 import { TenantRoleGuard } from './tenant-role.guard';
 import { SettlementsController } from '../settlements/settlements.controller';
 import { TemporalService } from '../settlements/temporal.service';
@@ -141,6 +142,7 @@ describe('approvals with segregation of duties (live Postgres)', () => {
       imports: [PassportModule, JwtModule.register({ secret: jwtSecret(), signOptions: { issuer: 'openfireblocks' } })],
       controllers: [ApprovalsController, OrganisationBootstrapController, SettlementsController],
       providers: [
+        NativeApprovalHooks,
         ApprovalsService,
         TenantRoleGuard,
         CustomerService,

@@ -25,7 +25,8 @@ import { TemporalService } from '../settlements/temporal.service';
 import { CustomerService } from '../customers/customer.service';
 import { SignRequestDto } from '../sign/dto/sign-request.dto';
 import { AuditService } from '../database/audit.service';
-import { ApprovalsService, Decision } from './approvals.service';
+import { ApprovalsService, Decision, NATIVE_WORKFLOW_PREFIX } from './approvals.service';
+import { NativeApprovalHooks } from './native-approval-hooks';
 import { RequireTenantRole, TenantRoleGuard } from './tenant-role.guard';
 import { ALL_ROLES, CAN_DECIDE, CAN_INITIATE, CAN_MANAGE, CAN_READ_APPROVALS, TenantRole } from './roles';
 import { v4 as uuid } from 'uuid';
@@ -84,6 +85,7 @@ export class ApprovalsController {
     private readonly temporal: TemporalService,
     private readonly customers: CustomerService,
     private readonly audit: AuditService,
+    private readonly native: NativeApprovalHooks,
   ) {}
 
   // ------------------------------------------------------------ approvals
@@ -120,6 +122,24 @@ export class ApprovalsController {
       stepUp,
     });
 
+    // A transfer the gateway signs itself has no workflow to signal. Its
+    // decision is acted on here: executed if this decision reached quorum,
+    // recorded if it was a rejection. An execution failure does not undo the
+    // decision; it is reported in `execution` and can be retried.
+    if (request.workflowId.startsWith(NATIVE_WORKFLOW_PREFIX)) {
+      const execution = await this.native.registered?.onDecision(customerId, request);
+      if (!alreadyRecorded) {
+        await this.audit.logEvent({
+          type: `approval.${dto.decision}`,
+          requestId: approvalId,
+          customerId,
+          message: `${claims.email} decided ${dto.decision} (${stepUp}); now ${request.approvals}/${request.requiredApprovals}, ${request.status}`,
+          status: request.status,
+        });
+      }
+      return { ...request, execution: execution ?? request.execution };
+    }
+
     // Recorded first, delivered second. If delivery fails the decision
     // still stands; sending the same request again re-delivers it.
     try {
@@ -144,6 +164,27 @@ export class ApprovalsController {
       });
     }
     return request;
+  }
+
+  // Runs a transfer again after its execution failed (the signer was down, a
+  // node refused it). The approval stands; nothing new is approved. Admins
+  // only: it moves money, and the person who asked for it may be the one who
+  // is not allowed to approve it.
+  @Post('approvals/:approvalId/execute')
+  @HttpCode(HttpStatus.OK)
+  @RequireTenantRole(...CAN_MANAGE)
+  async retryExecution(@Param('customerId') customerId: string, @Param('approvalId') approvalId: string, @CurrentUser() claims: JwtClaims) {
+    const handler = this.native.registered;
+    if (!handler) throw new BadGatewayException('transfer execution is not available');
+    const execution = await handler.retry(customerId, approvalId);
+    await this.audit.logEvent({
+      type: 'approval.execution_retried',
+      requestId: approvalId,
+      customerId,
+      message: `${claims.email} retried the execution; now ${execution.status}`,
+      status: execution.status,
+    });
+    return execution;
   }
 
   // Password accounts prove presence with a fresh one-time code on each

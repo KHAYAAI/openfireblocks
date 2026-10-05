@@ -10,6 +10,8 @@ import { Pool } from 'pg';
 import { PG_POOL } from '../database/pg-pool.token';
 import { TenantRole, isTenantRole } from './roles';
 import { UUID_RE, withTenant } from './tenant-db';
+import { v4 as uuidv4 } from 'uuid';
+import type { TransferExecution } from './native-approval-hooks';
 
 export interface ApprovalPolicy {
   requiredApprovals: number;
@@ -43,6 +45,8 @@ export interface ApprovalRequestView {
   expiresAt: string;
   decidedAt: string | null;
   decisions?: ApprovalDecisionView[];
+  // For a transfer the gateway signs itself: what became of it.
+  execution?: TransferExecution;
 }
 
 export interface Member {
@@ -55,6 +59,25 @@ export interface Member {
 }
 
 export type Decision = 'approve' | 'reject';
+
+// Approval requests for transfers the gateway signs itself carry this prefix in
+// their workflow id (the column is unique, so it doubles as the request's
+// natural key). Settlements keep their Temporal workflow ids.
+export const NATIVE_WORKFLOW_PREFIX = 'native:';
+
+export type TransferKind = 'bitcoin' | 'solana' | 'cosmos' | 'evm';
+
+export interface PendingTransferRow {
+  approvalId: string;
+  customerId: string;
+  keyId: string;
+  kind: TransferKind;
+  request: Record<string, any>;
+  prepared: Record<string, any> | null;
+  status: TransferExecution['status'];
+  result: Record<string, unknown> | null;
+  error: string | null;
+}
 
 // Defaults when a tenant has set no policy. Must match migration 023 and
 // the worker's OpenApprovalRequest.
@@ -207,6 +230,7 @@ export class ApprovalsService {
     if (status && !['pending', 'approved', 'rejected', 'expired'].includes(status)) {
       throw new BadRequestException('status must be pending, approved, rejected or expired');
     }
+    await this.expireStaleTransfers(customerId);
     const r = await withTenant(this.pool, customerId, (c) =>
       c.query(
         `SELECT r.*,
@@ -224,6 +248,7 @@ export class ApprovalsService {
 
   async get(customerId: string, approvalId: string): Promise<ApprovalRequestView> {
     if (!UUID_RE.test(approvalId)) throw new NotFoundException('approval request not found');
+    await this.expireStaleTransfers(customerId);
     return withTenant(this.pool, customerId, async (c) => {
       const r = await c.query(
         `SELECT r.*,
@@ -234,6 +259,10 @@ export class ApprovalsService {
       );
       if (!r.rows[0]) throw new NotFoundException('approval request not found');
       const view = toView(r.rows[0]);
+      const pt = await c.query(`SELECT status, result, error FROM pending_transfers WHERE approval_id = $1`, [approvalId]);
+      if (pt.rows[0]) {
+        view.execution = { status: pt.rows[0].status, result: pt.rows[0].result, error: pt.rows[0].error };
+      }
       const d = await c.query(
         `SELECT d.user_id, u.email, u.full_name, d.decision, d.reason, d.step_up, d.created_at
            FROM approval_decisions d JOIN users u ON u.id = d.user_id
@@ -306,6 +335,104 @@ export class ApprovalsService {
       }
     }
     return { request: await this.get(input.customerId, input.approvalId), alreadyRecorded };
+  }
+
+  // ------------------------------------------- transfers the gateway signs
+
+  // Opens an approval request and the pending transfer it is for, together: a
+  // request with nothing to execute, or a transfer with nothing to approve,
+  // would each be a way for money to wait forever or move unasked.
+  async openTransferRequest(input: {
+    customerId: string;
+    initiator: { userId: string | null; label: string };
+    requiredApprovals: number;
+    windowMinutes: number;
+    summary: Record<string, unknown>;
+    keyId: string;
+    kind: TransferKind;
+    request: Record<string, unknown>;
+  }): Promise<{ approvalId: string; expiresAt: string }> {
+    const workflowId = NATIVE_WORKFLOW_PREFIX + uuidv4();
+    return withTenant(this.pool, input.customerId, async (c) => {
+      const r = await c.query(
+        `INSERT INTO approval_requests
+           (customer_id, workflow_id, initiated_by_user_id, initiated_by_label, required_approvals, summary, expires_at)
+         VALUES ($1, $2, $3, $4, $5, $6, NOW() + ($7 || ' minutes')::interval)
+         RETURNING approval_id, expires_at`,
+        [input.customerId, workflowId, input.initiator.userId, input.initiator.label, input.requiredApprovals,
+          JSON.stringify(input.summary), String(input.windowMinutes)],
+      );
+      await c.query(
+        `INSERT INTO pending_transfers (approval_id, customer_id, key_id, kind, request) VALUES ($1, $2, $3, $4, $5)`,
+        [r.rows[0].approval_id, input.customerId, input.keyId, input.kind, JSON.stringify(input.request)],
+      );
+      return { approvalId: r.rows[0].approval_id, expiresAt: new Date(r.rows[0].expires_at).toISOString() };
+    });
+  }
+
+  async pendingTransfer(customerId: string, approvalId: string): Promise<PendingTransferRow | null> {
+    if (!UUID_RE.test(approvalId)) return null;
+    const r = await withTenant(this.pool, customerId, (c) =>
+      c.query(`SELECT * FROM pending_transfers WHERE approval_id = $1`, [approvalId]),
+    );
+    const x = r.rows[0];
+    return x
+      ? { approvalId: x.approval_id, customerId: x.customer_id, keyId: x.key_id, kind: x.kind, request: x.request,
+          prepared: x.prepared, status: x.status, result: x.result, error: x.error }
+      : null;
+  }
+
+  // Moves a pending transfer along its lifecycle, returning whether THIS call
+  // made the move. The database allows only one caller to take "executing"
+  // (and refuses it unless the approval is approved), so a decision delivered
+  // twice, or an admin retrying while a run is in flight, cannot send twice.
+  async transitionTransfer(
+    customerId: string,
+    approvalId: string,
+    from: string[],
+    to: TransferExecution['status'],
+    patch: { result?: Record<string, unknown>; error?: string | null; prepared?: Record<string, unknown> } = {},
+  ): Promise<boolean> {
+    try {
+      const r = await withTenant(this.pool, customerId, (c) =>
+        c.query(
+          `UPDATE pending_transfers
+              SET status = $3, result = COALESCE($4::jsonb, result), error = $5, prepared = COALESCE($6::jsonb, prepared)
+            WHERE approval_id = $1 AND customer_id = $2 AND status = ANY($7::text[])
+            RETURNING approval_id`,
+          [approvalId, customerId, to,
+            patch.result ? JSON.stringify(patch.result) : null,
+            patch.error ?? null,
+            patch.prepared ? JSON.stringify(patch.prepared) : null,
+            from],
+        ),
+      );
+      return (r.rowCount ?? 0) > 0;
+    } catch (err) {
+      const code = (err as { code?: string }).code;
+      if (code === 'OFB01' || code === 'OFB03') return false;
+      throw err;
+    }
+  }
+
+  // A request nobody decided in time. Done when requests are read, per
+  // organisation, rather than by a scheduler: there is nothing to do until
+  // someone looks, and the database refuses a decision after expiry anyway.
+  async expireStaleTransfers(customerId: string): Promise<void> {
+    await withTenant(this.pool, customerId, async (c) => {
+      const r = await c.query(
+        `UPDATE approval_requests SET status = 'expired', decided_at = NOW()
+          WHERE customer_id = $1 AND workflow_id LIKE $2 AND status = 'pending' AND expires_at < NOW()
+          RETURNING approval_id`,
+        [customerId, NATIVE_WORKFLOW_PREFIX + '%'],
+      );
+      if (r.rows.length) {
+        await c.query(
+          `UPDATE pending_transfers SET status = 'expired' WHERE approval_id = ANY($1::uuid[]) AND status = 'awaiting_approval'`,
+          [r.rows.map((x) => x.approval_id)],
+        );
+      }
+    });
   }
 
   // --------------------------------------------------------------- members

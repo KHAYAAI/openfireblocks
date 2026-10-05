@@ -18,6 +18,7 @@ import { BitcoinTransactionDto } from './dto/bitcoin-transaction.dto';
 import { SolanaTransactionDto } from './dto/solana-transaction.dto';
 import { CosmosTransactionDto } from './dto/cosmos-transaction.dto';
 import { ChainSignerClient } from './chain-signer-client';
+import { ApprovalRequiredException } from './approval-required.exception';
 import {
   BitcoinSignerClient,
   SignerError,
@@ -109,6 +110,13 @@ export function stableUuid(requestId: string): string {
     : uuidv5(requestId, REQUEST_ID_NAMESPACE);
 }
 
+// Options for the routes that can run after an approval.
+export interface SendOptions {
+  // True only when the transfer is being executed because its approval
+  // request reached quorum. Lifts the requiresApproval gate, never a denial.
+  approvalGranted?: boolean;
+}
+
 // Blockchains whose keys are secp256k1 keys with an Ethereum address, which
 // is what the EVM transaction builder produces signatures for.
 const EVM_BLOCKCHAINS = new Set(['ethereum', 'polygon']);
@@ -124,7 +132,7 @@ const NATIVE_CHAINS = {
 // Policy thresholds are written in wei. A non-EVM amount is scaled to the
 // same 18 decimals so that "10" means ten whole coins on every chain instead
 // of ten smallest units.
-function toPolicyUnits(amount: string, decimals: number): string {
+export function toPolicyUnits(amount: string, decimals: number): string {
   if (!/^[0-9]+$/.test(amount) || decimals < 0 || decimals > 18) {
     throw new BadRequestException('amount must be a non-negative integer in base units');
   }
@@ -528,7 +536,7 @@ export class KeysService {
   // digest of another gets a policy decision about the wrong transaction.
   // Here the fields policy sees are the fields that get hashed -- there is
   // no caller-supplied digest to disagree with them.
-  async signTransaction(customer: Customer, keyId: string, req: SignTransactionDto) {
+  async signTransaction(customer: Customer, keyId: string, req: SignTransactionDto, opts: SendOptions = {}) {
     const requestId = req.idempotencyKey ?? uuidv4();
 
     const key = await this.loadSignableKey(keyId, customer.customer_id);
@@ -580,7 +588,7 @@ export class KeysService {
       assetDecimals: intent.assetDecimals,
       pegCurrency: intent.pegCurrency,
       isAllowance: intent.isAllowance,
-    });
+    }, opts.approvalGranted);
 
     const travelRecord = await this.travelRuleBeforeSigning(
       customer,
@@ -1099,7 +1107,7 @@ export class KeysService {
   // One ceremony per input. That is unavoidable: each input is a separate
   // signature over a separate digest, and a threshold signature cannot be
   // batched. It is also why coin selection minimises the input count.
-  async sendBitcoin(customer: Customer, keyId: string, req: BitcoinTransactionDto) {
+  async sendBitcoin(customer: Customer, keyId: string, req: BitcoinTransactionDto, opts: SendOptions = {}) {
     const requestId = req.idempotencyKey ?? uuidv4();
 
     const key = await this.loadSignableKey(keyId, customer.customer_id);
@@ -1131,7 +1139,7 @@ export class KeysService {
       value: toPolicyUnits(req.amount, 8),
       chainId: 0,
       country: req.country,
-    });
+    }, opts.approvalGranted);
 
     const network = process.env.BITCOIN_NETWORK ?? 'mainnet';
 
@@ -1264,6 +1272,7 @@ export class KeysService {
     amount: string,
     country: string | undefined,
     travelRule: TravelRuleInput | undefined,
+    approvalGranted = false,
   ): Promise<string | null> {
     const normalised = toPolicyUnits(amount, chain.decimals);
     await this.enforcePolicy(customer, requestId, {
@@ -1274,7 +1283,7 @@ export class KeysService {
       asset: 'NATIVE',
       assetAmount: normalised,
       assetDecimals: 18,
-    });
+    }, approvalGranted);
     return this.travelRuleBeforeSigning(
       customer,
       requestId,
@@ -1286,6 +1295,17 @@ export class KeysService {
     );
   }
 
+  // Checks that Travel Rule information is complete for a transfer, without
+  // recording anything. Throws 422 naming what is missing. Used when a transfer
+  // is parked for approval, so that approvers are never asked to approve one
+  // that would fail for missing information after they have.
+  assertTravelRuleComplete(
+    facts: { asset: string; amount: string; decimals: number },
+    input: TravelRuleInput | undefined,
+  ): void {
+    this.travelRule?.assess(facts, input);
+  }
+
   // Sends SOL from a threshold Ed25519 key.
   //
   // Same shape as sendBitcoin: policy, then the signer prepares (and refuses
@@ -1293,7 +1313,7 @@ export class KeysService {
   // ceremony), then one threshold ceremony over the message, then the signer
   // verifies the signature against the fee payer and relays. SPL tokens are
   // not offered.
-  async sendSolana(customer: Customer, keyId: string, req: SolanaTransactionDto) {
+  async sendSolana(customer: Customer, keyId: string, req: SolanaTransactionDto, opts: SendOptions = {}) {
     const requestId = req.idempotencyKey ?? uuidv4();
     const key = await this.loadSignableKey(keyId, customer.customer_id);
     if (key.blockchain !== 'solana') {
@@ -1314,7 +1334,7 @@ export class KeysService {
     }
 
     const travelRecord = await this.governNativeSpend(
-      customer, requestId, NATIVE_CHAINS.solana, from, req.destination, req.amount, req.country, req.travelRule,
+      customer, requestId, NATIVE_CHAINS.solana, from, req.destination, req.amount, req.country, req.travelRule, opts.approvalGranted,
     );
 
     let prepared;
@@ -1393,7 +1413,7 @@ export class KeysService {
   // Sends a bank denomination from a threshold secp256k1 key on a Cosmos SDK
   // chain, in SIGN_MODE_DIRECT. One MsgSend; staking, IBC and CosmWasm are
   // not offered.
-  async sendCosmos(customer: Customer, keyId: string, req: CosmosTransactionDto) {
+  async sendCosmos(customer: Customer, keyId: string, req: CosmosTransactionDto, opts: SendOptions = {}) {
     const requestId = req.idempotencyKey ?? uuidv4();
     const key = await this.loadSignableKey(keyId, customer.customer_id);
     if (key.blockchain !== 'cosmos') {
@@ -1415,7 +1435,7 @@ export class KeysService {
     // denom is governed the same way, which is conservative rather than
     // priced.
     const travelRecord = await this.governNativeSpend(
-      customer, requestId, NATIVE_CHAINS.cosmos, from, req.destination, req.amount, req.country, req.travelRule,
+      customer, requestId, NATIVE_CHAINS.cosmos, from, req.destination, req.amount, req.country, req.travelRule, opts.approvalGranted,
     );
 
     let prepared;
@@ -1595,6 +1615,7 @@ export class KeysService {
       pegCurrency?: string;
       isAllowance?: boolean;
     },
+    approvalGranted = false,
   ) {
     const overrides = (customer.policies ?? {}) as Record<string, unknown>;
     const decision = await this.policy.evaluate({
@@ -1622,6 +1643,13 @@ export class KeysService {
         requiresApproval: decision.requiresApproval,
         requestId,
       });
+    }
+    // Approved on condition. Without this, "approved: true, requiresApproval:
+    // true" fell through and every high-value transfer was signed at once.
+    // approvalGranted is set only by the path that executes a transfer after
+    // its approval request reached quorum.
+    if (decision.requiresApproval && !approvalGranted) {
+      throw new ApprovalRequiredException(decision.approvalReasons ?? [], requestId);
     }
   }
 

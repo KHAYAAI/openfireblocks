@@ -193,6 +193,51 @@ describe('KeysService.sendCosmos', () => {
   });
 });
 
+// The policy service says "approved: true, requiresApproval: true" for a
+// high-value transfer. enforcePolicy used to read only `approved`, so every
+// route signed such a transfer at once.
+describe('transfers that policy says need approval', () => {
+  const needsApproval = { approved: true, denials: [], requiresApproval: true, approvalReasons: ['high-value transaction (> 10 ETH) requires approval'], reason: 'approved, manual approval required' };
+
+  it.each([
+    ['solana', solKey, (s: KeysService) => s.sendSolana(customer, 'sol-1', { destination: SOL_DEST, amount: '1000000000' })],
+    ['cosmos', cosKey, (s: KeysService) => s.sendCosmos(customer, 'cos-1', { destination: COS_DEST, amount: '1000000' })],
+  ])('are not signed on a %s key', async (_n, key, run) => {
+    const calls = mockSigner();
+    const { service, policy, temporal } = build({ key });
+    (policy.evaluate as jest.Mock).mockResolvedValue(needsApproval);
+    await expect(run(service)).rejects.toMatchObject({ reasons: ['high-value transaction (> 10 ETH) requires approval'] });
+    expect(temporal.signWithThreshold).not.toHaveBeenCalled();
+    expect(calls['/solana/prepare']).toBeUndefined();
+    expect(calls['/cosmos/prepare']).toBeUndefined();
+  });
+
+  it('are not signed on an EVM key either', async () => {
+    mockSigner();
+    const { service, policy, temporal } = build({ key: ethKey });
+    (policy.evaluate as jest.Mock).mockResolvedValue(needsApproval);
+    await expect(service.signTransaction(customer, 'eth-1', {
+      to: '0x70997970C51812dc3A010C7d01b50e0d17dc79C8', value: '42500000000000000000', gasLimit: 21000, nonce: 0, chainId: 1, gasPrice: '1',
+    } as never)).rejects.toThrow(/needs approval/);
+    expect(temporal.signWithThreshold).not.toHaveBeenCalled();
+  });
+
+  it('are signed when they are being executed after their approval reached quorum', async () => {
+    mockSigner();
+    const { service, policy, temporal } = build({ key: solKey });
+    (policy.evaluate as jest.Mock).mockResolvedValue(needsApproval);
+    const res = await service.sendSolana(customer, 'sol-1', { destination: SOL_DEST, amount: '1000000000' }, { approvalGranted: true });
+    expect(res.broadcast).toBe(true);
+    expect(temporal.signWithThreshold).toHaveBeenCalled();
+  });
+
+  it('a policy denial is never lifted by an approval', async () => {
+    mockSigner();
+    const { service } = build({ key: solKey, approved: false });
+    await expect(service.sendSolana(customer, 'sol-1', { destination: SOL_DEST, amount: '1' }, { approvalGranted: true })).rejects.toThrow();
+  });
+});
+
 describe('keeping other chains\' keys out of the EVM routes', () => {
   it.each([['solana', solKey], ['cosmos', cosKey]])('POST :keyId/transactions refuses a %s key', async (_n, key) => {
     mockSigner();
