@@ -5,6 +5,7 @@ import { KeysModule } from '../keys/keys.module';
 import { ApprovalsModule } from '../approvals/approvals.module';
 import { DashboardController } from './dashboard.controller';
 import { OrgDashboardController } from './org-dashboard.controller';
+import { OrgKeysController } from './org-keys.controller';
 import { DashboardService } from './dashboard.service';
 
 // A web console, served by the API gateway itself.
@@ -21,7 +22,7 @@ import { DashboardService } from './dashboard.service';
 // customer holds.
 @Module({
   imports: [DatabaseModule, CustomersModule, KeysModule, ApprovalsModule],
-  controllers: [DashboardController, OrgDashboardController],
+  controllers: [DashboardController, OrgDashboardController, OrgKeysController],
   providers: [DashboardService],
 })
 export class DashboardModule {}

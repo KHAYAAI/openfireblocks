@@ -20,6 +20,7 @@ import { ThresholdSignRequestDto } from './dto/threshold-sign.dto';
 import { SignTransactionDto } from './dto/sign-transaction.dto';
 import { BitcoinTransactionDto } from './dto/bitcoin-transaction.dto';
 import { TokenTransferDto } from './dto/token-transfer.dto';
+import { validateCreateKey } from './create-key.validation';
 import { SolanaTransactionDto } from './dto/solana-transaction.dto';
 import { CosmosTransactionDto } from './dto/cosmos-transaction.dto';
 
@@ -34,31 +35,7 @@ export class KeysController {
     @CurrentCustomer() customer: Customer,
     @Body() req: CreateKeyRequest,
   ) {
-    // Validate blockchain
-    const validBlockchains = ['bitcoin', 'ethereum', 'solana', 'cosmos', 'polygon'];
-    if (!validBlockchains.includes(req.blockchain)) {
-      throw new BadRequestException(
-        `Unsupported blockchain: ${req.blockchain}. Supported: ${validBlockchains.join(', ')}`,
-      );
-    }
-
-    // Validate threshold
-    if (req.threshold < 1 || req.total_parties < 1) {
-      throw new BadRequestException('threshold and total_parties must be >= 1');
-    }
-
-    if (req.threshold > req.total_parties) {
-      throw new BadRequestException(
-        'threshold must be <= total_parties',
-      );
-    }
-
-    // Validate threshold (at least k-of-n where k >= 2 for security)
-    if (req.threshold < 2 && req.total_parties > 1) {
-      throw new BadRequestException(
-        'For multi-party keys, threshold must be >= 2',
-      );
-    }
+    validateCreateKey(req);
 
     return this.keysService.createKey(customer, req);
   }

@@ -120,9 +120,12 @@
     loading(content);
     api('GET', orgPath('/keys')).then(function (r) {
       if (!r.ok) return failed(content, r);
-      replace(content, [el('div', { className: 'card' }, [
+      var parts = [];
+      if (O.isAdmin()) parts.push(el('div', { className: 'actions', style: 'margin-bottom:14px' }, [el('button', { type: 'button', className: 'accent', text: '+ New key', onclick: function () { keyCreateForm(content); } })]));
+      parts.push(el('div', { className: 'card' }, [
         sheet(['Name', 'Chain', 'Threshold', 'Address', 'Status', 'Created'], r.body.map(keyRow), { emptyText: 'No keys provisioned yet.' }),
-      ])]);
+      ]));
+      replace(content, parts);
     });
   }
 
@@ -186,12 +189,200 @@
           { label: 'Signatures', value: String(signingRows.length) + '+' },
         ]),
         el('div', { className: 'card' }, [el('div', { className: 'card-head' }, [el('h2', { text: 'Addresses' })])].concat(addressRows)),
+        sendCard(k, content, function () { keyDetail(keyId, content); }),
         el('div', { className: 'card' }, [el('div', { className: 'card-head' }, [el('h2', { text: 'Balances' })])].concat(balanceBody)),
         el('div', { className: 'card' }, [el('div', { className: 'card-head' }, [el('h2', { text: 'Recent signing requests' })]), sheet(['When', 'Status', 'Chain', { label: 'Latency', num: true }, 'Tx hash'], signingRows, { emptyText: 'No signing requests yet.' })]),
         el('div', { className: 'card' }, [el('div', { className: 'card-head' }, [el('h2', { text: 'Ceremonies' })]), sheet(['Started', 'Status', 'Progress', 'Completed'], ceremonyRows, { emptyText: 'No ceremonies recorded.' })]),
         el('details', null, [el('summary', { className: 'muted', style: 'cursor:pointer;font-size:12px', text: 'Public key' }), el('p', { className: 'mono trunc', style: 'margin-top:8px', text: k.public_key || '—' })]),
       ]);
     });
+  }
+
+
+  // ------------------------------------------------- creating keys, sending
+
+  var SEND_CHAINS = {
+    bitcoin: { unit: 'BTC', decimals: 8, path: '/bitcoin-transactions', placeholder: 'bc1q… (tb1q… on testnet)' },
+    solana: { unit: 'SOL', decimals: 9, path: '/solana-transactions', placeholder: 'base58 address' },
+    cosmos: { unit: 'ATOM', decimals: 6, path: '/cosmos-transactions', placeholder: 'cosmos1…', memo: true },
+  };
+
+  // A decimal amount in whole coins to a base-10 string of base units, or
+  // null. Refuses more fractional digits than the coin has rather than
+  // rounding: the amount a person typed must be the amount that is sent.
+  function toBaseUnits(text, decimals) {
+    var t = String(text).trim();
+    if (!/^[0-9]+(\.[0-9]+)?$/.test(t)) return null;
+    var parts = t.split('.');
+    var frac = parts[1] || '';
+    if (frac.length > decimals) return null;
+    var digits = (parts[0] + frac + new Array(decimals - frac.length + 1).join('0')).replace(/^0+/, '');
+    return digits === '' ? null : digits;
+  }
+
+  function newRequestId() {
+    if (window.crypto && window.crypto.randomUUID) return window.crypto.randomUUID();
+    return 'req-' + Date.now() + '-' + Math.random().toString(16).slice(2);
+  }
+
+  function field(id, label, input) { return [el('label', { for: id, text: label }), input]; }
+
+  function keyCreateForm(content) {
+    var chain = el('select', { id: 'k-chain' }, [
+      ['ethereum', 'Ethereum'], ['polygon', 'Polygon'], ['bitcoin', 'Bitcoin'], ['solana', 'Solana'], ['cosmos', 'Cosmos'],
+    ].map(function (c) { return el('option', { value: c[0], text: c[1] }); }));
+    var name = el('input', { id: 'k-name', placeholder: 'Treasury hot wallet' });
+    var threshold = el('input', { id: 'k-threshold', type: 'number', min: '2', max: '10', value: '2' });
+    var parties = el('input', { id: 'k-parties', type: 'number', min: '2', max: '10', value: '3' });
+    var status = el('div');
+    var form = el('form', {
+      onsubmit: function (e) {
+        e.preventDefault();
+        var body = { blockchain: chain.value, name: name.value.trim() || undefined, threshold: Number(threshold.value), total_parties: Number(parties.value) };
+        status.replaceChildren(notice('Starting the key ceremony…'));
+        api('POST', orgPath('/keys'), body).then(function (r) {
+          if (!r.ok) return status.replaceChildren(notice(errorText(r), 'error'));
+          replace(content, [
+            notice('Key created. The signing parties are generating it now; it becomes usable when its status turns active.', 'ok'),
+            el('div', { className: 'card' }, [el('dl', { className: 'facts' }, [
+              el('dt', { text: 'Key' }), el('dd', { className: 'mono', text: r.body.id }),
+              el('dt', { text: 'Chain' }), el('dd', { text: r.body.blockchain }),
+              el('dt', { text: 'Threshold' }), el('dd', { text: r.body.threshold + '-of-' + r.body.total_parties }),
+              el('dt', { text: 'Status' }), el('dd', null, [tag(r.body.status)]),
+            ])]),
+            el('div', { className: 'actions' }, [el('button', { type: 'button', className: 'primary', text: 'Back to keys', onclick: function () { keysList(content); } })]),
+          ]);
+        });
+      },
+    }, [].concat(
+      field('k-chain', 'Blockchain', chain), field('k-name', 'Name', name),
+      [el('div', { className: 'field-row' }, [
+        el('div', null, field('k-threshold', 'Signatures needed', threshold)),
+        el('div', null, field('k-parties', 'Signing parties', parties)),
+      ])],
+      [el('p', { className: 'muted', text: 'Any two parties sign; no single party can spend. A threshold of 1 is not offered for a multi-party key.' })],
+      [el('div', { className: 'actions' }, [
+        el('button', { type: 'submit', className: 'accent', text: 'Create key' }),
+        el('button', { type: 'button', className: 'ghost', text: 'Cancel', onclick: function () { keysList(content); } }),
+      ]), status]
+    ));
+    replace(content, [el('div', { className: 'card' }, [el('h2', { text: 'New key' }), form])]);
+  }
+
+  // Optional IVMS101 details. Sent only if something is filled in; a transfer
+  // that needs them and does not have them is refused by the server, which
+  // says exactly what is missing.
+  function travelRuleFields() {
+    var orgName = (O.state.org && O.state.org.name) || '';
+    var oName = el('input', { id: 'tr-oname', value: orgName });
+    var oAddr = el('input', { id: 'tr-oaddr', placeholder: 'Street, city' });
+    var oCountry = el('input', { id: 'tr-ocountry', maxlength: '2', placeholder: 'ZA', style: 'text-transform:uppercase' });
+    var bKind = el('select', { id: 'tr-bkind' }, [el('option', { value: 'company', text: 'Company' }), el('option', { value: 'person', text: 'Person' })]);
+    var bName = el('input', { id: 'tr-bname', placeholder: 'Company name, or surname' });
+    var bGiven = el('input', { id: 'tr-bgiven', placeholder: 'Given names (person only)' });
+    var bHolder = el('select', { id: 'tr-bholder' }, [el('option', { value: 'self', text: 'Holds their own wallet' }), el('option', { value: 'vasp', text: 'Held by an exchange or custodian' })]);
+    var bVasp = el('input', { id: 'tr-bvasp', placeholder: 'Exchange or custodian name' });
+    var node = el('details', { className: 'card tight' }, [
+      el('summary', { className: 'muted', style: 'cursor:pointer', text: 'Travel Rule details (required above the reporting threshold)' }),
+      el('div', { style: 'margin-top:10px' }, [].concat(
+        [el('div', { className: 'eyebrow', text: 'Sender' })], field('tr-oname', 'Name', oName), field('tr-oaddr', 'Address', oAddr), field('tr-ocountry', 'Country (2 letters)', oCountry),
+        [el('div', { className: 'eyebrow', style: 'margin-top:12px', text: 'Recipient' })], field('tr-bkind', 'Recipient is a', bKind), field('tr-bname', 'Name', bName), field('tr-bgiven', 'Given names', bGiven),
+        field('tr-bholder', 'Wallet', bHolder), field('tr-bvasp', 'Provider', bVasp)
+      )),
+    ]);
+    function build() {
+      if (!bName.value.trim() && !oAddr.value.trim()) return undefined;
+      var addr = oAddr.value.trim() ? { addressLine: [oAddr.value.trim()], country: oCountry.value.trim().toUpperCase() } : undefined;
+      var originator = { legalPerson: { name: oName.value.trim(), geographicAddress: addr } };
+      var beneficiary = bKind.value === 'person'
+        ? { naturalPerson: { name: { primaryIdentifier: bName.value.trim(), secondaryIdentifier: bGiven.value.trim() || undefined } } }
+        : { legalPerson: { name: bName.value.trim() } };
+      var tr = { originator: originator, beneficiary: beneficiary };
+      if (bHolder.value === 'self') tr.beneficiaryUnhosted = true; else tr.beneficiaryVasp = { name: bVasp.value.trim() };
+      return tr;
+    }
+    return { node: node, build: build };
+  }
+
+  function sendForm(k, content, back) {
+    var cfg = SEND_CHAINS[k.blockchain];
+    var dest = el('input', { id: 's-dest', required: true, placeholder: cfg.placeholder, autocomplete: 'off', spellcheck: 'false' });
+    var amt = el('input', { id: 's-amt', required: true, inputmode: 'decimal', placeholder: '0.00' });
+    var memo = cfg.memo ? el('input', { id: 's-memo', maxlength: '256', placeholder: 'Optional' }) : null;
+    var tr = travelRuleFields();
+    var status = el('div');
+    var form = el('form', {
+      onsubmit: function (e) {
+        e.preventDefault();
+        var base = toBaseUnits(amt.value, cfg.decimals);
+        if (!base) return status.replaceChildren(notice('Enter a positive amount with at most ' + cfg.decimals + ' decimal places.', 'error'));
+        var body = { destination: dest.value.trim(), amount: base };
+        if (memo && memo.value.trim()) body.memo = memo.value.trim();
+        var t = tr.build();
+        if (t) body.travelRule = t;
+        review(k, cfg, body, amt.value.trim(), content, function () { sendForm(k, content, back); }, back);
+      },
+    }, [].concat(
+      field('s-dest', 'To', dest), field('s-amt', 'Amount (' + cfg.unit + ')', amt), memo ? field('s-memo', 'Memo', memo) : [],
+      [tr.node],
+      [el('div', { className: 'actions' }, [
+        el('button', { type: 'submit', className: 'accent', text: 'Review' }),
+        el('button', { type: 'button', className: 'ghost', text: 'Cancel', onclick: back }),
+      ]), status]
+    ));
+    replace(content, [el('div', { className: 'card' }, [el('h2', { text: 'Send ' + cfg.unit + ' from ' + (k.name || 'this key') }), form])]);
+  }
+
+  // The last look before money moves. The request id is made here, once, so a
+  // double click or a retry after a timeout replays the same transfer instead
+  // of sending a second one.
+  function review(k, cfg, body, shown, content, edit, back) {
+    var requestId = newRequestId();
+    var status = el('div');
+    var send = el('button', { type: 'button', className: 'accent', text: 'Confirm and send' });
+    send.onclick = function () {
+      send.disabled = true;
+      status.replaceChildren(notice('Signing… this runs a threshold ceremony and can take a few seconds.'));
+      var payload = Object.assign({ idempotencyKey: requestId }, body);
+      api('POST', orgPath('/keys/' + encodeURIComponent(k.key_id) + cfg.path), payload).then(function (r) {
+        if (!r.ok) {
+          send.disabled = false;
+          return status.replaceChildren(notice(errorText(r), 'error'));
+        }
+        var b = r.body;
+        replace(content, [
+          notice(b.broadcast === false ? 'Signed, not broadcast.' : 'Sent. It is on its way to the network.', 'ok'),
+          el('div', { className: 'card' }, [el('dl', { className: 'facts' }, [
+            el('dt', { text: 'Transaction' }), el('dd', { className: 'mono', style: 'word-break:break-all', text: b.txid || b.signature || b.txhash }),
+            el('dt', { text: 'To' }), el('dd', { className: 'mono', style: 'word-break:break-all', text: body.destination }),
+            el('dt', { text: 'Amount' }), el('dd', { text: shown + ' ' + cfg.unit }),
+            el('dt', { text: 'Network fee' }), el('dd', { className: 'mono', text: String(b.fee) + ' (base units)' }),
+          ])]),
+          el('div', { className: 'actions' }, [el('button', { type: 'button', className: 'primary', text: 'Back to key', onclick: back })]),
+        ]);
+      });
+    };
+    replace(content, [el('div', { className: 'card' }, [
+      el('h2', { text: 'Review this transfer' }),
+      el('dl', { className: 'facts' }, [
+        el('dt', { text: 'From' }), el('dd', null, [el('div', { text: k.name || '(unnamed key)' }), el('div', { className: 'muted mono', style: 'font-size:11.5px', text: k.key_id })]),
+        el('dt', { text: 'To' }), el('dd', { className: 'mono', style: 'word-break:break-all', text: body.destination }),
+        el('dt', { text: 'Amount' }), el('dd', { style: 'font-size:17px;font-weight:650', className: 'mono', text: shown + ' ' + cfg.unit }),
+        body.memo ? el('dt', { text: 'Memo' }) : null, body.memo ? el('dd', { text: body.memo }) : null,
+        el('dt', { text: 'Fee' }), el('dd', { text: 'Set by the network when the transfer is prepared, and shown after.' }),
+      ].filter(Boolean)),
+      el('p', { className: 'muted', style: 'margin:14px 0', text: 'This is checked against your organisation\'s policy first. A transfer that policy says needs approval is refused here: these chains have no approval step yet.' }),
+      el('div', { className: 'actions' }, [send, el('button', { type: 'button', className: 'ghost', text: 'Edit', onclick: edit })]),
+      status,
+    ])]);
+  }
+
+  function sendCard(k, content, reload) {
+    if (!SEND_CHAINS[k.blockchain] || k.status !== 'active' || !O.canInitiate()) return null;
+    return el('div', { className: 'card' }, [
+      el('div', { className: 'card-head' }, [el('h2', { text: 'Send' }), el('button', { type: 'button', className: 'accent sm', text: 'New transfer', onclick: function () { sendForm(k, content, reload); } })]),
+      el('p', { className: 'muted', text: 'Native ' + SEND_CHAINS[k.blockchain].unit + ' only.' }),
+    ]);
   }
 
   function keys(id, content) { return id ? keyDetail(id, content) : keysList(content); }
@@ -658,20 +849,26 @@
   }
 
   function reconRunForms(content) {
-    var chainId = el('input', { type: 'number', id: 'rc-chain', required: true, placeholder: '1' });
+    var kind = el('select', { id: 'rc-kind' }, [el('option', { value: 'evm', text: 'EVM chain' }), el('option', { value: 'solana', text: 'Solana' }), el('option', { value: 'cosmos', text: 'Cosmos' })]);
+    var chainId = el('input', { type: 'number', id: 'rc-chain', placeholder: '1' });
     var since = el('input', { type: 'number', id: 'rc-since', min: '1', value: '168' });
     var missing = el('input', { type: 'number', id: 'rc-missing', min: '1', value: '30' });
     var chainStatus = el('div');
     var chainForm = el('form', { onsubmit: function (e) {
       e.preventDefault();
+      if (kind.value === 'evm' && !chainId.value) return chainStatus.replaceChildren(notice('Enter the chain id.', 'error'));
       chainStatus.replaceChildren(notice('Running — this reads the chain for every signed transfer, it can take a moment…'));
-      api('POST', orgPath('/reconciliation/chain'), { chainId: Number(chainId.value), sinceHours: Number(since.value), missingAfterMinutes: Number(missing.value) }).then(function (r) {
+      var target = kind.value === 'evm' ? { chainId: Number(chainId.value) } : { blockchain: kind.value };
+      api('POST', orgPath('/reconciliation/chain'), Object.assign(target, { sinceHours: Number(since.value), missingAfterMinutes: Number(missing.value) })).then(function (r) {
         if (!r.ok) return chainStatus.replaceChildren(notice(errorText(r), 'error'));
         O.navigate('reconciliation', r.body.runId);
       });
     } }, [
       el('div', { className: 'field-row' }, [
-        el('div', null, [el('label', { for: 'rc-chain', text: 'Chain id' }), chainId]),
+        el('div', null, [el('label', { for: 'rc-kind', text: 'Network' }), kind]),
+        el('div', null, [el('label', { for: 'rc-chain', text: 'EVM chain id' }), chainId]),
+      ]),
+      el('div', { className: 'field-row' }, [
         el('div', null, [el('label', { for: 'rc-since', text: 'Look back (hours)' }), since]),
       ]),
       el('label', { for: 'rc-missing', text: 'Treat as missing after (minutes)' }), missing,

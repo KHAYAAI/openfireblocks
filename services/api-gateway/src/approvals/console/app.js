@@ -171,7 +171,7 @@
   }
   OFB.fmtZar = fmtZar;
 
-  var CHAINS = { 1: 'Ethereum mainnet', 11155111: 'Sepolia testnet', 17000: 'Holesky testnet' };
+  var CHAINS = { 1: 'Ethereum mainnet', 11155111: 'Sepolia testnet', 17000: 'Holesky testnet', 501: 'Solana', 118: 'Cosmos' };
   function chainName(id) { return CHAINS[id] || (id ? 'chain ' + id : '—'); }
   OFB.chainName = chainName;
 
