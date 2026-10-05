@@ -448,6 +448,9 @@ func (b *BillingService) HandleCreateCardSession(w http.ResponseWriter, r *http.
 		CustomerID string `json:"customer_id"`
 		SuccessURL string `json:"success_url"`
 		CancelURL  string `json:"cancel_url"`
+		// Used only the first time, to register the customer with Stripe.
+		Email string `json:"email"`
+		Name  string `json:"name"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
@@ -466,13 +469,9 @@ func (b *BillingService) HandleCreateCardSession(w http.ResponseWriter, r *http.
 		writeError(w, "creating a card session", fmt.Errorf("%w: no payment processor is configured", ErrUnavailable))
 		return
 	}
-	stripeID, err := b.db.StripeCustomerID(r.Context(), req.CustomerID)
+	stripeID, err := ensureStripeCustomer(r.Context(), b.db, b.stripe, req.CustomerID, req.Email, req.Name)
 	if err != nil {
 		writeError(w, "creating a card session", err)
-		return
-	}
-	if stripeID == "" {
-		writeError(w, "creating a card session", fmt.Errorf("%w: this customer has no payment identity; set one first", ErrInvalidInput))
 		return
 	}
 	// A session is cheap and short-lived; the key only stops a double click
@@ -484,4 +483,72 @@ func (b *BillingService) HandleCreateCardSession(w http.ResponseWriter, r *http.
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"session_id": session.ID, "url": session.URL})
+}
+
+// cardStore is the part of the database a card session touches.
+type cardStore interface {
+	StripeCustomerID(ctx context.Context, customerID string) (string, error)
+	SetStripeCustomerID(ctx context.Context, customerID, stripeCustomerID string) error
+}
+
+// ensureStripeCustomer returns the customer's Stripe id, registering them
+// with Stripe on first use.
+//
+// Before this, a customer with no Stripe identity could not be given a card
+// page at all, and nothing created identities, so the path was closed from the
+// first step. Creating is idempotent on the platform customer id (see
+// CreateCustomer), so two requests racing here produce one Stripe customer.
+func ensureStripeCustomer(ctx context.Context, store cardStore, stripe *StripeClient, customerID, email, name string) (string, error) {
+	id, err := store.StripeCustomerID(ctx, customerID)
+	if err != nil || id != "" {
+		return id, err
+	}
+	if strings.TrimSpace(email) == "" {
+		return "", fmt.Errorf("%w: this customer has no payment identity yet and no email was given to create one", ErrInvalidInput)
+	}
+	created, err := stripe.CreateCustomer(ctx, customerID, email, name)
+	if err != nil {
+		return "", err
+	}
+	if err := store.SetStripeCustomerID(ctx, customerID, created.ID); err != nil {
+		return "", err
+	}
+	return created.ID, nil
+}
+
+// HandleCardStatus reports whether a customer has a card on file, and which
+// (brand and last four only; Stripe never gives us the number).
+func (b *BillingService) HandleCardStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	customerID := r.URL.Query().Get("customer_id")
+	if err := requireUUID("customer_id", customerID); err != nil {
+		writeError(w, "reading the card on file", err)
+		return
+	}
+	if !b.stripe.Configured() {
+		writeJSON(w, http.StatusOK, map[string]interface{}{"configured": false, "has_card": false})
+		return
+	}
+	stripeID, err := b.db.StripeCustomerID(r.Context(), customerID)
+	if err != nil {
+		writeError(w, "reading the card on file", err)
+		return
+	}
+	if stripeID == "" {
+		writeJSON(w, http.StatusOK, map[string]interface{}{"configured": true, "has_card": false})
+		return
+	}
+	card, err := b.stripe.CardOnFile(r.Context(), stripeID)
+	if err != nil {
+		writeError(w, "reading the card on file", err)
+		return
+	}
+	if card == nil {
+		writeJSON(w, http.StatusOK, map[string]interface{}{"configured": true, "has_card": false})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"configured": true, "has_card": true, "card": card})
 }

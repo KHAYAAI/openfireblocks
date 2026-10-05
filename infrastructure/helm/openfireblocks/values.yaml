@@ -387,6 +387,10 @@ billing:
   # Comma-separated hosts a customer may be returned to after saving a card.
   # Empty refuses every URL, which switches card collection off.
   returnHosts: ""
+  # The console's public https address, e.g. https://console.example.com. When
+  # set, the gateway's Billing screen is wired to this service. Put its host
+  # in returnHosts as well, or the billing service will refuse the return URL.
+  consolePublicUrl: ""
 
 webhooks:
   enabled: true

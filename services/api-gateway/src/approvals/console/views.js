@@ -1106,6 +1106,49 @@
     });
   }
 
+  // ---------------------------------------------------------------------- billing
+
+  // Which card the organisation pays with, and a button to save one. The card
+  // is typed on Stripe's page, not ours: we only ever see its brand and last
+  // four digits.
+  function billing(id, content) {
+    var r = O.state.route || {};
+    var flash = /card=saved/.test(r.query || '') ? notice('Card saved on Stripe. It will be used for the next invoice.', 'ok')
+      : /card=cancelled/.test(r.query || '') ? notice('No card was saved.') : null;
+    if (O.role() !== 'admin' && O.role() !== 'billing_admin') {
+      return replace(content, [notice('Your role (' + O.role() + ') cannot see billing.')]);
+    }
+    loading(content);
+    api('GET', orgPath('/billing')).then(function (res) {
+      if (!res.ok) return replace(content, [flash, notice(errorText(res), 'error')]);
+      var d = res.body;
+      var status = el('div');
+      var btn = el('button', { type: 'button', className: 'accent', text: d.has_card ? 'Replace card' : 'Add card', onclick: function () {
+        btn.disabled = true;
+        status.replaceChildren(notice('Opening Stripe…'));
+        api('POST', orgPath('/billing/card-session')).then(function (s) {
+          if (!s.ok) { btn.disabled = false; return status.replaceChildren(notice(errorText(s), 'error')); }
+          window.location.assign(s.body.url);
+        });
+      } });
+      var cardLine = d.has_card
+        ? el('dl', { className: 'facts' }, [
+            el('dt', { text: 'Card' }), el('dd', { className: 'mono', text: d.card.brand + ' •••• ' + d.card.last4 }),
+            el('dt', { text: 'Expires' }), el('dd', { text: String(d.card.exp_month).padStart(2, '0') + '/' + d.card.exp_year }),
+          ])
+        : el('p', { className: 'muted', text: d.configured === false ? 'No payment processor is connected on this deployment.' : 'No card on file. Invoices cannot be collected until one is saved.' });
+      replace(content, [
+        flash,
+        el('div', { className: 'card' }, [
+          el('div', { className: 'card-head' }, [el('h2', { text: 'Payment card' }), d.configured === false ? null : btn]),
+          cardLine,
+          el('p', { className: 'muted', style: 'margin-top:12px', text: 'You enter the card on Stripe\'s own page. This console never sees the number.' }),
+          status,
+        ]),
+      ]);
+    });
+  }
+
   // ----------------------------------------------------------------------- export
 
   window.OFBViews = {
@@ -1120,5 +1163,6 @@
     reconciliation: reconciliation,
     compliance: compliance,
     webhooks: webhooks,
+    billing: billing,
   };
 })();

@@ -292,6 +292,29 @@ func (s *StripeClient) DefaultPaymentMethod(ctx context.Context, stripeCustomerI
 	return list.Data[0].ID, nil
 }
 
+// CardSummary is what is safe to show about a saved card.
+type CardSummary struct {
+	Brand    string `json:"brand"`
+	Last4    string `json:"last4"`
+	ExpMonth int    `json:"exp_month"`
+	ExpYear  int    `json:"exp_year"`
+}
+
+// CardOnFile describes the card collection would charge, or nil if none.
+func (s *StripeClient) CardOnFile(ctx context.Context, stripeCustomerID string) (*CardSummary, error) {
+	pm, err := s.DefaultPaymentMethod(ctx, stripeCustomerID)
+	if err != nil || pm == "" {
+		return nil, err
+	}
+	var out struct {
+		Card CardSummary `json:"card"`
+	}
+	if err := s.get(ctx, "/v1/payment_methods/"+url.PathEscape(pm), nil, &out); err != nil {
+		return nil, err
+	}
+	return &out.Card, nil
+}
+
 // SucceededIntentForInvoice finds a payment that already took this invoice's
 // money, or nil.
 //

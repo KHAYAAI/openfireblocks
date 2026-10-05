@@ -231,9 +231,9 @@
       { id: 'reconciliation', label: 'Reconciliation' },
       { id: 'compliance', label: 'Thresholds' },
     ] },
-    { label: 'Integration', items: [{ id: 'webhooks', label: 'Webhooks' }] },
+    { label: 'Integration', items: [{ id: 'webhooks', label: 'Webhooks' }, { id: 'billing', label: 'Billing', roles: ['admin', 'billing_admin'] }] },
   ];
-  var TITLES = { 'travel-rule': 'Travel Rule', reconciliation: 'Reconciliation', compliance: 'Thresholds', webhooks: 'Webhooks' };
+  var TITLES = { billing: 'Billing', 'travel-rule': 'Travel Rule', reconciliation: 'Reconciliation', compliance: 'Thresholds', webhooks: 'Webhooks' };
   function titleFor(view) {
     if (TITLES[view]) return TITLES[view];
     for (var g = 0; g < NAV.length; g++) for (var i = 0; i < NAV[g].items.length; i++) {
@@ -246,8 +246,12 @@
 
   function parseHash() {
     var h = (window.location.hash || '#/overview').replace(/^#\/?/, '');
+    // Stripe sends people back to #/billing?card=saved; the query is not part of the view name.
+    var q = h.indexOf('?');
+    var query = q >= 0 ? h.slice(q + 1) : '';
+    if (q >= 0) h = h.slice(0, q);
     var parts = h.split('/').filter(Boolean).map(decodeURIComponent);
-    return { view: parts[0] || 'overview', id: parts[1] || null };
+    return { view: parts[0] || 'overview', id: parts[1] || null, query: query };
   }
 
   function navigate(view, id) {
@@ -265,7 +269,7 @@
     var r = OFB.state.route;
     var content = document.getElementById('content');
     var topTitle = document.getElementById('topTitle');
-    var known = ['overview', 'keys', 'transactions', 'agents', 'approvals', 'policy', 'people', 'travel-rule', 'reconciliation', 'compliance', 'webhooks'];
+    var known = ['overview', 'keys', 'transactions', 'agents', 'approvals', 'policy', 'people', 'travel-rule', 'reconciliation', 'compliance', 'webhooks', 'billing'];
     if (known.indexOf(r.view) === -1) { navigate('overview'); return; }
     topTitle.textContent = titleFor(r.view);
     document.querySelectorAll('.navitem').forEach(function (b) {
@@ -309,7 +313,7 @@
 
   function renderShell() {
     var sidebarNav = NAV.map(function (group) {
-      var items = group.items.map(function (it) {
+      var items = group.items.filter(function (it) { return !it.roles || it.roles.indexOf(role()) !== -1; }).map(function (it) {
         return el('button', {
           type: 'button', className: 'navitem', 'data-nav': it.id,
           onclick: function () { navigate(it.id); },

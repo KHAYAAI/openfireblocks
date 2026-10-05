@@ -78,6 +78,20 @@ spec:
             # the wrong network and reports a balance of zero.
             - name: BITCOIN_NETWORK
               value: {{ .Values.external.bitcoinNetwork | quote }}
+            {{- if and .Values.billing.enabled .Values.billing.consolePublicUrl }}
+            # The console's Billing screen: card status and "Add card" go to the
+            # billing service with the shared token; Stripe sends people back
+            # to consolePublicUrl (which must also be in billing.returnHosts).
+            - name: BILLING_URL
+              value: http://{{ include "ofb.fullname" . }}-billing:{{ .Values.billing.port }}
+            - name: BILLING_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.billing.apiTokenSecret }}
+                  key: billing-api-token
+            - name: CONSOLE_PUBLIC_URL
+              value: {{ .Values.billing.consolePublicUrl | quote }}
+            {{- end }}
             - name: POLICY_SERVICE_URL
               value: http://{{ include "ofb.fullname" . }}-policy-service:{{ .Values.policyService.port }}
             # Where to announce that something happened. Unset means the

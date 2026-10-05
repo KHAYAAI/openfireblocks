@@ -243,3 +243,69 @@ func TestBillingRoutesNeedTheToken(t *testing.T) {
 		t.Errorf("/health: %d", got)
 	}
 }
+
+type memCardStore struct {
+	id  string
+	set []string
+}
+
+func (m *memCardStore) StripeCustomerID(context.Context, string) (string, error) { return m.id, nil }
+func (m *memCardStore) SetStripeCustomerID(_ context.Context, _ string, id string) error {
+	m.id = id
+	m.set = append(m.set, id)
+	return nil
+}
+
+func TestACustomerIsRegisteredWithStripeOnFirstUseOnly(t *testing.T) {
+	stub, client, done := newStubStripe(t)
+	defer done()
+	store := &memCardStore{}
+	id, err := ensureStripeCustomer(context.Background(), store, client, "cust-1", "ops@acme.example", "Acme")
+	if err != nil || id != "cus_test" || len(store.set) != 1 {
+		t.Fatalf("first use: %q %v, stored %v", id, err, store.set)
+	}
+	if f := stub.forms[0]; f.Get("email") != "ops@acme.example" || f.Get("metadata[openfireblocks_customer_id]") != "cust-1" {
+		t.Fatalf("customer form = %v", f)
+	}
+	before := stub.requests
+	if id, err = ensureStripeCustomer(context.Background(), store, client, "cust-1", "", ""); err != nil || id != "cus_test" {
+		t.Fatalf("second use: %q %v", id, err)
+	}
+	if stub.requests != before {
+		t.Fatal("a customer that already has a Stripe identity was sent to Stripe again")
+	}
+}
+
+func TestNoEmailMeansNoStripeCustomerIsInvented(t *testing.T) {
+	stub, client, done := newStubStripe(t)
+	defer done()
+	_, err := ensureStripeCustomer(context.Background(), &memCardStore{}, client, "cust-1", " ", "Acme")
+	if !errors.Is(err, ErrInvalidInput) || stub.requests != 0 {
+		t.Fatalf("err %v, %d requests", err, stub.requests)
+	}
+}
+
+func TestCardOnFileShowsBrandAndLastFourOnly(t *testing.T) {
+	stub, client, done := newStubStripe(t)
+	defer done()
+	inner := stub.respond
+	stub.respond = func(path string) (int, string) {
+		if path == "/v1/payment_methods/pm_saved_1" {
+			return 200, `{"id":"pm_saved_1","card":{"brand":"visa","last4":"4242","exp_month":12,"exp_year":2031,"fingerprint":"secret-ish"}}`
+		}
+		return inner(path)
+	}
+	c, err := client.CardOnFile(context.Background(), "cus_test")
+	if err != nil || c == nil || *c != (CardSummary{Brand: "visa", Last4: "4242", ExpMonth: 12, ExpYear: 2031}) {
+		t.Fatalf("got %+v %v", c, err)
+	}
+	stub.respond = func(path string) (int, string) {
+		if strings.HasSuffix(path, "/payment_methods") {
+			return 200, `{"data":[]}`
+		}
+		return inner(path)
+	}
+	if c, err = client.CardOnFile(context.Background(), "cus_test"); err != nil || c != nil {
+		t.Fatalf("no card: got %+v %v", c, err)
+	}
+}

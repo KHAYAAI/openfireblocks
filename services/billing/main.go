@@ -108,6 +108,7 @@ func main() {
 	mux.HandleFunc("/v1/billing/stripe-customer", svc.HandleSetStripeCustomer)
 	// A Stripe-hosted page for a customer to save the card collection charges.
 	mux.HandleFunc("/v1/billing/card-session", svc.HandleCreateCardSession)
+	mux.HandleFunc("/v1/billing/card", svc.HandleCardStatus)
 
 	port := os.Getenv("PORT")
 	if port == "" {
