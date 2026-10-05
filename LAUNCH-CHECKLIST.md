@@ -55,7 +55,7 @@ Every row blocks "production ready". None of them is an engineering task.
 | mpc-signer | Verified (EVM, Bitcoin regtest, PKCS#11 on SoftHSM2); Solana and Cosmos protocol-tested | See section 3 |
 | mpc-party | Verified (live multi-party DKG, signing, resharing over HTTP/mTLS) | Isolation only simulated on one host |
 | temporal-worker | Verified | Workflows run against a real Temporal dev server in CI |
-| api-gateway | Verified (379 tests, including live specs on real Postgres over HTTP) | JWT/role console; API-key API; approval flow for every chain |
+| api-gateway | Verified (about 430 tests, including live specs on real Postgres over HTTP) | JWT/role console; API-key API; approval flow for every chain; OIDC sign-in; freeze, whitelist, alerts |
 | policy-service | Verified | OPA/Rego engine; sanctions list reloadable |
 | webhooks | Verified, thin tests | HMAC-signed delivery drilled in `webhook-drill.sh` |
 | vault-pki-init | Verified | mTLS leaf issuance |
@@ -166,6 +166,37 @@ Fixed in the third pass:
   created on first use. Wired into the chart with `billing.consolePublicUrl`.
   Proven against a mock billing service, not against Stripe.
 - Customer-flow videos (fintech, bank, government) are in `docs/showcase`.
+
+Fixed in the fourth pass (from the Fystack and Ripple review):
+
+- **Sign-in through the customer's own identity provider.** SSO was WorkOS
+  only, a SaaS, which a bank or government with its own identity provider
+  cannot use. Generic OpenID Connect (authorization code + PKCE, verified ID
+  token, per-login nonce) now works with Keycloak, Entra ID, Okta and similar.
+  Tested against a local stand-in provider, **not** against any real one.
+  Deciding on a transfer with an SSO session now also needs a sign-in within
+  15 minutes (before, any live session counted).
+- Keys must require a majority to sign (`t >= floor(n/2)+1`) and have at least
+  two parties, in the gateway and again in mpc-party.
+- A party with no Vault can keep its share in an AES-256-GCM encrypted file
+  store (bound to party and ceremony); before, it lived in memory only.
+- Emergency freeze, address whitelist with a cooling-off period, and alerts
+  (Slack-compatible webhook, Telegram). Every signing path asks the controls
+  first; the database refuses to edit or delete whitelist entries.
+- A failed Travel Rule transmission can be retried from the console.
+- The deploy workflow now signs each image (Sigstore, keyless), attaches an
+  SBOM, and refuses to deploy an image it did not sign. **Written and checked
+  as YAML only; never run.**
+
+Reviewed and found already covered: Mpcium's authenticated peers and
+replay-bounded messages (here: certificate-bound party ids and a ceremony
+authoriser with a bounded age).
+
+Not built from that review: deposit **sweeps** (need deposit-address
+infrastructure and gas funding that cannot be tested without a chain),
+TRISA transmission (needs directory certificates and a counterparty),
+multi-custodian orchestration, tokenisation. An OpenBao evaluation is written
+(`docs/security/OPENBAO-EVALUATION.md`) and not run.
 
 Still open:
 

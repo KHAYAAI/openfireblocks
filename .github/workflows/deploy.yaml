@@ -95,6 +95,10 @@ jobs:
     name: Build ${{ matrix.service }}
     needs: [security-scan, test, services]
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Keyless signing: the workflow's own identity, not a key we keep.
+      id-token: write
     strategy:
       fail-fast: false
       matrix:
@@ -111,6 +115,7 @@ jobs:
           registry-type: public
 
       - name: Build and push ${{ matrix.service }}
+        id: push
         uses: docker/build-push-action@v4
         with:
           context: ./services/${{ matrix.service }}
@@ -124,6 +129,29 @@ jobs:
             ${{ secrets.ECR_REGISTRY }}/${{ matrix.service }}:latest
           cache-from: type=gha,scope=${{ matrix.service }}
           cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+
+      # Supply chain: sign what was built, and attach what is inside it. A
+      # customer (or the deploy job below) can then check that an image came
+      # from this repository's workflow and read its bill of materials. See
+      # docs/security/SUPPLY-CHAIN.md. Never run against a real registry yet.
+      - uses: sigstore/cosign-installer@v3
+
+      - name: Sign ${{ matrix.service }} by digest (keyless)
+        run: cosign sign --yes "${{ secrets.ECR_REGISTRY }}/${{ matrix.service }}@${{ steps.push.outputs.digest }}"
+
+      - name: Software bill of materials for ${{ matrix.service }}
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ secrets.ECR_REGISTRY }}/${{ matrix.service }}@${{ steps.push.outputs.digest }}
+          format: spdx-json
+          output-file: sbom-${{ matrix.service }}.spdx.json
+          artifact-name: sbom-${{ matrix.service }}.spdx.json
+
+      - name: Attach the bill of materials to the image (signed)
+        run: |
+          cosign attest --yes --type spdxjson \
+            --predicate sbom-${{ matrix.service }}.spdx.json \
+            "${{ secrets.ECR_REGISTRY }}/${{ matrix.service }}@${{ steps.push.outputs.digest }}"
 
   # Deploys with the Helm chart, because the chart is the documented runtime
   # (docs/deployment). This pipeline used to update a single ECS service and
@@ -149,6 +177,18 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: azure/setup-helm@v4
+
+      - uses: sigstore/cosign-installer@v3
+
+      # Deploy only images this repository's deploy workflow signed. A tag
+      # someone pushed by hand, or an image from another pipeline, fails here.
+      - name: Verify every image is signed by this workflow
+        run: |
+          for svc in $(./scripts/build-images.sh --list); do
+            cosign verify "${{ secrets.ECR_REGISTRY }}/${svc}:${{ github.sha }}" \
+              --certificate-identity-regexp "^https://github.com/${{ github.repository }}/\.github/workflows/deploy\.yaml@" \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com > /dev/null
+          done
 
       - name: Render the chart before touching the cluster
         run: |
