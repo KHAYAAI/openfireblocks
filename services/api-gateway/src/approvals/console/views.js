@@ -201,10 +201,15 @@
 
   // ------------------------------------------------- creating keys, sending
 
+  // Every chain sends through the same route; the key says which chain it is.
+  // EVM transfers need no nonce or gas from the person: the platform reads
+  // them from the chain when the transfer runs.
   var SEND_CHAINS = {
-    bitcoin: { unit: 'BTC', decimals: 8, path: '/bitcoin-transactions', placeholder: 'bc1q… (tb1q… on testnet)' },
-    solana: { unit: 'SOL', decimals: 9, path: '/solana-transactions', placeholder: 'base58 address' },
-    cosmos: { unit: 'ATOM', decimals: 6, path: '/cosmos-transactions', placeholder: 'cosmos1…', memo: true },
+    bitcoin: { unit: 'BTC', decimals: 8, placeholder: 'bc1q… (tb1q… on testnet)' },
+    solana: { unit: 'SOL', decimals: 9, placeholder: 'base58 address' },
+    cosmos: { unit: 'ATOM', decimals: 6, placeholder: 'cosmos1…', memo: true },
+    ethereum: { unit: 'ETH', decimals: 18, placeholder: '0x…', evm: true, networks: [[1, 'Ethereum mainnet'], [11155111, 'Sepolia testnet'], [17000, 'Holesky testnet']] },
+    polygon: { unit: 'POL', decimals: 18, placeholder: '0x…', evm: true, networks: [[137, 'Polygon mainnet'], [80002, 'Amoy testnet']] },
   };
 
   // A decimal amount in whole coins to a base-10 string of base units, or
@@ -309,6 +314,7 @@
     var dest = el('input', { id: 's-dest', required: true, placeholder: cfg.placeholder, autocomplete: 'off', spellcheck: 'false' });
     var amt = el('input', { id: 's-amt', required: true, inputmode: 'decimal', placeholder: '0.00' });
     var memo = cfg.memo ? el('input', { id: 's-memo', maxlength: '256', placeholder: 'Optional' }) : null;
+    var net = cfg.evm ? el('select', { id: 's-net' }, cfg.networks.map(function (n) { return el('option', { value: String(n[0]), text: n[1] }); })) : null;
     var tr = travelRuleFields();
     var status = el('div');
     var form = el('form', {
@@ -318,12 +324,13 @@
         if (!base) return status.replaceChildren(notice('Enter a positive amount with at most ' + cfg.decimals + ' decimal places.', 'error'));
         var body = { destination: dest.value.trim(), amount: base };
         if (memo && memo.value.trim()) body.memo = memo.value.trim();
+        if (net) body.chainId = Number(net.value);
         var t = tr.build();
         if (t) body.travelRule = t;
         review(k, cfg, body, amt.value.trim(), content, function () { sendForm(k, content, back); }, back);
       },
     }, [].concat(
-      field('s-dest', 'To', dest), field('s-amt', 'Amount (' + cfg.unit + ')', amt), memo ? field('s-memo', 'Memo', memo) : [],
+      net ? field('s-net', 'Network', net) : [], field('s-dest', 'To', dest), field('s-amt', 'Amount (' + cfg.unit + ')', amt), memo ? field('s-memo', 'Memo', memo) : [],
       [tr.node],
       [el('div', { className: 'actions' }, [
         el('button', { type: 'submit', className: 'accent', text: 'Review' }),
@@ -331,6 +338,21 @@
       ]), status]
     ));
     replace(content, [el('div', { className: 'card' }, [el('h2', { text: 'Send ' + cfg.unit + ' from ' + (k.name || 'this key') }), form])]);
+  }
+
+  function outcomeNotice(res) {
+    return notice(res && res.broadcast === false ? 'Signed, not broadcast.' : 'Sent. It is on its way to the network.', 'ok');
+  }
+
+  function transferFacts(res, body, shown, cfg) {
+    res = res || {};
+    var id = res.txid || res.signature || res.txhash || res.transaction_hash;
+    return el('div', { className: 'card' }, [el('dl', { className: 'facts' }, [
+      el('dt', { text: 'Transaction' }), el('dd', { className: 'mono', style: 'word-break:break-all', text: id || '—' }),
+      el('dt', { text: 'To' }), el('dd', { className: 'mono', style: 'word-break:break-all', text: body.destination }),
+      el('dt', { text: 'Amount' }), el('dd', { text: shown + ' ' + cfg.unit }),
+      res.fee !== undefined ? el('dt', { text: 'Network fee' }) : null, res.fee !== undefined ? el('dd', { className: 'mono', text: String(res.fee) + ' (base units)' }) : null,
+    ].filter(Boolean))]);
   }
 
   // The last look before money moves. The request id is made here, once, so a
@@ -344,22 +366,32 @@
       send.disabled = true;
       status.replaceChildren(notice('Signing… this runs a threshold ceremony and can take a few seconds.'));
       var payload = Object.assign({ idempotencyKey: requestId }, body);
-      api('POST', orgPath('/keys/' + encodeURIComponent(k.key_id) + cfg.path), payload).then(function (r) {
+      api('POST', orgPath('/keys/' + encodeURIComponent(k.key_id) + '/transfers'), payload).then(function (r) {
         if (!r.ok) {
           send.disabled = false;
           return status.replaceChildren(notice(errorText(r), 'error'));
         }
         var b = r.body;
-        replace(content, [
-          notice(b.broadcast === false ? 'Signed, not broadcast.' : 'Sent. It is on its way to the network.', 'ok'),
-          el('div', { className: 'card' }, [el('dl', { className: 'facts' }, [
-            el('dt', { text: 'Transaction' }), el('dd', { className: 'mono', style: 'word-break:break-all', text: b.txid || b.signature || b.txhash }),
-            el('dt', { text: 'To' }), el('dd', { className: 'mono', style: 'word-break:break-all', text: body.destination }),
-            el('dt', { text: 'Amount' }), el('dd', { text: shown + ' ' + cfg.unit }),
-            el('dt', { text: 'Network fee' }), el('dd', { className: 'mono', text: String(b.fee) + ' (base units)' }),
-          ])]),
-          el('div', { className: 'actions' }, [el('button', { type: 'button', className: 'primary', text: 'Back to key', onclick: back })]),
-        ]);
+        if (b.status === 'pending_approval') {
+          // Policy wants people to sign off. Nothing has been signed.
+          return replace(content, [
+            notice('Not sent yet: this transfer needs approval. Nothing has been signed.', 'ok'),
+            el('div', { className: 'card' }, [
+              el('dl', { className: 'facts' }, [
+                el('dt', { text: 'Amount' }), el('dd', { text: shown + ' ' + cfg.unit }),
+                el('dt', { text: 'To' }), el('dd', { className: 'mono', style: 'word-break:break-all', text: body.destination }),
+                el('dt', { text: 'Approvals needed' }), el('dd', { text: String(b.requiredApprovals) + ', from people other than you' }),
+                el('dt', { text: 'Expires' }), el('dd', { text: fmtDate(b.expiresAt) }),
+              ]),
+              (b.reasons || []).length ? el('ul', { className: 'plain', style: 'margin-top:10px' }, b.reasons.map(function (x) { return el('li', { text: x }); })) : null,
+            ]),
+            el('div', { className: 'actions' }, [
+              el('button', { type: 'button', className: 'primary', text: 'Open the approval', onclick: function () { O.navigate('approvals', b.approvalId); } }),
+              el('button', { type: 'button', className: 'ghost', text: 'Back to key', onclick: back }),
+            ]),
+          ]);
+        }
+        replace(content, [outcomeNotice(b.result), transferFacts(b.result, body, shown, cfg), el('div', { className: 'actions' }, [el('button', { type: 'button', className: 'primary', text: 'Back to key', onclick: back })])]);
       });
     };
     replace(content, [el('div', { className: 'card' }, [
@@ -371,7 +403,7 @@
         body.memo ? el('dt', { text: 'Memo' }) : null, body.memo ? el('dd', { text: body.memo }) : null,
         el('dt', { text: 'Fee' }), el('dd', { text: 'Set by the network when the transfer is prepared, and shown after.' }),
       ].filter(Boolean)),
-      el('p', { className: 'muted', style: 'margin:14px 0', text: 'This is checked against your organisation\'s policy first. A transfer that policy says needs approval is refused here: these chains have no approval step yet.' }),
+      el('p', { className: 'muted', style: 'margin:14px 0', text: 'This is checked against your organisation\'s policy first. If policy says it needs approval, it is held and sent to your approvers instead; you cannot approve your own request.' }),
       el('div', { className: 'actions' }, [send, el('button', { type: 'button', className: 'ghost', text: 'Edit', onclick: edit })]),
       status,
     ])]);
@@ -381,7 +413,7 @@
     if (!SEND_CHAINS[k.blockchain] || k.status !== 'active' || !O.canInitiate()) return null;
     return el('div', { className: 'card' }, [
       el('div', { className: 'card-head' }, [el('h2', { text: 'Send' }), el('button', { type: 'button', className: 'accent sm', text: 'New transfer', onclick: function () { sendForm(k, content, reload); } })]),
-      el('p', { className: 'muted', text: 'Native ' + SEND_CHAINS[k.blockchain].unit + ' only.' }),
+      el('p', { className: 'muted', text: 'Native ' + SEND_CHAINS[k.blockchain].unit + ' only' + (SEND_CHAINS[k.blockchain].evm ? '; the platform fills in nonce and fees.' : '.') }),
     ]);
   }
 
@@ -532,13 +564,56 @@
 
   var approvalsTab = 'pending';
 
+  // Settlements carry wei; transfers started from the console carry the
+  // asset and its own decimals.
+  function approvalAmount(s) {
+    if (s.kind === 'native-transfer') return O.fmtBaseUnits(s.amount, s.decimals, { suffix: s.asset });
+    return O.fmtWei(s.valueWei);
+  }
+  function approvalNetwork(s) {
+    if (s.kind === 'native-transfer' && !s.chainId) return s.blockchain ? s.blockchain.charAt(0).toUpperCase() + s.blockchain.slice(1) : '—';
+    return chainName(s.chainId);
+  }
+
+  // What happened after the last approval, for transfers the platform signs
+  // itself. A failure keeps the approval, so an admin can run it again.
+  function executionPanel(a, reload) {
+    var x = a.execution;
+    if (!x) return null;
+    if (x.status === 'awaiting_approval') return null;
+    var rows = [];
+    if (x.status === 'completed') {
+      var r = x.result || {};
+      var id = r.txid || r.signature || r.txhash || r.transaction_hash;
+      rows.push(notice('Sent. ' + (id ? 'Transaction ' + id : ''), 'ok'));
+    } else if (x.status === 'executing') {
+      rows.push(notice('Signing and sending now…'));
+    } else if (x.status === 'failed') {
+      rows.push(notice('Approved, but sending failed: ' + (x.error || 'unknown error') + '. Nothing was lost; an admin can run it again.', 'error'));
+      if (O.isAdmin()) {
+        var status = el('div');
+        var btn = el('button', { type: 'button', className: 'accent', text: 'Run it again', onclick: function () {
+          btn.disabled = true;
+          api('POST', orgPath('/approvals/' + encodeURIComponent(a.approvalId) + '/execute')).then(function (r2) {
+            if (!r2.ok) { btn.disabled = false; return status.replaceChildren(notice(errorText(r2), 'error')); }
+            reload('Run again.');
+          });
+        } });
+        rows.push(el('div', { className: 'actions' }, [btn]), status);
+      }
+    } else if (x.status === 'rejected' || x.status === 'expired') {
+      rows.push(notice('This transfer was ' + x.status + ' and was never signed.'));
+    }
+    return rows.length ? el('div', { className: 'card' }, [el('h2', { text: 'Result' })].concat(rows)) : null;
+  }
+
   function approvalSummaryCard(a) {
     var s = a.summary || {};
     return el('div', { className: 'card link', role: 'button', tabindex: '0', onclick: function () { O.navigate('approvals', a.approvalId); } }, [
-      el('div', { className: 'row' }, [el('span', { className: 'amount', text: O.fmtWei(s.valueWei) }), tag(a.status)]),
+      el('div', { className: 'row' }, [el('span', { className: 'amount', text: approvalAmount(s) }), tag(a.status)]),
       el('div', { className: 'mono muted', style: 'font-size:12.5px;margin-top:4px', text: 'to ' + (s.to || '?') }),
       el('div', { className: 'row muted', style: 'margin-top:8px;font-size:12px' }, [
-        el('span', { text: a.approvals + ' of ' + a.requiredApprovals + ' approvals · ' + chainName(s.chainId) }),
+        el('span', { text: a.approvals + ' of ' + a.requiredApprovals + ' approvals · ' + approvalNetwork(s) }),
         el('span', { text: a.status === 'pending' ? 'expires ' + relative(a.expiresAt) : relative(a.decidedAt || a.createdAt) }),
       ]),
     ]);
@@ -614,14 +689,16 @@
       var initiatedByMe = a.initiatedByUserId && a.initiatedByUserId === O.state.me.id;
 
       var facts = el('dl', { className: 'facts' }, [
-        el('dt', { text: 'Amount' }), el('dd', { className: 'mono', style: 'font-size:17px;font-weight:650', text: O.fmtWei(s.valueWei) }),
-        el('dt', { text: 'To' }), el('dd', { className: 'mono', text: s.to || '?' }),
-        el('dt', { text: 'Network' }), el('dd', { text: chainName(s.chainId) }),
+        el('dt', { text: 'Amount' }), el('dd', { className: 'mono', style: 'font-size:17px;font-weight:650', text: approvalAmount(s) }),
+        el('dt', { text: 'To' }), el('dd', { className: 'mono', style: 'word-break:break-all', text: s.to || '?' }),
+        el('dt', { text: 'Network' }), el('dd', { text: approvalNetwork(s) }),
+        s.keyName ? el('dt', { text: 'From key' }) : null, s.keyName ? el('dd', { text: s.keyName }) : null,
+        s.memo ? el('dt', { text: 'Memo' }) : null, s.memo ? el('dd', { text: s.memo }) : null,
         el('dt', { text: 'Requested by' }), el('dd', { text: a.initiatedBy }),
         el('dt', { text: 'Requested' }), el('dd', { text: fmtDate(a.createdAt) }),
         el('dt', { text: a.status === 'pending' ? 'Expires' : 'Closed' }),
         el('dd', { text: a.status === 'pending' ? relative(a.expiresAt) + ' (' + fmtDate(a.expiresAt) + ')' : fmtDate(a.decidedAt || a.expiresAt) }),
-      ].concat(s.data && s.data !== '0x' ? [el('dt', { text: 'Contract call' }), el('dd', { className: 'mono trunc', text: s.data })] : []));
+      ].filter(Boolean).concat(s.data && s.data !== '0x' ? [el('dt', { text: 'Contract call' }), el('dd', { className: 'mono trunc', text: s.data })] : []));
 
       var reasons = (s.reasons || []).length
         ? el('div', { style: 'margin-top:14px' }, [el('h2', { style: 'font-size:13px;margin-bottom:6px', text: 'Why this needs approval' }), el('ul', { className: 'plain' }, s.reasons.map(function (x) { return el('li', { text: x }); }))])
@@ -643,6 +720,7 @@
         flash ? notice(flash, 'ok') : null,
         el('div', { className: 'card' }, [facts, reasons]),
         decisionPanel(a, mine, initiatedByMe, function (msg) { approvalDetail(approvalId, content, msg); }),
+        executionPanel(a, function (msg) { approvalDetail(approvalId, content, msg); }),
         el('div', { className: 'card' }, [decisions]),
       ]);
     });
