@@ -83,6 +83,14 @@ func SealKeyShare(ctx context.Context, getenv func(string) string, partyID int, 
 func SealKeyShareWithContext(ctx context.Context, getenv func(string) string, partyID int, ceremonyID string, share *KeyShare, cc *CeremonyContext) (bool, error) {
 	cfg, configured := vaultShareConfigFromEnv(getenv, partyID, ceremonyID)
 	if !configured {
+		// No Vault: an encrypted file store, if one is configured (see
+		// file_seal.go). Neither configured is still "not sealed, not an error".
+		if fcfg, ok := fileShareConfigFromEnv(getenv); ok {
+			if err := sealShareToFile(fcfg, partyID, ceremonyID, share, cc); err != nil {
+				return false, fmt.Errorf("sealing the key share to the file store: %w", err)
+			}
+			return true, nil
+		}
 		return false, nil
 	}
 
@@ -207,7 +215,10 @@ func orDefaultVault(v, def string) string {
 func LoadSealedShare(ctx context.Context, getenv func(string) string, partyID int, ceremonyID string) (*KeyShare, *CeremonyContext, error) {
 	cfg, configured := vaultShareConfigFromEnv(getenv, partyID, ceremonyID)
 	if !configured {
-		return nil, nil, fmt.Errorf("VAULT_ADDR not set; there is nothing sealed to restore from")
+		if fcfg, ok := fileShareConfigFromEnv(getenv); ok {
+			return loadShareFromFile(fcfg, partyID, ceremonyID)
+		}
+		return nil, nil, fmt.Errorf("neither VAULT_ADDR nor SHARE_STORE_DIR is set; there is nothing sealed to restore from")
 	}
 
 	client, err := vault.NewClient(&vault.Config{Address: cfg.addr})
@@ -263,6 +274,12 @@ func LoadSealedShare(ctx context.Context, getenv func(string) string, partyID in
 func RetireSealedShare(ctx context.Context, getenv func(string) string, partyID int, ceremonyID string) (bool, error) {
 	cfg, configured := vaultShareConfigFromEnv(getenv, partyID, ceremonyID)
 	if !configured {
+		if fcfg, ok := fileShareConfigFromEnv(getenv); ok {
+			if err := retireShareFile(fcfg, partyID, ceremonyID); err != nil {
+				return false, fmt.Errorf("destroying the sealed share file: %w", err)
+			}
+			return true, nil
+		}
 		return false, nil
 	}
 	client, err := vault.NewClient(&vault.Config{Address: cfg.addr})
