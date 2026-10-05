@@ -1135,6 +1135,24 @@ export class KeysService {
 
     const network = process.env.BITCOIN_NETWORK ?? 'mainnet';
 
+    // Travel Rule before any node work or ceremony, like every other spend
+    // route: a transfer that needs a record is never signed without one. The
+    // originator address is the key's preferred (segwit) address.
+    let travelRecord: string | null = null;
+    if (this.travelRule) {
+      let fromAddress: string;
+      try {
+        fromAddress = (await this.bitcoin.addresses(key.public_key, network)).preferred;
+      } catch (err) {
+        throw this.translateSignerError(err, 'deriving the Bitcoin address');
+      }
+      travelRecord = await this.travelRuleBeforeSigning(
+        customer, requestId, 0, fromAddress, req.destination,
+        { asset: 'NATIVE', amount: toPolicyUnits(req.amount, 8), decimals: 18 },
+        req.travelRule,
+      );
+    }
+
     let prepared;
     try {
       prepared = await this.bitcoin.prepare({
@@ -1190,6 +1208,10 @@ export class KeysService {
       throw this.translateSignerError(err, 'assembling the Bitcoin transaction');
     }
 
+    const travelRule = travelRecord
+      ? { record_id: travelRecord, ...(await this.travelRule!.completeAfterSigning(customer.customer_id, travelRecord, finalized.txid)) }
+      : undefined;
+
     if (finalized.broadcast) {
       this.announce(customer.customer_id, 'transaction.broadcast', {
         key_id: keyId,
@@ -1203,6 +1225,7 @@ export class KeysService {
     }
 
     return {
+      travel_rule: travelRule,
       request_id: requestId,
       key_id: keyId,
       network,

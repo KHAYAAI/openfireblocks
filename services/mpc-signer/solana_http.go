@@ -249,5 +249,16 @@ func (s *server) handleSolanaStatus(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadGateway, map[string]interface{}{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, st)
+	out := map[string]interface{}{"found": st.Found, "slot": st.Slot, "confirmation_status": st.ConfirmationStatus}
+	if st.Err != nil {
+		out["err"] = st.Err
+	}
+	// What it moved, for reconciliation: only worth a second call once the
+	// transaction has landed and succeeded.
+	if st.Found && st.Err == nil {
+		if tr, err := node.Transfer(r.Context(), sig); err == nil && tr != nil {
+			out["transfer"] = tr
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
 }

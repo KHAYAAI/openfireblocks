@@ -73,8 +73,12 @@ func (f *fakeLCD) start(t *testing.T) string {
 			if code != "0" {
 				c = 11
 			}
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{"tx_response": map[string]interface{}{
-				"height": "900", "txhash": strings.TrimPrefix(p, "/cosmos/tx/v1beta1/txs/"), "code": c, "raw_log": "out of gas"}})
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"tx": map[string]interface{}{"body": map[string]interface{}{"messages": []interface{}{map[string]interface{}{
+					"@type": "/cosmos.bank.v1beta1.MsgSend", "from_address": "cosmos1from", "to_address": cosmosDest,
+					"amount": []interface{}{map[string]string{"denom": "uatom", "amount": "1000000"}}}}}},
+				"tx_response": map[string]interface{}{
+					"height": "900", "txhash": strings.TrimPrefix(p, "/cosmos/tx/v1beta1/txs/"), "code": c, "raw_log": "out of gas"}})
 		default:
 			w.WriteHeader(http.StatusNotImplemented)
 		}
@@ -255,5 +259,38 @@ func TestCosmosAddressRoute(t *testing.T) {
 	}
 	if code, _ := cosmosPrep(t, s, pubHex, cosmosDest, "1", ""); code != http.StatusServiceUnavailable {
 		t.Errorf("no node: got %d, want 503", code)
+	}
+}
+
+func TestCosmosStatusReportsWhatAnIncludedSendMoved(t *testing.T) {
+	lcd := &fakeLCD{chainID: "cosmoshub-4", txs: map[string]string{strings.Repeat("AB", 32): "0"}}
+	s := cosmosServer(t, lcd)
+	rec := httptest.NewRecorder()
+	s.handleCosmosStatus(rec, httptest.NewRequest(http.MethodGet, "/cosmos/status?txhash="+strings.Repeat("AB", 32), nil))
+	var out struct {
+		Send struct{ To, Denom, Amount string } `json:"send"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &out)
+	if out.Send.To != cosmosDest || out.Send.Amount != "1000000" || out.Send.Denom != "uatom" {
+		t.Fatalf("send = %+v", out.Send)
+	}
+}
+
+func TestCosmosAccountReportsTheSequenceAndTreatsAnUnfundedAddressAsZero(t *testing.T) {
+	_, _, from := cosmosKey(t)
+	lcd := &fakeLCD{chainID: "x", accounts: map[string][2]string{from: {"5", "12"}}}
+	s := cosmosServer(t, lcd)
+	get := func(addr string) map[string]interface{} {
+		rec := httptest.NewRecorder()
+		s.handleCosmosAccount(rec, httptest.NewRequest(http.MethodGet, "/cosmos/account?address="+addr, nil))
+		var out map[string]interface{}
+		_ = json.Unmarshal(rec.Body.Bytes(), &out)
+		return out
+	}
+	if out := get(from); out["sequence"].(float64) != 12 || out["exists"] != true {
+		t.Errorf("funded = %v", out)
+	}
+	if out := get(cosmosDest); out["exists"] != false || out["sequence"].(float64) != 0 {
+		t.Errorf("unfunded = %v", out)
 	}
 }

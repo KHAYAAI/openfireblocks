@@ -172,6 +172,40 @@ afterEach(() => {
   delete process.env.MPC_SIGNER_URL;
 });
 
+describe('KeysService.sendBitcoin and the Travel Rule', () => {
+  function withTravelRule(assess: jest.Mock, extra: Partial<Record<string, jest.Mock>> = {}) {
+    const base = build();
+    const tr = { assess, recordBeforeSigning: jest.fn().mockResolvedValue('rec-1'),
+      completeAfterSigning: jest.fn().mockResolvedValue({ status: 'awaiting_transmission' }), ...extra };
+    const service = new KeysService(base.postgres, base.temporal, base.policy, undefined, undefined, undefined, tr as never);
+    return { service, tr, temporal: base.temporal };
+  }
+
+  it('refuses a transfer that needs Travel Rule information before any signing', async () => {
+    const calls = mockSigner();
+    const { service, temporal } = withTravelRule(jest.fn().mockImplementation(() => {
+      throw new (require('@nestjs/common').UnprocessableEntityException)({ missing: ['travelRule is required'] });
+    }));
+    await expect(service.sendBitcoin(customer, 'key-1', { destination: DEST, amount: '50000' })).rejects.toThrow();
+    expect(temporal.signWithThreshold).not.toHaveBeenCalled();
+    expect(calls.prepare).toHaveLength(0);
+  });
+
+  it('records the Travel Rule before signing and completes it with the txid', async () => {
+    mockSigner();
+    const originalFetch = global.fetch as jest.Mock;
+    global.fetch = jest.fn(async (url: string | URL | Request, init?: RequestInit) =>
+      String(url).includes('/bitcoin/addresses')
+        ? ({ ok: true, status: 200, text: async () => JSON.stringify({ preferred: 'bcrt1qsegwit' }) } as Response)
+        : originalFetch(url, init)) as never;
+    const { service, tr } = withTravelRule(jest.fn().mockReturnValue({ requirement: {}, input: {} }));
+    const res = await service.sendBitcoin(customer, 'key-1', { destination: DEST, amount: '50000' });
+    expect(tr.recordBeforeSigning).toHaveBeenCalledWith(expect.objectContaining({ originatorAddress: 'bcrt1qsegwit', beneficiaryAddress: DEST, chainId: 0 }));
+    expect(tr.completeAfterSigning).toHaveBeenCalledWith('cust-1', 'rec-1', 'f'.repeat(64));
+    expect(res.travel_rule).toMatchObject({ record_id: 'rec-1' });
+  });
+});
+
 describe('KeysService.sendBitcoin', () => {
   it('sends the destination and amount the customer asked for to the policy engine', async () => {
     mockSigner();

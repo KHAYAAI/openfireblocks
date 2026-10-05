@@ -1,4 +1,5 @@
-import { IsBoolean, IsInt, IsOptional, IsString, Length, Matches, Max, Min } from 'class-validator';
+import { IsBoolean, IsInt, IsObject, IsOptional, IsString, Length, Matches, Max, Min } from 'class-validator';
+import type { TravelRuleInput } from '../../travel-rule/travel-rule';
 
 // Validated body for POST /keys/:keyId/bitcoin-transactions.
 //
@@ -86,4 +87,11 @@ export class BitcoinTransactionDto {
   @IsString()
   @Length(2, 2)
   country?: string;
+
+  // Originator and beneficiary information (IVMS101), required at or above
+  // the Travel Rule threshold -- the same rule every other spend route
+  // applies. Without it a Bitcoin transfer over the threshold is refused.
+  @IsOptional()
+  @IsObject()
+  travelRule?: TravelRuleInput;
 }

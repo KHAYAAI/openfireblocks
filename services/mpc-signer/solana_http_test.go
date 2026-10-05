@@ -63,6 +63,10 @@ func (f *fakeSolana) start(t *testing.T) string {
 			reply(base58.Encode(f.sentTx[1:65]), "")
 		case "getSignatureStatuses":
 			reply(f.statusResp, "")
+		case "getTransaction":
+			reply(map[string]interface{}{"transaction": map[string]interface{}{"message": map[string]interface{}{"instructions": []interface{}{
+				map[string]interface{}{"program": "system", "parsed": map[string]interface{}{"type": "transfer",
+					"info": map[string]interface{}{"source": "SrcAddr", "destination": "DstAddr", "lamports": 1500000000}}}}}}}, "")
 		default:
 			reply(nil, "unexpected method "+req.Method)
 		}
@@ -286,5 +290,20 @@ func TestSolanaAddressIsThePublicKey(t *testing.T) {
 	_ = json.Unmarshal(rec.Body.Bytes(), &out)
 	if out["address"] != addr {
 		t.Fatalf("got %v want %s", out["address"], addr)
+	}
+}
+
+func TestSolanaStatusReportsWhatAConfirmedTransactionMoved(t *testing.T) {
+	sig := base58.Encode(bytes.Repeat([]byte{3}, 64))
+	s := solServer(t, &fakeSolana{statusResp: map[string]interface{}{"value": []interface{}{
+		map[string]interface{}{"slot": 9, "err": nil, "confirmationStatus": "finalized"}}}})
+	rec := httptest.NewRecorder()
+	s.handleSolanaStatus(rec, httptest.NewRequest(http.MethodGet, "/solana/status?signature="+sig, nil))
+	var out struct {
+		Transfer struct{ From, To, Lamports string } `json:"transfer"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &out)
+	if out.Transfer.To != "DstAddr" || out.Transfer.Lamports != "1500000000" || out.Transfer.From != "SrcAddr" {
+		t.Fatalf("transfer = %+v; reconciliation needs what actually moved", out.Transfer)
 	}
 }

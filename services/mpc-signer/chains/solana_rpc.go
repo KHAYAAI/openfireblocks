@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -196,4 +197,51 @@ func (s *SolanaRPC) SignatureStatus(ctx context.Context, signature string) (*Sol
 		st.Err = v.Err
 	}
 	return st, nil
+}
+
+// SolanaTransferInfo is what a confirmed transaction's System Program
+// transfer actually moved, as the node parsed it. Reconciliation compares this
+// with what the platform meant to send, which is the only way to notice a
+// transaction that confirmed and moved something else.
+type SolanaTransferInfo struct {
+	From     string `json:"from"`
+	To       string `json:"to"`
+	Lamports string `json:"lamports"`
+}
+
+// Transfer reads the first System Program transfer out of a confirmed
+// transaction. It returns nil, nil when the transaction is not known to the
+// node yet, or contains no transfer.
+func (s *SolanaRPC) Transfer(ctx context.Context, signature string) (*SolanaTransferInfo, error) {
+	var r *struct {
+		Transaction struct {
+			Message struct {
+				Instructions []struct {
+					Program string `json:"program"`
+					Parsed  struct {
+						Type string `json:"type"`
+						Info struct {
+							Source      string          `json:"source"`
+							Destination string          `json:"destination"`
+							Lamports    json.RawMessage `json:"lamports"`
+						} `json:"info"`
+					} `json:"parsed"`
+				} `json:"instructions"`
+			} `json:"message"`
+		} `json:"transaction"`
+	}
+	err := s.call(ctx, "getTransaction", []interface{}{signature, map[string]interface{}{
+		"encoding": "jsonParsed", "maxSupportedTransactionVersion": 0, "commitment": s.commitment}}, &r)
+	if err != nil || r == nil {
+		return nil, err
+	}
+	for _, in := range r.Transaction.Message.Instructions {
+		if in.Program == "system" && in.Parsed.Type == "transfer" {
+			return &SolanaTransferInfo{
+				From: in.Parsed.Info.Source, To: in.Parsed.Info.Destination,
+				Lamports: strings.Trim(string(in.Parsed.Info.Lamports), `"`),
+			}, nil
+		}
+	}
+	return nil, nil
 }

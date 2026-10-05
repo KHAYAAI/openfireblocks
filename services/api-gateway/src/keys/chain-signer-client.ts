@@ -32,6 +32,8 @@ export interface SolanaStatus {
   slot?: number;
   confirmation_status?: 'processed' | 'confirmed' | 'finalized';
   err?: unknown;
+  // What the confirmed transaction actually moved, as the node parsed it.
+  transfer?: { from: string; to: string; lamports: string };
 }
 
 export interface CosmosSigningPlan {
@@ -62,6 +64,7 @@ export interface CosmosFinalizeResult {
 
 export interface CosmosStatus {
   found: boolean;
+  send?: { from: string; to: string; denom: string; amount: string };
   height?: string;
   code?: number;
   raw_log?: string;
@@ -137,5 +140,8 @@ export class ChainSignerClient {
   }
   cosmosStatus(txhash: string): Promise<CosmosStatus> {
     return this.get('/cosmos/status', { txhash });
+  }
+  cosmosAccount(address: string): Promise<{ address: string; exists: boolean; sequence: number; account_number?: number }> {
+    return this.get('/cosmos/account', { address });
   }
 }

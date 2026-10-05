@@ -287,6 +287,7 @@ func main() {
 	router.HandleFunc("/cosmos/prepare", s.handleCosmosPrepare).Methods(http.MethodPost)
 	router.HandleFunc("/cosmos/finalize", s.handleCosmosFinalize).Methods(http.MethodPost)
 	router.HandleFunc("/cosmos/status", s.handleCosmosStatus).Methods(http.MethodGet)
+	router.HandleFunc("/cosmos/account", s.handleCosmosAccount).Methods(http.MethodGet)
 	router.HandleFunc("/health", handleHealth).Methods(http.MethodGet)
 	router.Handle("/metrics", promhttp.Handler()).Methods(http.MethodGet)
 

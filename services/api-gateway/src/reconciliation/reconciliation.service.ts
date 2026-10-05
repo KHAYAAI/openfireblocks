@@ -4,9 +4,12 @@ import { getAddress } from 'ethers';
 import { PG_POOL } from '../database/pg-pool.token';
 import { withTenant, UUID_RE } from '../approvals/tenant-db';
 import { EvmRpcService } from '../tokens/evm-rpc.service';
+import { ChainSignerClient } from '../keys/chain-signer-client';
 import {
   classify,
+  classifyNative,
   Classification,
+  NativeChainStatus,
   compareStatement,
   LedgerEntry,
   Parsed,
@@ -29,10 +32,119 @@ export interface ChainBreak {
 // customer's own statement.
 @Injectable()
 export class ReconciliationService {
+  private readonly chainSigner = new ChainSignerClient();
+
   constructor(
     @Inject(PG_POOL) private readonly pool: Pool,
     private readonly rpc: EvmRpcService,
   ) {}
+
+  // The platform's Solana or Cosmos transfers against the chain, through the
+  // signer's node client. SLIP-44 coin types, matching the discriminators the
+  // keys service records transfers under.
+  async runNative(input: {
+    customerId: string;
+    blockchain: 'solana' | 'cosmos';
+    requestedBy: string;
+    sinceHours?: number;
+    missingAfterMinutes?: number;
+  }) {
+    const chainId = input.blockchain === 'solana' ? 501 : 118;
+    const now = new Date();
+    const since = new Date(now.getTime() - (input.sinceHours ?? 168) * 3600_000);
+    const missingAfter = input.missingAfterMinutes ?? 30;
+
+    const rows = await withTenant(this.pool, input.customerId, (c) =>
+      c.query(
+        `SELECT request_id, created_at, tx_hash, effective_to, effective_amount
+           FROM signing.transactions
+          WHERE customer_id = $1 AND chain = $2 AND tx_hash IS NOT NULL
+          ORDER BY created_at`,
+        [input.customerId, input.blockchain],
+      ),
+    );
+    const entries = rows.rows.map((r) => ({
+      requestId: r.request_id as string,
+      createdAt: new Date(new Date(r.created_at).toISOString().replace('Z', '') + 'Z'),
+      txHash: r.tx_hash as string,
+      to: r.effective_to as string | null,
+      amount: r.effective_amount as string | null,
+    }));
+
+    const breaks: ChainBreak[] = [];
+    const counts: Record<string, number> = {};
+    const inWindow = entries.filter((e) => e.createdAt >= since);
+    for (const e of inWindow) {
+      let st: NativeChainStatus;
+      try {
+        st = await this.nativeStatus(input.blockchain, e.txHash);
+      } catch (err) {
+        // The node being unreachable is not a verdict on the transaction, and
+        // calling it "missing" would raise a false alarm. Fail the run.
+        throw new BadRequestException(`could not read ${input.blockchain} transaction ${e.txHash}: ${(err as Error).message}`);
+      }
+      const c = classifyNative(e, st, now, missingAfter);
+      counts[c.classification] = (counts[c.classification] ?? 0) + 1;
+      if (SEVERITY[c.classification] !== 'ok') {
+        breaks.push({ classification: c.classification, severity: SEVERITY[c.classification], requestId: e.requestId, txHash: e.txHash, detail: c.detail });
+      }
+    }
+
+    // The analogue of an EVM nonce check. Cosmos accounts count the
+    // transactions the chain accepted; if that exceeds what the platform
+    // signed, something else spent from the key. Solana has no such counter.
+    // The ledger records no per-key attribution, so this runs only when the
+    // organisation has exactly one Cosmos key, and says so when it cannot.
+    let sequenceCheck = 'not applicable: Solana accounts have no sequence counter';
+    if (input.blockchain === 'cosmos') {
+      const keys = await withTenant(this.pool, input.customerId, (c) =>
+        c.query(`SELECT public_key FROM key_pairs WHERE customer_id = $1 AND blockchain = 'cosmos' AND public_key IS NOT NULL`, [input.customerId]),
+      );
+      if (keys.rows.length === 1) {
+        const { address } = await this.chainSigner.cosmosAddress(keys.rows[0].public_key);
+        const acct = await this.chainSigner.cosmosAccount(address);
+        sequenceCheck = `checked ${address}: chain sequence ${acct.sequence}, platform signed ${entries.length}`;
+        if (acct.sequence > entries.length) {
+          counts.unsigned_outbound = acct.sequence - entries.length;
+          breaks.push({
+            classification: 'unsigned_outbound', severity: 'critical', address,
+            detail: `${address} has sent ${acct.sequence} transactions on chain and this platform signed ${entries.length}. Something else holds or used this key.`,
+          });
+        }
+      } else {
+        sequenceCheck = `skipped: ${keys.rows.length} Cosmos keys, and the ledger does not record which key signed`;
+      }
+    }
+
+    const summary = {
+      blockchain: input.blockchain,
+      chainId,
+      window: { since: since.toISOString(), until: now.toISOString() },
+      examined: inWindow.length,
+      counts,
+      sequenceCheck,
+      needsAttention: breaks.some((b) => b.severity === 'warning' || b.severity === 'critical'),
+      critical: breaks.filter((b) => b.severity === 'critical').length,
+    };
+    return this.save(input.customerId, 'chain', chainId, summary, breaks, input.requestedBy);
+  }
+
+  private async nativeStatus(blockchain: 'solana' | 'cosmos', hash: string): Promise<NativeChainStatus> {
+    if (blockchain === 'solana') {
+      const s = await this.chainSigner.solanaStatus(hash);
+      if (!s.found) return { found: false };
+      if (s.err) return { found: true, failed: true, failure: JSON.stringify(s.err) };
+      return {
+        found: true,
+        pending: s.confirmation_status === 'processed',
+        moved: s.transfer ? { to: s.transfer.to, amount: s.transfer.lamports } : undefined,
+      };
+    }
+    const s = await this.chainSigner.cosmosStatus(hash);
+    if (!s.found) return { found: false };
+    if (s.code) return { found: true, failed: true, failure: s.raw_log };
+    return { found: true, moved: s.send ? { to: s.send.to, amount: s.send.amount } : undefined };
+  }
 
   private async ledger(customerId: string): Promise<Array<LedgerEntry & { txHash: string | null; asset: string; amount: string }>> {
     const r = await withTenant(this.pool, customerId, (c) =>
@@ -170,7 +282,7 @@ export class ReconciliationService {
     return this.save(input.customerId, 'statement', null, summary, breaks, input.requestedBy);
   }
 
-  private async save(customerId: string, kind: string, chainId: number | null, summary: unknown, breaks: unknown[], by: string) {
+  private async save<B>(customerId: string, kind: string, chainId: number | null, summary: unknown, breaks: B[], by: string) {
     const r = await withTenant(this.pool, customerId, (c) =>
       c.query(
         `INSERT INTO reconciliation_runs (customer_id, kind, chain_id, summary, breaks, requested_by)

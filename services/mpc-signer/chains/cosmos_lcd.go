@@ -265,18 +265,41 @@ func (n *CosmosNode) Broadcast(ctx context.Context, txRaw []byte) (*CosmosBroadc
 
 // CosmosTxStatus is where a transaction stands.
 type CosmosTxStatus struct {
-	Found  bool   `json:"found"`
-	Height string `json:"height,omitempty"`
-	Code   uint32 `json:"code,omitempty"` // non-zero: included and failed
-	RawLog string `json:"raw_log,omitempty"`
-	TxHash string `json:"txhash,omitempty"`
+	// Send is the first bank MsgSend in the transaction, when there is one.
+	Send   *CosmosSendInfo `json:"send,omitempty"`
+	Found  bool            `json:"found"`
+	Height string          `json:"height,omitempty"`
+	Code   uint32          `json:"code,omitempty"` // non-zero: included and failed
+	RawLog string          `json:"raw_log,omitempty"`
+	TxHash string          `json:"txhash,omitempty"`
 }
 
 // TxStatus looks a transaction up by hash. Found=false means the node has not
 // seen it in a block, which is the normal state just after a broadcast and
 // must not be read as failure or as success.
+// CosmosSendInfo is what an included MsgSend moved.
+type CosmosSendInfo struct {
+	From   string `json:"from"`
+	To     string `json:"to"`
+	Denom  string `json:"denom"`
+	Amount string `json:"amount"`
+}
+
 func (n *CosmosNode) TxStatus(ctx context.Context, hash string) (*CosmosTxStatus, error) {
 	var r struct {
+		Tx struct {
+			Body struct {
+				Messages []struct {
+					Type        string `json:"@type"`
+					FromAddress string `json:"from_address"`
+					ToAddress   string `json:"to_address"`
+					Amount      []struct {
+						Denom  string `json:"denom"`
+						Amount string `json:"amount"`
+					} `json:"amount"`
+				} `json:"messages"`
+			} `json:"body"`
+		} `json:"tx"`
 		TxResponse struct {
 			Height string `json:"height"`
 			TxHash string `json:"txhash"`
@@ -290,5 +313,12 @@ func (n *CosmosNode) TxStatus(ctx context.Context, hash string) (*CosmosTxStatus
 		}
 		return nil, err
 	}
-	return &CosmosTxStatus{Found: true, Height: r.TxResponse.Height, Code: r.TxResponse.Code, RawLog: r.TxResponse.RawLog, TxHash: r.TxResponse.TxHash}, nil
+	st := &CosmosTxStatus{Found: true, Height: r.TxResponse.Height, Code: r.TxResponse.Code, RawLog: r.TxResponse.RawLog, TxHash: r.TxResponse.TxHash}
+	for _, m := range r.Tx.Body.Messages {
+		if m.Type == msgSendTypeURL && len(m.Amount) > 0 {
+			st.Send = &CosmosSendInfo{From: m.FromAddress, To: m.ToAddress, Denom: m.Amount[0].Denom, Amount: m.Amount[0].Amount}
+			break
+		}
+	}
+	return st, nil
 }

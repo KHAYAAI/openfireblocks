@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
-import { IsArray, IsInt, IsOptional, IsString, Min } from 'class-validator';
+import { IsArray, IsIn, IsInt, IsOptional, IsString, Min, ValidateIf } from 'class-validator';
 import { JwtAuthGuard } from '../identity/jwt-auth.guard';
 import { CurrentUser } from '../identity/current-user.decorator';
 import { JwtClaims } from '../identity/auth.service';
@@ -9,7 +9,10 @@ import { ReconciliationService } from './reconciliation.service';
 import { StatementRow } from './reconcile';
 
 class ChainRunDto {
-  @IsInt() chainId: number;
+  // An EVM chain id, or -- for a Solana or Cosmos key -- the blockchain name.
+  // Exactly one of them.
+  @ValidateIf((o) => o.blockchain === undefined) @IsInt() chainId?: number;
+  @ValidateIf((o) => o.chainId === undefined) @IsIn(['solana', 'cosmos']) blockchain?: 'solana' | 'cosmos';
   @IsOptional() @IsInt() @Min(1) sinceHours?: number;
   @IsOptional() @IsInt() @Min(1) missingAfterMinutes?: number;
 }
@@ -32,7 +35,10 @@ export class OrgReconciliationController {
   @Post('chain')
   @RequireTenantRole(...CAN_MANAGE)
   chain(@Param('customerId') customerId: string, @CurrentUser() claims: JwtClaims, @Body() dto: ChainRunDto) {
-    return this.recon.runChain({ customerId, requestedBy: claims.email, ...dto });
+    const { blockchain, chainId, ...rest } = dto;
+    return blockchain
+      ? this.recon.runNative({ customerId, requestedBy: claims.email, blockchain, ...rest })
+      : this.recon.runChain({ customerId, requestedBy: claims.email, chainId: chainId!, ...rest });
   }
 
   @Post('statements')

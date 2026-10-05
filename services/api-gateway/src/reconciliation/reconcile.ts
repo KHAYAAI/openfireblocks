@@ -184,3 +184,54 @@ export function compareStatement(
   }
   return { matched, breaks };
 }
+
+// ---- Solana and Cosmos ------------------------------------------------------
+//
+// Same questions as the EVM path -- did it land, did it succeed, did it move
+// what the ledger says -- answered from what the signer reports, since a
+// non-EVM transaction has no receipt to parse here.
+
+export interface NativeLedgerEntry {
+  requestId: string;
+  createdAt: Date;
+  txHash: string;
+  to: string | null;
+  amount: string | null;
+}
+
+export interface NativeChainStatus {
+  found: boolean;
+  // Landed, but not yet at the commitment level that counts.
+  pending?: boolean;
+  // Included and failed.
+  failed?: boolean;
+  failure?: string;
+  // What it moved, when the node told us.
+  moved?: { to: string; amount: string };
+}
+
+export function classifyNative(
+  e: NativeLedgerEntry,
+  st: NativeChainStatus,
+  now: Date,
+  missingAfterMinutes: number,
+): { classification: Classification; detail: string } {
+  if (!st.found) {
+    const ageMin = (now.getTime() - e.createdAt.getTime()) / 60000;
+    return ageMin < missingAfterMinutes
+      ? { classification: 'recent', detail: `signed ${Math.round(ageMin)} min ago; not yet seen by the node` }
+      : { classification: 'missing', detail: `signed ${Math.round(ageMin)} min ago and unknown to the node: never broadcast, expired, or dropped` };
+  }
+  if (st.failed) return { classification: 'failed', detail: `included and failed: ${st.failure ?? 'no reason given'}` };
+  if (st.pending) return { classification: 'pending', detail: 'seen by the node, not yet confirmed' };
+  if (st.moved && (st.moved.to !== e.to || st.moved.amount !== e.amount)) {
+    return {
+      classification: 'mismatch',
+      detail: `ledger says ${e.amount} to ${e.to}; chain shows ${st.moved.amount} to ${st.moved.to}`,
+    };
+  }
+  return {
+    classification: 'confirmed',
+    detail: st.moved ? `${st.moved.amount} to ${st.moved.to}` : 'confirmed (the node did not report what moved, so amount and recipient are unchecked)',
+  };
+}

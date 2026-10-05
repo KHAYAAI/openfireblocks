@@ -311,3 +311,30 @@ func (s *server) handleCosmosStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, st)
 }
+
+// handleCosmosAccount reports an address's account number and sequence. The
+// sequence counts the transactions the chain has accepted from the address,
+// which reconciliation compares with what the platform signed.
+func (s *server) handleCosmosAccount(w http.ResponseWriter, r *http.Request) {
+	node := s.cosmosNode()
+	if node == nil {
+		errNoCosmosNode(w)
+		return
+	}
+	addr := r.URL.Query().Get("address")
+	if err := validCosmosAddress(addr, node.Bech32Prefix); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"error": err.Error()})
+		return
+	}
+	a, err := node.Account(r.Context(), addr)
+	if errors.Is(err, chains.ErrCosmosNotFound) {
+		// Never funded: zero transactions, which is an answer, not an error.
+		writeJSON(w, http.StatusOK, map[string]interface{}{"address": addr, "exists": false, "sequence": 0})
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]interface{}{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"address": addr, "exists": true, "account_number": a.AccountNumber, "sequence": a.Sequence})
+}

@@ -1,5 +1,5 @@
 import { Wallet, zeroPadValue, toBeHex } from 'ethers';
-import { classify, compareStatement, movedWhatLedgerSays, parseSigned, TRANSFER_TOPIC, unsignedNonces } from './reconcile';
+import { classify, classifyNative, compareStatement, SEVERITY, movedWhatLedgerSays, parseSigned, TRANSFER_TOPIC, unsignedNonces } from './reconcile';
 
 const key = new Wallet('0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d');
 const TOKEN = '0x1234567890123456789012345678901234567890';
@@ -85,5 +85,36 @@ describe('a customer statement against the ledger', () => {
     expect(out.breaks.map((b) => b.classification).sort()).toEqual(
       ['amount_mismatch', 'asset_mismatch', 'missing_in_platform', 'missing_in_statement'].sort(),
     );
+  });
+});
+
+describe('Solana and Cosmos transactions against what the node reports', () => {
+  const now = new Date('2026-10-05T12:00:00Z');
+  const entry = (minsAgo: number) => ({ requestId: 'r1', createdAt: new Date(now.getTime() - minsAgo * 60000), txHash: 'h', to: 'DST', amount: '1000' });
+
+  it('a transaction the node has not seen is recent, then missing', () => {
+    expect(classifyNative(entry(5), { found: false }, now, 30).classification).toBe('recent');
+    expect(classifyNative(entry(90), { found: false }, now, 30).classification).toBe('missing');
+  });
+  it('an included failure is failed, and carries the reason', () => {
+    const c = classifyNative(entry(5), { found: true, failed: true, failure: 'out of gas' }, now, 30);
+    expect(c.classification).toBe('failed');
+    expect(c.detail).toContain('out of gas');
+  });
+  it('a transaction not yet confirmed is pending', () => {
+    expect(classifyNative(entry(5), { found: true, pending: true }, now, 30).classification).toBe('pending');
+  });
+  it('one that confirmed and moved what the ledger says is confirmed', () => {
+    expect(classifyNative(entry(5), { found: true, moved: { to: 'DST', amount: '1000' } }, now, 30).classification).toBe('confirmed');
+  });
+  it('one that confirmed and moved something else is a critical mismatch', () => {
+    for (const moved of [{ to: 'OTHER', amount: '1000' }, { to: 'DST', amount: '9999' }]) {
+      const c = classifyNative(entry(5), { found: true, moved }, now, 30);
+      expect(c.classification).toBe('mismatch');
+      expect(SEVERITY[c.classification]).toBe('critical');
+    }
+  });
+  it('says so when the node did not report what moved, rather than claiming it was checked', () => {
+    expect(classifyNative(entry(5), { found: true }, now, 30).detail).toMatch(/unchecked/);
   });
 });
