@@ -55,12 +55,12 @@ Every row blocks "production ready". None of them is an engineering task.
 | mpc-signer | Verified (EVM, Bitcoin regtest, PKCS#11 on SoftHSM2); Solana and Cosmos protocol-tested | See section 3 |
 | mpc-party | Verified (live multi-party DKG, signing, resharing over HTTP/mTLS) | Isolation only simulated on one host |
 | temporal-worker | Verified | Workflows run against a real Temporal dev server in CI |
-| api-gateway | Verified (29 specs, plus live specs on real Postgres) | JWT/role console; API-key API |
+| api-gateway | Verified (379 tests, including live specs on real Postgres over HTTP) | JWT/role console; API-key API; approval flow for every chain |
 | policy-service | Verified | OPA/Rego engine; sanctions list reloadable |
 | webhooks | Verified, thin tests | HMAC-signed delivery drilled in `webhook-drill.sh` |
 | vault-pki-init | Verified | mTLS leaf issuance |
 | compliance | Pilot: OFAC address screening works and fails closed; KYC vendor and filings unverified | See section 4 |
-| billing | Not done for production | Never charged a card; gateway has a separate billing module |
+| billing | Pilot: charge, card-saving and console screen built and unit-tested against a stub; never run against Stripe | Needs a Stripe account and a test-mode run (`stripe_live_test.go` exists, unrun). The gateway also keeps its own usage-metering module |
 | backup | Deployable (image, chart, daily schedule, token auth); image not built here | Dumps stay in the same cluster; only Postgres failover is real |
 | vault-unseal | Dev only | Source says "NOT PRODUCTION-GRADE KEY HANDLING" |
 | policy, settlement, marketplace | Not part of the launch path; off by default in the chart | Nothing calls them |
@@ -140,7 +140,32 @@ Fixed in the second pass:
 - The deploy pipeline deploys the Helm chart, with one repository per service
   and a chart-wide `imageTag`, instead of updating one ECS service. It has
   never run against a cluster or AWS account.
-- The console can create keys and send Bitcoin, Solana and Cosmos transfers.
+- The console can create keys and send transfers.
+
+Fixed in the third pass:
+
+- **Approval-needed transfers were signed, not refused.** Policy's
+  `requiresApproval` was ignored on the Bitcoin, Solana and Cosmos signing
+  paths, so a transfer that policy said needed people to sign off was simply
+  signed. (An earlier version of this file and the console said such transfers
+  were "refused"; that was wrong, which is how it was found.) The gateway now
+  refuses to sign unless approval was granted.
+- Bitcoin, Solana, Cosmos and EVM transfers now have an approval step. A
+  transfer that needs approval is parked as a stored request (migration 027),
+  an approval is opened for the organisation's approvers, and it runs exactly
+  once when the quorum is reached. The database refuses to change the request,
+  to start it before the approval is approved, or to skip states; the
+  requester can never approve their own. A failed send keeps the approval and
+  an admin can run it again. Proven by a live-Postgres spec over real HTTP and
+  JWTs, and in Chromium against a mock Solana node.
+- The console starts EVM transfers (network picker; the platform reads nonce
+  and fees from the chain when the transfer runs) and shows held transfers, the
+  approvals and the execution result.
+- The console has a Billing screen: card on file, and "Add card", which sends
+  the person to Stripe's hosted page. A customer with no Stripe identity is
+  created on first use. Wired into the chart with `billing.consolePublicUrl`.
+  Proven against a mock billing service, not against Stripe.
+- Customer-flow videos (fintech, bank, government) are in `docs/showcase`.
 
 Still open:
 
@@ -149,14 +174,17 @@ Still open:
   are not implemented. The backup image has not been built (no Docker daemon
   where this was written).
 - No pipeline step has run against a real cluster or AWS account.
-- Billing has not been run against Stripe. The gateway also has its own
-  billing module that does not call `services/billing`, and nothing calls the
-  billing service over HTTP yet, so card saving has no console button.
-- Bitcoin, Solana and Cosmos transfers have no approval step: a transfer that
-  policy says needs approval is refused. Only EVM settlements route to
-  approvers.
-- The console starts no EVM transfers directly: they begin as settlements,
-  which need a nonce and gas fields the console does not collect.
+- Billing has not been run against Stripe, and the gateway still has its own
+  usage-metering module separate from `services/billing`.
+- EVM transfers started from the console have not been broadcast to a real
+  network from this repository (the gateway's RPC needs `ETHEREUM_RPC_*`); the
+  nonce, fee and broadcast steps are covered by unit tests with a stubbed
+  provider only.
+- Approval-needed transfers from an API key (not a person) are parked the same
+  way; the console's approvers then decide them. There is no approver-facing
+  API or mobile surface yet.
+- The only way to see a held transfer's outcome is the console or polling the
+  approval; there is no webhook for "approved and executed".
 - Solana and Cosmos amounts are governed by unit-normalised policy, not by
   price. A deployment that wants USD limits needs a price source.
 - Cosmos' "spent without us" check needs exactly one Cosmos key per
