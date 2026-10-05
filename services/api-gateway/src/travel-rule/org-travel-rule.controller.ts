@@ -31,6 +31,13 @@ export class OrgTravelRuleController {
     return this.travelRule.get(customerId, recordId);
   }
 
+  // Send (or send again) through the configured provider.
+  @Post('records/:recordId/transmit')
+  @RequireTenantRole(...CAN_MANAGE)
+  transmit(@Param('customerId') customerId: string, @Param('recordId') recordId: string) {
+    return this.travelRule.retransmit(customerId, recordId);
+  }
+
   // Recording that a record was sent outside the platform is a compliance
   // decision, not a read -- restricted to admins like every other write
   // in this console.

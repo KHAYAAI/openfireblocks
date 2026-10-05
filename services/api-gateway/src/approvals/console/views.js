@@ -894,6 +894,20 @@
       if (O.isAdmin() && (rec.transmissionStatus === 'awaiting_transmission' || rec.transmissionStatus === 'failed')) {
         var ref = el('input', { id: 'tr-ref', required: true, placeholder: 'provider reference or export batch id' });
         var status = el('div');
+        var sendStatus = el('div');
+        var sendBtn = el('button', { type: 'button', className: 'accent', text: rec.transmissionStatus === 'failed' ? 'Send again' : 'Send now', onclick: function () {
+          sendBtn.disabled = true;
+          sendStatus.replaceChildren(notice('Sending through the configured provider…'));
+          api('POST', orgPath('/travel-rule/records/' + encodeURIComponent(recordId) + '/transmit')).then(function (r3) {
+            if (!r3.ok) { sendBtn.disabled = false; return sendStatus.replaceChildren(notice(errorText(r3), 'error')); }
+            travelRuleDetail(recordId, content);
+          });
+        } });
+        parts.push(el('div', { className: 'card' }, [
+          el('h2', { text: 'Send through the provider' }),
+          el('p', { className: 'muted', text: 'Sends the stored information to the Travel Rule provider this deployment is configured with. The same record is never filed twice.' }),
+          el('div', { className: 'actions' }, [sendBtn]), sendStatus,
+        ]));
         parts.push(el('div', { className: 'card' }, [
           el('h2', { text: 'Record as sent' }),
           el('p', { className: 'muted', text: 'Use this when the information was sent outside the platform -- a provider portal, a manual export.' }),

@@ -235,6 +235,38 @@ describe('Travel Rule on outbound transfers (live Postgres)', () => {
     expect(marked.transmissionStatus).toBe('transmitted');
   });
 
+  it('a failed transmission can be retried through the provider, once, and the retry cannot be filed twice', async () => {
+    if (skipped()) return;
+    process.env.TRAVEL_RULE_PROVIDER_URL = PROVIDER;
+    providerStatus = 503;
+    const out = await send('26000', INFO);
+    const id = out.travel_rule!.record_id;
+    expect((await record(id)).transmission_status).toBe('failed');
+
+    // Still down: stays failed, error refreshed.
+    const still = await travelRule.retransmit(customer.customer_id, id);
+    expect(still.transmissionStatus).toBe('failed');
+
+    // Back up: transmitted, and the provider was given the record's id as its
+    // idempotency key both times.
+    providerStatus = 200;
+    const done = await travelRule.retransmit(customer.customer_id, id);
+    expect(done.transmissionStatus).toBe('transmitted');
+    expect(providerCalls.at(-1)!.txHash).toBe((await record(id)).tx_hash);
+
+    // Already sent: refused, and nothing further reaches the provider.
+    const before = providerCalls.length;
+    await expect(travelRule.retransmit(customer.customer_id, id)).rejects.toThrow(/already been transmitted/);
+    expect(providerCalls).toHaveLength(before);
+  });
+
+  it('with no provider configured a retry says so instead of pretending', async () => {
+    if (skipped()) return;
+    delete process.env.TRAVEL_RULE_PROVIDER_URL;
+    const out = await send('27000', INFO);
+    await expect(travelRule.retransmit(customer.customer_id, out.travel_rule!.record_id)).rejects.toThrow(/no Travel Rule provider/);
+  });
+
   it('an unhosted beneficiary is recorded, and nothing is transmitted', async () => {
     if (skipped()) return;
     process.env.TRAVEL_RULE_PROVIDER_URL = PROVIDER;

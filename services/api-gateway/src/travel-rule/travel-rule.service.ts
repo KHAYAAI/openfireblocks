@@ -137,6 +137,13 @@ export class TravelRuleService {
     );
     const row = rec.rows[0];
     if (row.transmission_status !== 'awaiting_transmission') return { status: row.transmission_status };
+    return this.transmit(customerId, recordId, row.ivms101, txHash);
+  }
+
+  // Sends one record to the configured provider and records the outcome. Used
+  // right after signing and again for a retry. Never throws for a provider
+  // failure: the information is kept and the failure recorded.
+  private async transmit(customerId: string, recordId: string, ivms101: unknown, txHash: string | null): Promise<{ status: string; reference?: string; error?: string }> {
     const url = process.env.TRAVEL_RULE_PROVIDER_URL;
     if (!url) return { status: 'awaiting_transmission' };
 
@@ -145,9 +152,12 @@ export class TravelRuleService {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
+          // The same record always carries the same key, so a retry after a
+          // timeout cannot make the provider file it twice.
+          'idempotency-key': recordId,
           ...(process.env.TRAVEL_RULE_PROVIDER_TOKEN ? { authorization: `Bearer ${process.env.TRAVEL_RULE_PROVIDER_TOKEN}` } : {}),
         },
-        body: JSON.stringify({ ivms101: row.ivms101, txHash }),
+        body: JSON.stringify({ ivms101, txHash }),
         signal: AbortSignal.timeout(10000),
       });
       const text = await res.text();
@@ -166,6 +176,24 @@ export class TravelRuleService {
       await this.mark(customerId, recordId, 'failed', null, message);
       return { status: 'failed', error: message };
     }
+  }
+
+  // Try again for a record that is waiting or whose last attempt failed.
+  // A record already transmitted is left alone: sending it twice is how a
+  // counterparty ends up with two copies.
+  async retransmit(customerId: string, recordId: string): Promise<TravelRuleRecordView> {
+    if (!UUID_RE.test(recordId)) throw new NotFoundException('record not found');
+    if (!process.env.TRAVEL_RULE_PROVIDER_URL) {
+      throw new UnprocessableEntityException('no Travel Rule provider is configured (TRAVEL_RULE_PROVIDER_URL), so there is nowhere to send it; record it as sent elsewhere instead');
+    }
+    const r = await withTenant(this.pool, customerId, (c) =>
+      c.query(`SELECT transmission_status, ivms101, tx_hash FROM travel_rule_records WHERE record_id = $1 AND customer_id = $2`, [recordId, customerId]),
+    );
+    const row = r.rows[0];
+    if (!row) throw new NotFoundException('record not found');
+    if (row.transmission_status === 'transmitted') throw new UnprocessableEntityException('this record has already been transmitted');
+    await this.transmit(customerId, recordId, row.ivms101, row.tx_hash);
+    return this.get(customerId, recordId);
   }
 
   private async mark(customerId: string, recordId: string, status: string, reference: string | null, error: string | null) {
