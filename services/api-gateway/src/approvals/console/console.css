@@ -10,6 +10,12 @@
  * the same warm, restrained family as the paper) used sparingly for
  * actions and focus rather than decoration.
  *
+ * Restyled to the Forge reference files (Branding Tiles, Credit Bureau):
+ * paper #F4F2EE with #EFEBE3 / #ECE8E0 fills, ink #0A0A0A, steel #6F6A62 and
+ * #8B8579 for secondary text, hairlines #D8D4CC / #C9C3B7, 2px corners, no
+ * shadows, and no accent colour: primary actions are ink on paper. The one
+ * colour is the reference's signal red (#FF5E5E), used only as a marker.
+ *
  * No web font is loaded over the network. A self-hosted customer's
  * network may have no route to a font CDN at all (the same reason this
  * whole console ships with no build step), so 'Inter Tight' and
@@ -21,28 +27,42 @@
  * light-mode default standing in for a dark one.
  */
 
+@font-face { font-family: 'Inter Tight'; font-style: italic; font-weight: 300; font-display: swap; src: url('/console/fonts/InterTight-300i.ttf') format('truetype'); }
+@font-face { font-family: 'Inter Tight'; font-style: normal; font-weight: 400; font-display: swap; src: url('/console/fonts/InterTight-400.ttf') format('truetype'); }
+@font-face { font-family: 'Inter Tight'; font-style: normal; font-weight: 500; font-display: swap; src: url('/console/fonts/InterTight-500.ttf') format('truetype'); }
+@font-face { font-family: 'Inter Tight'; font-style: normal; font-weight: 600; font-display: swap; src: url('/console/fonts/InterTight-600.ttf') format('truetype'); }
+@font-face { font-family: 'Inter Tight'; font-style: normal; font-weight: 700; font-display: swap; src: url('/console/fonts/InterTight-700.ttf') format('truetype'); }
+@font-face { font-family: 'JetBrains Mono'; font-style: normal; font-weight: 400; font-display: swap; src: url('/console/fonts/JetBrainsMono-400.ttf') format('truetype'); }
+@font-face { font-family: 'JetBrains Mono'; font-style: normal; font-weight: 500; font-display: swap; src: url('/console/fonts/JetBrainsMono-500.ttf') format('truetype'); }
+@font-face { font-family: 'JetBrains Mono'; font-style: normal; font-weight: 600; font-display: swap; src: url('/console/fonts/JetBrainsMono-600.ttf') format('truetype'); }
+
 :root {
-  --paper: #E8E4DC;
-  --paper-raised: #F4F2EC;
-  --paper-sunken: #DCD7CB;
+  --paper: #F4F2EE;
+  --paper-raised: #F4F2EE;
+  --paper-sunken: #ECE8E0;
+  --paper-soft: #EFEBE3;
+  --steel: #6F6A62;
+  --steel-2: #8B8579;
+  --hair: #C9C3B7;
+  --signal: #FF5E5E;
   --ink: #0A0A0A;
   --ink-80: rgba(10, 10, 10, .80);
-  --ink-55: rgba(10, 10, 10, .55);
-  --ink-38: rgba(10, 10, 10, .38);
-  --line: rgba(10, 10, 10, .13);
-  --line-strong: rgba(10, 10, 10, .24);
-  --accent: #C0491C;
-  --accent-ink: #FFF6EE;
-  --accent-wash: rgba(192, 73, 28, .10);
+  --ink-55: #6F6A62;
+  --ink-38: #8B8579;
+  --line: #D8D4CC;
+  --line-strong: #C9C3B7;
+  --accent: #0A0A0A;
+  --accent-ink: #F4F2EE;
+  --accent-wash: rgba(10, 10, 10, .06);
   --ok: #3E6B4A;
   --ok-wash: rgba(62, 107, 74, .12);
   --warn: #93630F;
   --warn-wash: rgba(163, 114, 26, .14);
   --critical: #9B2F26;
   --critical-wash: rgba(155, 47, 38, .12);
-  --radius: 7px;
-  --radius-sm: 4px;
-  --shadow-1: 0 1px 2px rgba(10, 10, 10, .05);
+  --radius: 2px;
+  --radius-sm: 2px;
+  --shadow-1: none;
   --sidebar-w: 236px;
   --font-ui: 'Inter Tight', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
@@ -58,7 +78,7 @@ body {
 }
 h1, h2, h3 { margin: 0; font-family: var(--font-ui); letter-spacing: -0.01em; }
 p { margin: 0 0 8px; }
-a { color: var(--accent); }
+a { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }
 ::selection { background: var(--accent); color: var(--accent-ink); }
 
 .mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
@@ -131,7 +151,7 @@ a { color: var(--accent); }
   border-left: 2px solid transparent;
 }
 .navitem:hover { background: var(--paper-sunken); }
-.navitem.active { background: var(--paper); border-left-color: var(--accent); color: var(--ink); font-weight: 650; }
+.navitem.active { background: var(--paper); border-left-color: var(--signal); color: var(--ink); font-weight: 650; }
 .navitem .count { font: 600 10.5px/1 var(--font-mono); color: var(--ink-38); }
 .navitem.active .count { color: var(--accent); }
 
@@ -280,7 +300,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 button.primary { background: var(--ink); border-color: var(--ink); color: var(--paper-raised); }
 button.primary:hover { background: #262626; }
 button.accent { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
-button.accent:hover { background: #A63E17; }
+button.accent:hover { background: #2A2A2A; }
 button.approve { background: var(--ok); border-color: var(--ok); color: #F3FBF4; }
 button.approve:hover { background: #335A3D; }
 button.reject, button.danger { background: transparent; border-color: var(--critical); color: var(--critical); }
@@ -292,7 +312,7 @@ button.block { width: 100%; }
 
 code.inline {
   font: 500 12px var(--font-mono); background: var(--paper-sunken);
-  padding: 1px 5px; border-radius: 3px;
+  padding: 1px 5px; border-radius: 2px;
 }
 
 .skel { background: linear-gradient(90deg, var(--paper-sunken) 25%, var(--paper-raised) 50%, var(--paper-sunken) 75%); background-size: 200% 100%; animation: shimmer 1.3s linear infinite; border-radius: var(--radius-sm); }

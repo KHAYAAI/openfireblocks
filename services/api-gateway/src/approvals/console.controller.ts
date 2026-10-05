@@ -20,12 +20,19 @@ const FILES: Record<string, string> = {
   'manifest.webmanifest': 'application/manifest+json',
 };
 
+// The brand's two typefaces, served from here rather than a font CDN: a
+// self-hosted customer's network may have no route to one. Both are SIL OFL.
+const FONTS = new Set([
+  'InterTight-300i.ttf', 'InterTight-400.ttf', 'InterTight-500.ttf', 'InterTight-600.ttf', 'InterTight-700.ttf',
+  'JetBrainsMono-400.ttf', 'JetBrainsMono-500.ttf', 'JetBrainsMono-600.ttf',
+]);
+
 const cache = new Map<string, Buffer>();
 
 function load(name: string): Buffer {
   let body = cache.get(name);
   if (!body) {
-    body = readFileSync(join(__dirname, 'console', name));
+    body = readFileSync(join(__dirname, 'console', ...name.split('/')));
     cache.set(name, body);
   }
   return body;
@@ -64,6 +71,12 @@ export class ConsoleController {
       .setHeader('X-Frame-Options', 'DENY')
       .setHeader('Cache-Control', 'no-store')
       .send(load('showcase.html'));
+  }
+
+  @Get('fonts/:file')
+  font(@Param('file') file: string, @Res() res: Response) {
+    if (!FONTS.has(file)) throw new NotFoundException();
+    res.status(200).type('font/ttf').setHeader('Cache-Control', 'public, max-age=31536000, immutable').send(load('fonts/' + file));
   }
 
   @Get(':file')

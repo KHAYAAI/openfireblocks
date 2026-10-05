@@ -1,24 +1,32 @@
-# Customer flow videos
+# Customer flow recordings (the real console)
 
-Three self-playing walkthroughs of how an application uses the platform, one
-each for a fintech, a bank and a government. They are the same scenes the
-gateway serves at `/console/showcase?flow=fintech|bank|government` (and
-`flow=overview` for the platform tour), recorded at 1280x720.
+Three recordings of the **running console**, one each for a fintech, a bank and
+a government customer. Nothing on screen is an animation: they are Chromium
+driving the live gateway with real sign-ins, one-time codes, policy,
+approvals and database rules. Title cards and the caption strip are the only
+additions.
 
-| File | Length | Story |
-|---|---|---|
-| `openfireblocks-fintech-flow.webm` | ~80 s | API key, keys, rules, routine payment, agent budget, held large payment, approvals, reconciliation, pilot |
-| `openfireblocks-bank-flow.webm` | ~65 s | SSO and roles, keys, dual control, operator request held, approvers, audit trail and Travel Rule, pilot with milestones |
-| `openfireblocks-government-flow.webm` | ~60 s | self-hosted deployment, three owners, controls, three-official disbursement, evidence, bounded proof of concept |
+| File | Story |
+|---|---|
+| `openfireblocks-fintech-console.webm` | a real API-key call is held with 202; two approvers decide; the stored request runs; billing card; reconciliation |
+| `openfireblocks-bank-console.webm` | roles and policy; an operator asks with Travel Rule details; held; two approvers; evidence; reconciliation |
+| `openfireblocks-government-console.webm` | quorum raised to three; clerk asks; three officials approve; audit record; reconciliation |
 
-What they are: an illustration of real platform behaviour. The companies are
-fictional, the figures are examples, and the scenes are animations, not a
-recording of a live system. Each one ends on what a pilot is and what still
-stands between a pilot and production money, because those are the claims we
-can and cannot make today (see `LAUNCH-CHECKLIST.md`).
+Real in these recordings: sign-in, TOTP step-up, roles, policy-service
+decision, the stored request, quorum, segregation of duties, the database
+triggers, Travel Rule capture, reconciliation.
 
-Re-record with the gateway running:
+Stand-ins, labelled on screen: the chain is a mock Solana node (it holds 5 SOL,
+so the approved 15 SOL send fails with a real "insufficient balance" error
+and an admin retry is offered), Stripe is a mock billing service, and single
+sign-on is not shown because there is no identity provider here (password and
+one-time code are used). Not shown: a signing ceremony completing, a
+transaction confirming on a live network, self-hosted deployment, a hardware
+HSM. Customers are fictional.
 
-    GATEWAY_URL=http://localhost:3000 node scripts/record-showcase.js
+Re-record against a seeded dev stack:
 
-(needs `playwright` and its Chromium).
+    SEED_JSON=/path/seed.json OUT_DIR=docs/showcase node scripts/record-console.js [fintech|bank|government]
+
+The animated scene player at `/console/showcase` remains in the product and is
+restyled to the same Forge tokens, but it is a scripted illustration.
