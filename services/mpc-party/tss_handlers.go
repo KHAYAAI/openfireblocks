@@ -97,6 +97,11 @@ type tssKeygenStartRequest struct {
 	// Which curve to generate on. Absent means secp256k1, which is what
 	// every key generated before this field existed is.
 	Curve string `json:"curve,omitempty"`
+	// The chain the key is for. When present it decides the curve, and the
+	// address is written the way that chain writes it. A Curve that
+	// disagrees with it is refused: the two were meant to say the same thing
+	// and a mismatch means a caller is confused about what it is creating.
+	Blockchain string `json:"blockchain,omitempty"`
 	// A signature over this request from a key the platform's own hosts
 	// cannot reach. Required only when this party has an authoriser
 	// configured -- see authorizer.go.
@@ -145,7 +150,25 @@ func (ps *PartyServer) HandleTSSKeygenStart(w http.ResponseWriter, r *http.Reque
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": err.Error()})
 		return
 	}
-	if err := ps.tssManager.StartKeygen(req.CeremonyID, req.Threshold, peers, curve); err != nil {
+	if req.Blockchain != "" {
+		want, err := CurveForChain(req.Blockchain)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		if req.Curve != "" && Curve(req.Curve) != want {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf(
+				"blockchain %q needs curve %s but the request asked for %s", req.Blockchain, want, req.Curve)})
+			return
+		}
+	}
+	var startErr error
+	if req.Blockchain != "" {
+		startErr = ps.tssManager.StartKeygenForChain(req.CeremonyID, req.Threshold, peers, req.Blockchain)
+	} else {
+		startErr = ps.tssManager.StartKeygen(req.CeremonyID, req.Threshold, peers, curve)
+	}
+	if err := startErr; err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}

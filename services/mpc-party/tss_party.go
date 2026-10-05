@@ -53,6 +53,10 @@ type tssKeygenCeremony struct {
 	// are needed: the save-data types come from different packages and
 	// share no interface, so the curve is what says which pointer is set.
 	curve Curve
+	// The chain the key is for, when the orchestrator said. It decides how
+	// the address is written (a Cosmos key is bech32, not 0x...), which the
+	// curve alone cannot.
+	blockchain string
 	// Which refresh epoch this key's shares belong to. Zero at DKG, and
 	// incremented by each proactive refresh -- see tss_resharing.go, where
 	// the reason the identities have to move is that the shares do.
@@ -156,6 +160,22 @@ func findPartyID(sorted tsscommon.SortedPartyIDs, partyID int) *tsscommon.PartyI
 // once the ceremony is registered and Start() has been called -- it does
 // NOT block for completion; poll GetStatus for that.
 func (m *TSSPartyManager) StartKeygen(ceremonyID string, threshold int, peers map[int]string, curve Curve) error {
+	return m.startKeygen(ceremonyID, threshold, peers, curve, "")
+}
+
+// StartKeygenForChain begins a ceremony for a named blockchain: the curve is
+// chosen by CurveForChain and the address is written the way that chain
+// writes it. An unknown chain is refused rather than defaulted -- see
+// CurveForChain for why.
+func (m *TSSPartyManager) StartKeygenForChain(ceremonyID string, threshold int, peers map[int]string, blockchain string) error {
+	curve, err := CurveForChain(blockchain)
+	if err != nil {
+		return err
+	}
+	return m.startKeygen(ceremonyID, threshold, peers, curve, blockchain)
+}
+
+func (m *TSSPartyManager) startKeygen(ceremonyID string, threshold int, peers map[int]string, curve Curve, blockchain string) error {
 	if _, ok := peers[m.partyID]; !ok {
 		return fmt.Errorf("peers map does not include this party's own id %d", m.partyID)
 	}
@@ -188,6 +208,7 @@ func (m *TSSPartyManager) StartKeygen(ceremonyID string, threshold int, peers ma
 		sortedIDs:   sorted,
 		peers:       peers,
 		curve:       curve,
+		blockchain:  blockchain,
 	}
 	m.mu.Lock()
 	m.ceremonies[ceremonyID] = ceremony
@@ -390,6 +411,9 @@ func (m *TSSPartyManager) completeCeremony(ceremonyID string, ceremony *tssKeyge
 	// is the last 20 bytes of a hash of the public key, and a Solana
 	// address is the public key itself, base58 encoded.
 	pubKeyHex, address, err := share.PublicKey()
+	if err == nil {
+		address, err = share.AddressFor(ceremony.blockchain, address)
+	}
 	if err != nil {
 		m.failCeremony(ceremonyID, fmt.Errorf("keygen succeeded but the public key could not be derived: %w", err))
 		return

@@ -144,6 +144,29 @@ func (k *KeyShare) PublicKey() (publicKeyHex string, address string, err error) 
 	}
 }
 
+// cosmosPrefixes maps a Cosmos-SDK chain name to its bech32 human-readable
+// part. A prefix is per-chain, not per-curve, which is why the address cannot
+// be decided by PublicKey alone.
+var cosmosPrefixes = map[string]string{"cosmos": "cosmos", "cosmos-hub": "cosmos", "osmosis": "osmo"}
+
+// AddressFor writes the address the way blockchain writes it. fallback is
+// what PublicKey produced and is returned for every chain whose address is
+// the curve's default (Ethereum-family, Bitcoin -- whose own addresses are
+// derived from the public key by mpc-signer -- and Solana). Only the Cosmos
+// family differs: a secp256k1 key whose address is
+// bech32(prefix, RIPEMD160(SHA256(compressed pubkey))).
+func (k *KeyShare) AddressFor(blockchain, fallback string) (string, error) {
+	prefix, isCosmos := cosmosPrefixes[blockchain]
+	if !isCosmos {
+		return fallback, nil
+	}
+	if k.Curve != CurveSecp256k1 || k.ECDSA == nil || k.ECDSA.ECDSAPub == nil {
+		return "", fmt.Errorf("a %s address needs a secp256k1 key", blockchain)
+	}
+	compressed := ethcrypto.CompressPubkey(k.ECDSA.ECDSAPub.X(), k.ECDSA.ECDSAPub.Y())
+	return CosmosAddress(compressed, prefix)
+}
+
 // MarshalShare serialises a share for sealing, carrying its curve.
 func MarshalShare(share *KeyShare) ([]byte, error) {
 	return json.Marshal(share)

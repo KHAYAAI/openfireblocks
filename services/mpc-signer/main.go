@@ -274,6 +274,13 @@ func main() {
 	router.HandleFunc("/bitcoin/addresses", s.handleBitcoinAddresses).Methods(http.MethodGet)
 	router.HandleFunc("/bitcoin/prepare", s.handleBitcoinPrepare).Methods(http.MethodPost)
 	router.HandleFunc("/bitcoin/finalize", s.handleBitcoinFinalize).Methods(http.MethodPost)
+	// Solana: the same prepare / threshold-sign / finalize shape -- see
+	// solana_http.go.
+	router.HandleFunc("/solana/addresses", s.handleSolanaAddresses).Methods(http.MethodGet)
+	router.HandleFunc("/solana/balance", s.handleSolanaBalance).Methods(http.MethodGet)
+	router.HandleFunc("/solana/prepare", s.handleSolanaPrepare).Methods(http.MethodPost)
+	router.HandleFunc("/solana/finalize", s.handleSolanaFinalize).Methods(http.MethodPost)
+	router.HandleFunc("/solana/status", s.handleSolanaStatus).Methods(http.MethodGet)
 	router.HandleFunc("/health", handleHealth).Methods(http.MethodGet)
 	router.Handle("/metrics", promhttp.Handler()).Methods(http.MethodGet)
 

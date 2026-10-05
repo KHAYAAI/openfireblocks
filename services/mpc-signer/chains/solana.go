@@ -25,12 +25,18 @@ import (
 //
 // base58 comes from btcutil (already a dependency of this module for
 // Bitcoin) rather than adding another module for the same alphabet.
-type SolanaSigner struct{}
-
-// NewSolanaSigner creates a new Solana signer.
-func NewSolanaSigner() ChainSigner {
-	return &SolanaSigner{}
+type SolanaSigner struct {
+	rpc *SolanaRPC
 }
+
+// NewSolanaSigner creates a new Solana signer, with a node client when
+// SOLANA_RPC_URL is set.
+func NewSolanaSigner() ChainSigner {
+	return &SolanaSigner{rpc: NewSolanaRPCFromEnv()}
+}
+
+// Node returns the configured node client, or nil.
+func (s *SolanaSigner) Node() *SolanaRPC { return s.rpc }
 
 // solanaPrivateKey accepts either a 32-byte seed or a full 64-byte Ed25519
 // private key, hex-encoded (with or without 0x) or base58-encoded, which is
@@ -267,10 +273,14 @@ func (s *SolanaSigner) BuildTransaction(ctx context.Context, txData interface{})
 	return msg.Bytes(), nil
 }
 
-// BroadcastTransaction is not implemented: it needs a Solana RPC endpoint
-// this service is not configured with.
+// BroadcastTransaction relays a fully signed wire transaction (see
+// AssembleSolanaTransaction) through the configured node and returns its
+// signature, which is the transaction id.
 func (s *SolanaSigner) BroadcastTransaction(ctx context.Context, signedTx []byte) (string, error) {
-	return "", fmt.Errorf("broadcasting not implemented for Solana: no RPC endpoint is configured")
+	if s.rpc == nil {
+		return "", fmt.Errorf("no Solana node is configured (set SOLANA_RPC_URL)")
+	}
+	return s.rpc.SendTransaction(ctx, signedTx)
 }
 
 const (

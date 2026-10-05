@@ -55,6 +55,14 @@ func TestRealMultiPartyEd25519KeygenOverHTTP(t *testing.T) {
 
 func runKeygenOverHTTP(t *testing.T, curve Curve) *sharedKey {
 	t.Helper()
+	return runKeygenOverHTTPFor(t, curve, "")
+}
+
+// runKeygenOverHTTPFor runs the ceremony through StartKeygenForChain when
+// blockchain is set, so the chain-to-curve and chain-to-address decisions are
+// exercised on the real path the orchestrator uses.
+func runKeygenOverHTTPFor(t *testing.T, curve Curve, blockchain string) *sharedKey {
+	t.Helper()
 
 	// An Ed25519 ceremony needs no Paillier pre-parameters, so the parties
 	// must not spend CPU generating them. Without this each Ed25519 party
@@ -88,9 +96,15 @@ func runKeygenOverHTTP(t *testing.T, curve Curve) *sharedKey {
 		t.Cleanup(server.Close)
 	}
 
-	ceremonyID := "integration-test-ceremony-" + string(curve)
+	ceremonyID := "integration-test-ceremony-" + string(curve) + "-" + blockchain
 	for i := 1; i <= n; i++ {
-		if err := managers[i].StartKeygen(ceremonyID, threshold, peers, curve); err != nil {
+		var err error
+		if blockchain != "" {
+			err = managers[i].StartKeygenForChain(ceremonyID, threshold, peers, blockchain)
+		} else {
+			err = managers[i].StartKeygen(ceremonyID, threshold, peers, curve)
+		}
+		if err != nil {
 			t.Fatalf("party %d: StartKeygen failed: %v", i, err)
 		}
 	}
