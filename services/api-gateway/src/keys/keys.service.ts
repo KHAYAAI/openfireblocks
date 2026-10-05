@@ -1,3 +1,4 @@
+import { ControlsService } from '../controls/controls.service';
 import {
   BadRequestException,
   ConflictException,
@@ -182,7 +183,20 @@ export class KeysService {
     // Optional like the others: a service built without it applies no
     // Travel Rule, which is what the existing unit tests construct.
     private readonly travelRule?: TravelRuleService,
+    // Optional like the others (existing tests construct this directly); the
+    // running application always provides it. Freeze and whitelist.
+    private readonly controls?: ControlsService,
   ) {}
+
+  // The organisation-level stops, asked first on every path that signs:
+  // a freeze stops everything, and an enforced whitelist limits where a
+  // transfer may go. Before policy and before anything is built, so a frozen
+  // organisation does no work and leaks nothing about why.
+  private async enforceControls(customer: Customer, chain: string, destination?: string): Promise<void> {
+    if (!this.controls) return;
+    await this.controls.assertCanSign(customer.customer_id);
+    if (destination) await this.controls.assertDestinationAllowed(customer.customer_id, chain, destination);
+  }
 
   // Travel Rule, before signing: refuses (422) if the transfer needs
   // originator/beneficiary information and it is missing or incomplete,
@@ -488,6 +502,7 @@ export class KeysService {
   // transactions has no other path. Turning it on is a decision somebody
   // makes on the record, not a default.
   async signWithKey(customer: Customer, keyId: string, req: ThresholdSignRequestDto) {
+    await this.enforceControls(customer, 'ethereum');
     if (!customer.raw_digest_signing_enabled) {
       throw new ForbiddenException(
         'Signing a caller-supplied digest is not enabled for this account. ' +
@@ -537,6 +552,7 @@ export class KeysService {
   // Here the fields policy sees are the fields that get hashed -- there is
   // no caller-supplied digest to disagree with them.
   async signTransaction(customer: Customer, keyId: string, req: SignTransactionDto, opts: SendOptions = {}) {
+    await this.enforceControls(customer, 'ethereum', req.to);
     const requestId = req.idempotencyKey ?? uuidv4();
 
     const key = await this.loadSignableKey(keyId, customer.customer_id);
@@ -685,6 +701,7 @@ export class KeysService {
   // factor of a million million, in either direction, on a number that is
   // about to move money.
   async sendToken(customer: Customer, keyId: string, req: TokenTransferDto) {
+    await this.enforceControls(customer, 'ethereum', req.recipient);
     const requestId = req.idempotencyKey ?? uuidv4();
 
     if (!this.tokens) {
@@ -1108,6 +1125,7 @@ export class KeysService {
   // signature over a separate digest, and a threshold signature cannot be
   // batched. It is also why coin selection minimises the input count.
   async sendBitcoin(customer: Customer, keyId: string, req: BitcoinTransactionDto, opts: SendOptions = {}) {
+    await this.enforceControls(customer, 'bitcoin', req.destination);
     const requestId = req.idempotencyKey ?? uuidv4();
 
     const key = await this.loadSignableKey(keyId, customer.customer_id);
@@ -1314,6 +1332,7 @@ export class KeysService {
   // verifies the signature against the fee payer and relays. SPL tokens are
   // not offered.
   async sendSolana(customer: Customer, keyId: string, req: SolanaTransactionDto, opts: SendOptions = {}) {
+    await this.enforceControls(customer, 'solana', req.destination);
     const requestId = req.idempotencyKey ?? uuidv4();
     const key = await this.loadSignableKey(keyId, customer.customer_id);
     if (key.blockchain !== 'solana') {
@@ -1414,6 +1433,7 @@ export class KeysService {
   // chain, in SIGN_MODE_DIRECT. One MsgSend; staking, IBC and CosmWasm are
   // not offered.
   async sendCosmos(customer: Customer, keyId: string, req: CosmosTransactionDto, opts: SendOptions = {}) {
+    await this.enforceControls(customer, 'cosmos', req.destination);
     const requestId = req.idempotencyKey ?? uuidv4();
     const key = await this.loadSignableKey(keyId, customer.customer_id);
     if (key.blockchain !== 'cosmos') {

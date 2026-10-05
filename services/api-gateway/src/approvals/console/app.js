@@ -226,6 +226,7 @@
     { label: 'Controls', items: [
       { id: 'approvals', label: 'Approvals', badge: 'pendingCount' },
       { id: 'policy', label: 'Approval policy' },
+      { id: 'safety', label: 'Safety controls' },
       { id: 'people', label: 'People' },
     ] },
     { label: 'Compliance', items: [
@@ -235,7 +236,7 @@
     ] },
     { label: 'Integration', items: [{ id: 'webhooks', label: 'Webhooks' }, { id: 'billing', label: 'Billing', roles: ['admin', 'billing_admin'] }] },
   ];
-  var TITLES = { billing: 'Billing', 'travel-rule': 'Travel Rule', reconciliation: 'Reconciliation', compliance: 'Thresholds', webhooks: 'Webhooks' };
+  var TITLES = { safety: 'Safety controls', billing: 'Billing', 'travel-rule': 'Travel Rule', reconciliation: 'Reconciliation', compliance: 'Thresholds', webhooks: 'Webhooks' };
   function titleFor(view) {
     if (TITLES[view]) return TITLES[view];
     for (var g = 0; g < NAV.length; g++) for (var i = 0; i < NAV[g].items.length; i++) {
@@ -271,7 +272,7 @@
     var r = OFB.state.route;
     var content = document.getElementById('content');
     var topTitle = document.getElementById('topTitle');
-    var known = ['overview', 'keys', 'transactions', 'agents', 'approvals', 'policy', 'people', 'travel-rule', 'reconciliation', 'compliance', 'webhooks', 'billing'];
+    var known = ['overview', 'keys', 'transactions', 'agents', 'approvals', 'policy', 'people', 'travel-rule', 'reconciliation', 'compliance', 'webhooks', 'billing', 'safety'];
     if (known.indexOf(r.view) === -1) { navigate('overview'); return; }
     topTitle.textContent = titleFor(r.view);
     document.querySelectorAll('.navitem').forEach(function (b) {

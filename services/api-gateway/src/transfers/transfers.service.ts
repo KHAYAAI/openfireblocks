@@ -1,4 +1,5 @@
-import { BadRequestException, Injectable, Logger, OnModuleInit, ServiceUnavailableException } from '@nestjs/common';
+import { AlertsService } from '../controls/alerts.service';
+import { BadRequestException, Injectable, Logger, OnModuleInit, Optional, ServiceUnavailableException } from '@nestjs/common';
 import { v4 as uuidv4 } from 'uuid';
 import { ApprovalsService, ApprovalRequestView, TransferKind } from '../approvals/approvals.service';
 import { NativeApprovalHandler, NativeApprovalHooks, TransferExecution } from '../approvals/native-approval-hooks';
@@ -60,6 +61,8 @@ export class TransfersService implements OnModuleInit, NativeApprovalHandler {
     private readonly keys: KeysService,
     private readonly customers: CustomerService,
     private readonly rpc: EvmRpcService,
+    // Optional like the rest of the test seams; always present when running.
+    @Optional() private readonly alerts?: AlertsService,
   ) {}
 
   onModuleInit() {
@@ -121,6 +124,7 @@ export class TransfersService implements OnModuleInit, NativeApprovalHandler {
         reasons,
       },
     });
+    void this.alerts?.notify({ severity: 'warning', organisation: customer.name, title: `A ${asset} transfer is waiting for approval`, detail: `${initiator.label} asked to send ${amount} base units to ${to.slice(0, 8)}…; ${policy.requiredApprovals} approval(s) needed. ${reasons[0] ?? ''}` });
     return { status: 'pending_approval', approvalId: opened.approvalId, expiresAt: opened.expiresAt, requiredApprovals: policy.requiredApprovals, reasons };
   }
 
@@ -175,6 +179,7 @@ export class TransfersService implements OnModuleInit, NativeApprovalHandler {
       const message = errorText(err);
       this.logger.error(`executing approved transfer ${approvalId} failed: ${message}`);
       await this.approvals.transitionTransfer(customerId, approvalId, ['executing'], 'failed', { error: message });
+      void this.alerts?.notify({ severity: 'critical', title: 'An approved transfer failed to send', detail: message.slice(0, 300) });
       return { status: 'failed', error: message };
     }
   }

@@ -1,5 +1,6 @@
 import {
   Controller,
+  Optional,
   Get,
   GoneException,
   HttpCode,
@@ -14,6 +15,7 @@ import { SignRequestDto } from '../sign/dto/sign-request.dto';
 import { ApiKeyGuard } from '../auth/api-key.guard';
 import { CurrentCustomer } from '../auth/current-customer.decorator';
 import { Customer } from '../customers/customer.service';
+import { ControlsService } from '../controls/controls.service';
 
 // Durable settlement API: starts a Temporal workflow that runs
 // policy → sign → broadcast → monitor with retries and an approval gate.
@@ -22,11 +24,16 @@ import { Customer } from '../customers/customer.service';
 @Controller('settlements')
 @UseGuards(ApiKeyGuard)
 export class SettlementsController {
-  constructor(private readonly temporal: TemporalService) {}
+  // Optional so tests that build the controller directly need not stub it.
+  constructor(private readonly temporal: TemporalService, @Optional() private readonly controls?: ControlsService) {}
 
   @Post()
   @HttpCode(HttpStatus.ACCEPTED)
-  start(@CurrentCustomer() customer: Customer, @Body() req: SignRequestDto) {
+  async start(@CurrentCustomer() customer: Customer, @Body() req: SignRequestDto) {
+    // A frozen organisation starts nothing, and an enforced whitelist applies
+    // to settlements the same as to every other transfer.
+    await this.controls?.assertCanSign(customer.customer_id);
+    await this.controls?.assertDestinationAllowed(customer.customer_id, 'ethereum', req.to);
     return this.temporal.start(customer.customer_id, customer.tier, req);
   }
 

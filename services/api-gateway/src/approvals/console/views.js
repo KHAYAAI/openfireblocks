@@ -1151,6 +1151,111 @@
     });
   }
 
+  // ------------------------------------------------------------------- safety
+
+  // The emergency freeze and the address whitelist. Anyone who can decide on
+  // transfers can freeze; only an admin lifts it or changes the list.
+  function safety(id, content) {
+    loading(content);
+    api('GET', orgPath('/controls')).then(function (res) {
+      if (!res.ok) return failed(content, res);
+      var d = res.body;
+      var admin = O.isAdmin();
+      var parts = [];
+
+      // --- freeze
+      var fStatus = el('div');
+      if (d.frozen) {
+        var unfreeze = admin ? el('button', { type: 'button', className: 'accent', text: 'Lift the freeze', onclick: function () {
+          unfreeze.disabled = true;
+          api('POST', orgPath('/controls/unfreeze')).then(function (r) { if (!r.ok) { unfreeze.disabled = false; return fStatus.replaceChildren(notice(errorText(r), 'error')); } safety(null, content); });
+        } }) : null;
+        parts.push(el('div', { className: 'card' }, [
+          el('div', { className: 'card-head' }, [el('h2', { text: 'Organisation frozen' }), tag('critical', 'frozen')]),
+          el('p', { text: 'Nothing can be signed, from the console, the API, agents or settlements, and no approval can release a transfer.' }),
+          el('dl', { className: 'facts' }, [el('dt', { text: 'Reason' }), el('dd', { text: d.frozenReason || '—' }), el('dt', { text: 'Since' }), el('dd', { text: fmtDate(d.frozenAt) })]),
+          admin ? el('div', { className: 'actions' }, [unfreeze]) : el('p', { className: 'muted', text: 'Only an admin can lift the freeze.' }),
+          fStatus,
+        ]));
+      } else if (O.canDecide()) {
+        var reason = el('input', { id: 'fz-reason', placeholder: 'Why (recorded, and sent to the alert channel)', maxlength: '500' });
+        var freezeBtn = el('button', { type: 'button', className: 'danger', text: 'Freeze everything', onclick: function () {
+          if (!reason.value.trim()) return fStatus.replaceChildren(notice('Say why.', 'error'));
+          freezeBtn.disabled = true;
+          api('POST', orgPath('/controls/freeze'), { reason: reason.value.trim() }).then(function (r) { if (!r.ok) { freezeBtn.disabled = false; return fStatus.replaceChildren(notice(errorText(r), 'error')); } safety(null, content); });
+        } });
+        parts.push(el('div', { className: 'card' }, [
+          el('div', { className: 'card-head' }, [el('h2', { text: 'Emergency freeze' }), tag('ok', 'not frozen')]),
+          el('p', { className: 'muted', text: 'Stops all signing for this organisation at once. Use it if you suspect a compromise. Stopping is always safe; only an admin can lift it.' }),
+          el('label', { for: 'fz-reason', text: 'Reason' }), reason,
+          el('div', { className: 'actions' }, [freezeBtn]), fStatus,
+        ]));
+      } else {
+        parts.push(el('div', { className: 'card' }, [el('h2', { text: 'Emergency freeze' }), el('p', { className: 'muted', text: 'Not frozen. Approvers and admins can freeze the organisation.' })]));
+      }
+
+      // --- whitelist
+      var wl = d.whitelist || [];
+      var rows = wl.map(function (e) {
+        return el('tr', null, [
+          el('td', { text: e.blockchain }),
+          el('td', { className: 'mono trunc', text: e.address }),
+          el('td', { className: 'muted', text: e.label || '' }),
+          el('td', null, [e.active ? tag('ok', 'active') : tag('warn', 'usable ' + relative(e.activeFrom))]),
+          el('td', { className: 'muted hide-sm', text: e.addedBy }),
+          admin ? el('td', null, [el('button', { type: 'button', className: 'ghost sm', text: 'Remove', onclick: function () {
+            api('DELETE', orgPath('/controls/whitelist/' + encodeURIComponent(e.entryId))).then(function (r) { if (r.ok) safety(null, content); });
+          } })]) : null,
+        ].filter(Boolean));
+      });
+      var modeStatus = el('div');
+      var enforced = el('input', { type: 'checkbox', id: 'wl-on' }); enforced.checked = d.whitelistEnforced;
+      var cool = el('input', { type: 'number', id: 'wl-cool', min: '0', max: '10080', value: String(d.whitelistCooldownMinutes) });
+      var modeCard = el('div', { className: 'card' }, [
+        el('div', { className: 'card-head' }, [el('h2', { text: 'Address whitelist' }), d.whitelistEnforced ? tag('ok', 'enforced') : tag('warn', 'not enforced')]),
+        el('p', { className: 'muted', text: 'When enforced, a transfer may only go to a listed address, and a new address cannot be used until its cooling-off period has passed.' }),
+        admin ? el('form', { onsubmit: function (e) {
+          e.preventDefault();
+          api('PUT', orgPath('/controls/whitelist-mode'), { enforced: enforced.checked, cooldownMinutes: Number(cool.value) }).then(function (r) {
+            if (!r.ok) return modeStatus.replaceChildren(notice(errorText(r), 'error'));
+            safety(null, content);
+          });
+        } }, [
+          el('div', { className: 'field-row' }, [
+            el('div', null, [el('label', { for: 'wl-on', text: 'Enforce the whitelist' }), el('div', { style: 'padding:8px 0' }, [enforced])]),
+            el('div', null, [el('label', { for: 'wl-cool', text: 'Cooling-off for new addresses (minutes, 0 to 10080)' }), cool]),
+          ]),
+          el('div', { className: 'actions', style: 'margin-bottom:18px' }, [el('button', { type: 'submit', className: 'accent', text: 'Save' })]), modeStatus,
+        ]) : null,
+        sheet(['Chain', 'Address', 'Label', 'Status', 'Added by'].concat(admin ? [''] : []), rows, { emptyText: d.whitelistEnforced ? 'The list is empty, so every transfer is refused.' : 'No addresses listed.' }),
+      ].filter(Boolean));
+      parts.push(modeCard);
+
+      if (admin) {
+        var chain = el('select', { id: 'wl-chain' }, ['ethereum', 'polygon', 'bitcoin', 'solana', 'cosmos'].map(function (c) { return el('option', { value: c, text: c }); }));
+        var addr = el('input', { id: 'wl-addr', placeholder: 'Address', autocomplete: 'off', spellcheck: 'false' });
+        var lab = el('input', { id: 'wl-label', placeholder: 'Label (optional)', maxlength: '120' });
+        var addStatus = el('div');
+        parts.push(el('div', { className: 'card' }, [
+          el('div', { className: 'card-head' }, [el('h2', { text: 'Add an address' })]),
+          el('form', { onsubmit: function (e) {
+            e.preventDefault();
+            api('POST', orgPath('/controls/whitelist'), { blockchain: chain.value, address: addr.value.trim(), label: lab.value.trim() || undefined }).then(function (r) {
+              if (!r.ok) return addStatus.replaceChildren(notice(errorText(r), 'error'));
+              safety(null, content);
+            });
+          } }, [
+            el('label', { for: 'wl-chain', text: 'Blockchain' }), chain,
+            el('label', { for: 'wl-addr', text: 'Address' }), addr,
+            el('label', { for: 'wl-label', text: 'Label' }), lab,
+            el('div', { className: 'actions' }, [el('button', { type: 'submit', className: 'accent', text: 'Add to whitelist' })]), addStatus,
+          ]),
+        ]));
+      }
+      replace(content, parts);
+    });
+  }
+
   // ----------------------------------------------------------------------- export
 
   window.OFBViews = {
@@ -1166,5 +1271,6 @@
     compliance: compliance,
     webhooks: webhooks,
     billing: billing,
+    safety: safety,
   };
 })();

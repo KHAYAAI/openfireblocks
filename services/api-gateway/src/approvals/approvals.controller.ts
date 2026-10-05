@@ -1,7 +1,9 @@
+import { ControlsService } from '../controls/controls.service';
 import {
   BadGatewayException,
   Body,
   Controller,
+  Optional,
   Delete,
   ForbiddenException,
   Get,
@@ -86,6 +88,8 @@ export class ApprovalsController {
     private readonly customers: CustomerService,
     private readonly audit: AuditService,
     private readonly native: NativeApprovalHooks,
+    // Optional: the existing tests build this controller directly.
+    @Optional() private readonly controls?: ControlsService,
   ) {}
 
   // ------------------------------------------------------------ approvals
@@ -111,6 +115,11 @@ export class ApprovalsController {
     @CurrentUser() claims: JwtClaims,
     @Body() dto: DecisionDto,
   ) {
+    // While the organisation is frozen no approval can release anything, so
+    // none is taken: otherwise a quorum reached during a freeze would carry
+    // out the moment it was lifted, on a decision made under different
+    // circumstances. Rejecting stays possible: it only stops things.
+    if (dto.decision === 'approve') await this.controls?.assertCanSign(customerId);
     const stepUp = await this.stepUp(claims.sub, dto.totpCode, claims);
 
     const { request, alreadyRecorded } = await this.approvals.recordDecision({
