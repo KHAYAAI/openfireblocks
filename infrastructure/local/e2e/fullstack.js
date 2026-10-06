@@ -13,6 +13,7 @@
 const { execSync } = require('child_process');
 const crypto = require('crypto');
 const { authenticator } = require(process.env.OTPLIB_PATH || 'otplib');
+const { ethers } = require(process.env.ETHERS_PATH || 'ethers');
 
 const G = process.env.GATEWAY || 'http://127.0.0.1:3999';
 const NODE = process.env.SOLANA_MOCK || 'http://127.0.0.1:18899';
@@ -90,6 +91,25 @@ async function relogin(p) {
   check(sent.length === 2 && sent[1].payer === key.address, 'the released transfer was signed by the parties and accepted by the node');
   const again = await call('POST', `/organisations/${cust}/approvals/${approvalId}/decisions`, { token: bob.token, body: { decision: 'approve', totpCode: await totp(bob.secret) } });
   check(again.s === 409 && (await (await fetch(NODE + '/__sent')).json()).length === 2, 'a late third decision is refused and nothing is sent twice');
+
+  // --- Ethereum: a real chain that validates the signature
+  // ganache checks the ECDSA signature the way any EVM node does (the sender
+  // is recovered from it), so a balance that moves proves the threshold
+  // signature is a valid signature by the key's address.
+  if (process.env.EVM_RPC) {
+    const provider = new ethers.JsonRpcProvider(process.env.EVM_RPC, 1337, { staticNetwork: ethers.Network.from(1337) });
+    r = await call('POST', '/keys', { key: apiKey, body: { blockchain: 'ethereum', name: 'e2e-evm', threshold: 2, total_parties: 3 } });
+    const evmId = r.d.id; let evm; const e0 = Date.now();
+    while (Date.now() - e0 < 240000) { evm = (await call('GET', '/keys/' + evmId, { key: apiKey })).d; if (!['pending', 'pending_dkg'].includes(evm.status)) break; await sleep(2000); }
+    check(evm.status === 'active' && ethers.isAddress(evm.address), `a real 2-of-3 secp256k1 DKG produced an Ethereum address (${Math.round((Date.now() - e0) / 1000)}s)`, JSON.stringify(evm));
+    const funder = new ethers.Wallet(process.env.EVM_FUNDER_KEY, provider);
+    await (await funder.sendTransaction({ to: evm.address, value: ethers.parseEther('5') })).wait();
+    const recipient = ethers.Wallet.createRandom().address;
+    r = await call('POST', `/keys/${evmId}/transfers`, { key: apiKey, body: { chainId: 1337, destination: recipient, amount: ethers.parseEther('1').toString(), travelRule: TRAVEL } });
+    check(r.s === 200 && r.d.status === 'completed', 'an Ethereum transfer is signed by the parties and broadcast', JSON.stringify(r.d).slice(0, 300));
+    check((await provider.getBalance(recipient)) === ethers.parseEther('1'), 'the chain accepted the threshold signature: the recipient holds 1 ETH');
+    check((await provider.getBalance(evm.address)) < ethers.parseEther('4'), 'and it left the key\'s address');
+  }
 
   // --- the freeze
   r = await call('POST', `/organisations/${cust}/controls/freeze`, { token: bob.token, body: { reason: 'e2e: suspected compromise' } });

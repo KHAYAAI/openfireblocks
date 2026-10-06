@@ -50,6 +50,15 @@ echo "==> starting the stack"
 P_SOL=18899; P_SIGN=18080; P_POL=18081; P_TEMP=17233; P_GW=13999
 start temporal "$TEMPORAL_BIN" server start-dev --port $P_TEMP --ui-port 18233 --headless --log-level error
 for _ in $(seq 1 60); do "$TEMPORAL_BIN" operator namespace list --address 127.0.0.1:$P_TEMP >/dev/null 2>&1 && break; sleep 1; done
+# A real EVM dev chain (ganache), if npx can fetch it: unlike the Solana stand-in
+# it is a genuine chain that validates the signature.
+EVM_FUNDER_KEY=0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a
+if command -v npx >/dev/null && [ "${E2E_EVM:-1}" = "1" ]; then
+  start ganache npx --yes ganache@7.9.2 --chain.chainId 1337 --server.port 18545 --logging.quiet \
+    --wallet.accounts "$EVM_FUNDER_KEY,1000000000000000000000"
+  up ganache 18545 120
+  export EVM_RPC=http://127.0.0.1:18545 EVM_FUNDER_KEY ETHERS_PATH="$ROOT/services/api-gateway/node_modules/ethers"
+fi
 start solana env BALANCE_LAMPORTS=100000000000 PORT=$P_SOL node "$ROOT/infrastructure/local/mock-solana-node.js"
 start policy env PORT=$P_POL "$WORK/policy-service"
 start signer env PORT=$P_SIGN SOLANA_RPC_URL=http://127.0.0.1:$P_SOL \
@@ -62,7 +71,7 @@ done
 start worker env TEMPORAL_HOSTPORT=127.0.0.1:$P_TEMP DATABASE_URL="$DATABASE_ADMIN_URL" ETHEREUM_RPC_SEPOLIA=http://127.0.0.1:1 \
   MPC_SIGNER_URL=http://127.0.0.1:$P_SIGN POLICY_SERVICE_URL=http://127.0.0.1:$P_POL "$WORK/temporal-worker"
 start gateway env PORT=$P_GW TEMPORAL_HOSTPORT=127.0.0.1:$P_TEMP POLICY_SERVICE_URL=http://127.0.0.1:$P_POL MPC_SIGNER_URL=http://127.0.0.1:$P_SIGN \
-  MPC_PARTY_ENDPOINT_TEMPLATE='http://127.0.0.1:1770{id}' MPC_PARTY_HEALTH_TEMPLATE='http://127.0.0.1:1770{id}/health' \
+  ${EVM_RPC:+EVM_RPC_1337=$EVM_RPC} MPC_PARTY_ENDPOINT_TEMPLATE='http://127.0.0.1:1770{id}' MPC_PARTY_HEALTH_TEMPLATE='http://127.0.0.1:1770{id}/health' \
   JWT_SECRET=e2e-secret-e2e-secret-e2e-secret-e2e node "$ROOT/services/api-gateway/dist/main.js"
 for pp in $P_SOL $P_SIGN $P_POL 17701 17702 17703 $P_GW; do up service $pp; done
 sleep 2
