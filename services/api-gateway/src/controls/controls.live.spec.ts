@@ -16,6 +16,7 @@ import { PG_POOL } from '../database/pg-pool.token';
 import { ControlsController } from './controls.controller';
 import { ControlsService, FrozenException } from './controls.service';
 import { AlertsService } from './alerts.service';
+import { WebhookEmitter } from '../webhooks/webhooks.service';
 
 // Freeze and whitelist over real Postgres and real HTTP with real JWTs.
 //
@@ -42,7 +43,7 @@ function skipped(): boolean {
 describe('safety controls (live Postgres)', () => {
   let app: INestApplication; let base: string; let admin: Pool; let tenantPool: Pool; let jwt: JwtService;
   let ownPools: Pool[] = []; let svc: ControlsService; let customerId = ''; let otherCustomerId = '';
-  let hook: Server; const alertsSeen: string[] = [];
+  let hook: Server; const alertsSeen: string[] = []; const eventsSeen: string[] = [];
   const people: Record<string, { id: string; email: string; token: string }> = {};
 
   async function person(name: string) {
@@ -69,6 +70,7 @@ describe('safety controls (live Postgres)', () => {
       controllers: [ControlsController],
       providers: [ControlsService, AlertsService, ApprovalsService, TenantRoleGuard, CustomerService, UsersService, JwtAuthStrategy, AuditService,
         { provide: PG_POOL, useValue: tenantPool },
+        { provide: WebhookEmitter, useValue: { emit: async (_c: string, t: string) => { eventsSeen.push(t); } } },
         { provide: 'TemporalService', useValue: {} }],
     }).useMocker((tok) => (typeof tok === 'function' ? { signalDecision: jest.fn(), start: jest.fn() } : undefined)).compile();
     app = m.createNestApplication();
@@ -113,6 +115,7 @@ describe('safety controls (live Postgres)', () => {
     // And somebody was told.
     await new Promise((r2) => setTimeout(r2, 200));
     expect(alertsSeen.some((t) => /FROZEN/.test(t) && /suspected compromise/.test(t))).toBe(true);
+    expect(eventsSeen).toContain('org.frozen');
   });
 
   it('is lifted only by an admin', async () => {
@@ -121,6 +124,7 @@ describe('safety controls (live Postgres)', () => {
     expect((await call('POST', '/unfreeze', 'oscar')).status).toBe(403);
     expect((await call('POST', '/unfreeze', 'ada')).body).toMatchObject({ frozen: false, frozenReason: null });
     await expect(svc.assertCanSign(customerId)).resolves.toBeUndefined();
+    expect(eventsSeen).toContain('org.unfrozen');
   });
 
   it('refuses to sign when it cannot tell whether the organisation is frozen', async () => {
