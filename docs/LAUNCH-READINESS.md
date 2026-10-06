@@ -46,6 +46,28 @@ runs those three real-keygen tests without `-race`. **Not yet seen to pass.**
 | Custody against a real custodian | Custodian account | You |
 | Licensing, ToS, privacy policy, insurance, sanctions/KYC vendor | Legal and commercial work | You |
 
+## First install on a local kind cluster (2026-10-06, Apple Silicon Mac)
+
+Run by the project owner from `infrastructure/kind/up.sh`. Result, stated
+plainly:
+
+- **Worked:** the cluster started, all 14 images built, and the images loaded.
+  Postgres, Vault and Temporal started, and all 34 migrations applied. The
+  Vault PKI bootstrap completed and the chart installed. Every pod reached
+  `Running`, and `/health/ready` reported Postgres ok.
+- **Found and fixed:** three macOS/Apple Silicon bugs in the scripts (bash 3.2
+  has no `mapfile`; an empty array under `set -u`; images imported for a
+  hardcoded `amd64`).
+- **Not completed:** `smoke-test.sh` did not finish. The gateway stopped
+  listening while handling `POST /keys`, and `kubectl` then timed out. The
+  cause was not diagnosed (no logs were collected). Resource starvation on the
+  host, or the gateway's 1 GiB memory limit, are suspected, not confirmed. The
+  run was abandoned for lack of CPU.
+- **Therefore still unproven:** a real DKG and threshold signature on a
+  cluster from this branch. Needs a machine with more CPU (or a cloud
+  cluster), and the gateway's restart reason checked first
+  (`kubectl describe pod`, `logs --previous`).
+
 ## Not proven anywhere
 
 A real public chain, a built Docker image, a real cluster, the TRISA link on
