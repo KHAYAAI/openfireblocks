@@ -477,6 +477,10 @@ ingress:
   host: api.openfireblocks.example
   tls: true
 
+serviceAccount:
+  # e.g. eks.amazonaws.com/role-arn for an IAM role bound to the pods
+  annotations: {}
+
 serviceMonitor:
   enabled: false # set true if the Prometheus Operator is installed
 
@@ -502,6 +506,18 @@ backup:
   storage:
     size: 50Gi
     className: ""
+  # An encrypted copy of every full backup in a bucket outside this cluster.
+  # Without it the backups live on this volume only and losing the cluster
+  # loses them. Never run against a real bucket yet (tested against an
+  # S3-compatible stand-in).
+  offsite:
+    enabled: false
+    bucket: ""
+    region: ""
+    endpoint: ""           # empty for AWS; set for MinIO, Ceph or R2
+    prefix: openfireblocks
+    keySecret: ""          # secret holding "backup-offsite-key": 32 bytes, or 64 hex characters. Keep a copy elsewhere: without it the backups cannot be read.
+    credentialsSecret: ""  # optional "aws-access-key-id" / "aws-secret-access-key"; leave empty to use a role bound to the service account
   schedule:
     enabled: true
     cron: "17 2 * * *" # daily, off the hour

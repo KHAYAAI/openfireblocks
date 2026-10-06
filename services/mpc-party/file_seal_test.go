@@ -92,7 +92,7 @@ func TestTheWrongKeyDoesNotOpenAShare(t *testing.T) {
 func TestUnsafeKeyHandlingIsRefusedBeforeAnythingIsWritten(t *testing.T) {
 	getenv, dir, keyFile := fileStore(t)
 	_ = os.Chmod(keyFile, 0o644)
-	if _, err := SealKeyShareWithContext(context.Background(), getenv, 1, "c", aShare(), nil); err == nil || !strings.Contains(err.Error(), "accessible by group or others") {
+	if _, err := SealKeyShareWithContext(context.Background(), getenv, 1, "c", aShare(), nil); err == nil || !strings.Contains(err.Error(), "readable by other users") {
 		t.Errorf("world-readable key accepted: %v", err)
 	}
 	_ = os.Chmod(keyFile, 0o600)

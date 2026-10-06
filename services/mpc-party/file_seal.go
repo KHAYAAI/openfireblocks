@@ -65,8 +65,8 @@ func (c fileShareConfig) loadShareKey() ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("share store key file: %w", err)
 	}
-	if info.Mode().Perm()&0o077 != 0 {
-		return nil, fmt.Errorf("share store key file %s is accessible by group or others (mode %o); it must be 0600 or stricter", c.keyFile, info.Mode().Perm())
+	if info.Mode().Perm()&0o007 != 0 {
+		return nil, fmt.Errorf("share store key file %s is readable by other users (mode %o); it must not be world-accessible (0640 or stricter; Kubernetes adds group read to mounted Secrets when fsGroup is set)", c.keyFile, info.Mode().Perm())
 	}
 	if abs, e1 := filepath.Abs(c.keyFile); e1 == nil {
 		if dir, e2 := filepath.Abs(c.dir); e2 == nil && strings.HasPrefix(abs, dir+string(os.PathSeparator)) {

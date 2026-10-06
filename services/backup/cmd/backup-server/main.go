@@ -9,6 +9,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"os"
@@ -54,6 +55,29 @@ func main() {
 	}
 
 	manager := backup.NewBackupManager(storage, vaultBackend, pg)
+
+	// An encrypted copy outside the cluster, if a bucket is configured.
+	// Without one, backups live only on this volume and the log says so.
+	if bucket := os.Getenv("BACKUP_OFFSITE_BUCKET"); bucket != "" {
+		key, err := backup.LoadOffsiteKey(os.Getenv("BACKUP_OFFSITE_KEY_FILE"))
+		if err != nil {
+			log.Fatalf("off-site backups are configured but cannot start: %v", err)
+		}
+		objects, err := backup.NewS3ObjectStore(context.Background(), backup.S3Config{
+			Bucket: bucket, Region: os.Getenv("BACKUP_OFFSITE_REGION"), Endpoint: os.Getenv("BACKUP_OFFSITE_ENDPOINT"),
+		})
+		if err != nil {
+			log.Fatalf("off-site store: %v", err)
+		}
+		offsite, err := backup.NewOffsiteStore(objects, getenv("BACKUP_OFFSITE_PREFIX", "openfireblocks"), key)
+		if err != nil {
+			log.Fatalf("off-site store: %v", err)
+		}
+		manager.SetOffsite(offsite)
+		log.Printf("off-site backups enabled: s3://%s/%s (client-side encrypted)", bucket, getenv("BACKUP_OFFSITE_PREFIX", "openfireblocks"))
+	} else {
+		log.Printf("BACKUP_OFFSITE_BUCKET not set: backups stay on this volume only; losing the cluster loses them")
+	}
 	drCoordinator := backup.NewDisasterRecoveryCoordinator(manager)
 
 	// Real cross-region failover for the component that holds customer
@@ -73,7 +97,7 @@ func main() {
 		log.Printf("no STANDBY_DATABASE_URL set: Postgres failover is unavailable and will report failed if a failover is initiated")
 	}
 
-	srv := &backupServer{manager: manager, storage: storage, dr: drCoordinator}
+	srv := &backupServer{manager: manager, storage: storage, dr: drCoordinator, stagingDir: dumpDir + "/offsite-restore"}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -83,6 +107,7 @@ func main() {
 	mux.HandleFunc("/backup/incremental", srv.handleBackupIncremental)
 	mux.HandleFunc("/restore", srv.handleRestore)
 	mux.HandleFunc("/restore-points", srv.handleRestorePoints)
+	mux.HandleFunc("/offsite/fetch", srv.handleOffsiteFetch)
 	mux.HandleFunc("/dr/plan", srv.handleCreateDRPlan)
 	mux.HandleFunc("/dr/test", srv.handleTestDR)
 	mux.HandleFunc("/dr/failover", srv.handleInitiateFailover)

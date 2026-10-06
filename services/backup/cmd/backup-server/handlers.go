@@ -11,6 +11,8 @@ type backupServer struct {
 	manager *backup.BackupManager
 	storage *backup.FilesystemBackupStorage
 	dr      *backup.DisasterRecoveryCoordinator
+	// Where fetched off-site files are staged by default.
+	stagingDir string
 }
 
 func (s *backupServer) handleBackupFull(w http.ResponseWriter, r *http.Request) {
@@ -20,6 +22,12 @@ func (s *backupServer) handleBackupFull(w http.ResponseWriter, r *http.Request) 
 	}
 	meta, err := s.manager.ExecuteFullBackup(r.Context(), "local")
 	if err != nil {
+		// Keep the record even when the run failed (for instance only the
+		// off-site copy did): the local dumps exist and should be findable,
+		// marked failed, rather than lying on disk unregistered.
+		if meta != nil && meta.ID != "" {
+			_ = s.storage.SaveMetadata(meta)
+		}
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
@@ -204,4 +212,52 @@ func writeJSON(w http.ResponseWriter, status int, body interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(body)
+}
+
+// handleOffsiteFetch brings a backup's files back from the off-site store,
+// decrypted and checked, into a staging directory. For restoring after the
+// cluster that held the local copies is gone. The metadata (with the
+// checksums) is read from the local store, or supplied in the request when
+// that store is gone too.
+func (s *backupServer) handleOffsiteFetch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	var req struct {
+		BackupID string            `json:"backup_id"`
+		Tags     map[string]string `json:"tags"` // the offsite_*_sha256 values, if the local record is gone
+		Dir      string            `json:"dir"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.BackupID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "backup_id is required"})
+		return
+	}
+	if s.manager.Offsite() == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "no off-site store is configured on this deployment"})
+		return
+	}
+	tags := req.Tags
+	if len(tags) == 0 {
+		all, err := s.storage.ListBackups(r.Context())
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		for _, m := range all {
+			if m.ID == req.BackupID {
+				tags = m.Tags
+			}
+		}
+	}
+	dir := req.Dir
+	if dir == "" {
+		dir = s.stagingDir
+	}
+	files, err := s.manager.FetchOffsite(r.Context(), req.BackupID, tags, dir)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"status": "fetched", "files": files})
 }

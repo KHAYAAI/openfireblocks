@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"time"
 )
 
@@ -82,7 +84,15 @@ type BackupManager struct {
 	storage  BackupStorage
 	vault    VaultBackup
 	postgres PostgreSQLBackup
+	// Optional: an encrypted copy outside the cluster. See offsite.go.
+	offsite *OffsiteStore
 }
+
+// SetOffsite makes every completed full backup also go to the off-site store.
+func (b *BackupManager) SetOffsite(o *OffsiteStore) { b.offsite = o }
+
+// Offsite returns the configured off-site store, or nil.
+func (b *BackupManager) Offsite() *OffsiteStore { return b.offsite }
 
 // NewBackupManager creates a new backup manager
 func NewBackupManager(storage BackupStorage, vault VaultBackup, postgres PostgreSQLBackup) *BackupManager {
@@ -163,7 +173,68 @@ func (b *BackupManager) ExecuteFullBackup(ctx context.Context, destination strin
 		return metadata, err
 	}
 
+	// An off-site copy, if one is configured. A backup that exists only in
+	// the cluster is not a backup of the cluster, so failing to copy it is a
+	// failure of the run -- reported, not logged and forgotten -- even though
+	// the local copy is good.
+	if b.offsite != nil {
+		if err := b.copyOffsite(ctx, metadata, pgMetadata, vaultMetadata, manifest); err != nil {
+			metadata.Status = BackupStatusFailed
+			metadata.ErrorMessage = fmt.Sprintf("the backup is complete locally but the off-site copy failed: %v", err)
+			return metadata, err
+		}
+	}
+
 	return metadata, nil
+}
+
+// copyOffsite uploads both dumps and the manifest, and records the receipts on
+// the metadata so a restore can check what comes back.
+func (b *BackupManager) copyOffsite(ctx context.Context, meta, pg, vault *BackupMetadata, manifest []byte) error {
+	tmp, err := os.CreateTemp("", "manifest-*.json")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.Write(manifest); err != nil {
+		tmp.Close()
+		return err
+	}
+	tmp.Close()
+	for _, part := range []struct{ name, path string }{
+		{"postgres", pg.Destination}, {"vault", vault.Destination}, {"manifest", tmp.Name()},
+	} {
+		rec, err := b.offsite.Put(ctx, meta.ID, part.name, part.path)
+		if err != nil {
+			return fmt.Errorf("%s: %w", part.name, err)
+		}
+		meta.Tags["offsite_"+part.name+"_key"] = rec.Key
+		meta.Tags["offsite_"+part.name+"_sha256"] = rec.PlaintextSHA256
+	}
+	return nil
+}
+
+// FetchOffsite brings a backup's files back from the off-site store into dir,
+// decrypted and checked against the checksums recorded when it was taken. It
+// is the first step of restoring after the cluster that held the local copies
+// is gone.
+func (b *BackupManager) FetchOffsite(ctx context.Context, backupID string, tags map[string]string, dir string) (map[string]string, error) {
+	if b.offsite == nil {
+		return nil, fmt.Errorf("no off-site store is configured")
+	}
+	out := map[string]string{}
+	for _, name := range []string{"postgres", "vault", "manifest"} {
+		dest := filepath.Join(dir, backupID, name)
+		want := &OffsiteReceipt{PlaintextSHA256: tags["offsite_"+name+"_sha256"]}
+		if want.PlaintextSHA256 == "" {
+			return nil, fmt.Errorf("no checksum recorded for %s; refusing to restore something that cannot be checked", name)
+		}
+		if err := b.offsite.Get(ctx, backupID, name, dest, want); err != nil {
+			return nil, fmt.Errorf("%s: %w", name, err)
+		}
+		out[name] = dest
+	}
+	return out, nil
 }
 
 // ExecuteIncrementalBackup executes an incremental backup

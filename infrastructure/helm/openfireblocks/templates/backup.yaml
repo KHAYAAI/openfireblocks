@@ -78,9 +78,43 @@ spec:
                   name: {{ .Values.mpcSigner.vault.tokenSecret }}
                   key: vault-token
             {{- end }}
+            {{- if .Values.backup.offsite.enabled }}
+            # An encrypted copy outside the cluster (services/backup/offsite.go).
+            # Encrypted here with the key below before it leaves; the bucket
+            # owner never sees plaintext or the key.
+            - name: BACKUP_OFFSITE_BUCKET
+              value: {{ required "backup.offsite.bucket is required when backup.offsite.enabled" .Values.backup.offsite.bucket | quote }}
+            - name: BACKUP_OFFSITE_REGION
+              value: {{ .Values.backup.offsite.region | quote }}
+            {{- if .Values.backup.offsite.endpoint }}
+            - name: BACKUP_OFFSITE_ENDPOINT
+              value: {{ .Values.backup.offsite.endpoint | quote }}
+            {{- end }}
+            - name: BACKUP_OFFSITE_PREFIX
+              value: {{ .Values.backup.offsite.prefix | quote }}
+            - name: BACKUP_OFFSITE_KEY_FILE
+              value: /etc/backup-offsite/key
+            {{- if .Values.backup.offsite.credentialsSecret }}
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.backup.offsite.credentialsSecret }}
+                  key: aws-access-key-id
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.backup.offsite.credentialsSecret }}
+                  key: aws-secret-access-key
+            {{- end }}
+            {{- end }}
           volumeMounts:
             - name: dumps
               mountPath: /var/lib/openfireblocks-backup
+            {{- if .Values.backup.offsite.enabled }}
+            - name: offsite-key
+              mountPath: /etc/backup-offsite
+              readOnly: true
+            {{- end }}
             # pg_dump writes scratch files under /tmp.
             - name: tmp
               mountPath: /tmp
@@ -100,6 +134,15 @@ spec:
             claimName: {{ include "ofb.fullname" . }}-backup
         - name: tmp
           emptyDir: {}
+        {{- if .Values.backup.offsite.enabled }}
+        - name: offsite-key
+          secret:
+            secretName: {{ required "backup.offsite.keySecret is required" .Values.backup.offsite.keySecret }}
+            defaultMode: 0440
+            items:
+              - key: backup-offsite-key
+                path: key
+        {{- end }}
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim

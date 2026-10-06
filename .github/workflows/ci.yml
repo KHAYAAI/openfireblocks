@@ -280,6 +280,7 @@ jobs:
             --set serviceMonitor.enabled=true \
             --set ingress.enabled=true \
             --set backup.enabled=true \
+            --set backup.offsite.enabled=true --set backup.offsite.bucket=b --set backup.offsite.keySecret=k \
             | $(go env GOPATH)/bin/kubeconform -strict -summary \
                 -ignore-missing-schemas \
                 -kubernetes-version 1.29.0
