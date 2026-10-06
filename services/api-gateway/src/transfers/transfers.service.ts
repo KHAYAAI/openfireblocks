@@ -11,6 +11,7 @@ import { BitcoinTransactionDto } from '../keys/dto/bitcoin-transaction.dto';
 import { SolanaTransactionDto } from '../keys/dto/solana-transaction.dto';
 import { CosmosTransactionDto } from '../keys/dto/cosmos-transaction.dto';
 import { EvmRpcService } from '../tokens/evm-rpc.service';
+import { CustodianTransferRequest, CustodyExecutors } from './custody-executor';
 
 // A transfer from an EVM threshold key, as a person asks for it: where, and
 // how much. Nonce and fees are the platform's to work out, at the moment the
@@ -24,7 +25,7 @@ export interface EvmTransferRequest {
   idempotencyKey?: string;
 }
 
-type AnyRequest = BitcoinTransactionDto | SolanaTransactionDto | CosmosTransactionDto | EvmTransferRequest;
+type AnyRequest = BitcoinTransactionDto | SolanaTransactionDto | CosmosTransactionDto | EvmTransferRequest | CustodianTransferRequest;
 
 export interface Initiator {
   userId: string | null; // null for an API key: there is no person to exclude
@@ -35,7 +36,7 @@ export type SubmitResult =
   | { status: 'completed'; result: Record<string, unknown> }
   | { status: 'pending_approval'; approvalId: string; expiresAt: string; requiredApprovals: number; reasons: string[] };
 
-const DISPLAY: Record<TransferKind, { asset: string; decimals: number }> = {
+const DISPLAY: Record<Exclude<TransferKind, 'custodian'>, { asset: string; decimals: number }> = {
   bitcoin: { asset: 'BTC', decimals: 8 },
   solana: { asset: 'SOL', decimals: 9 },
   cosmos: { asset: 'ATOM', decimals: 6 },
@@ -66,6 +67,8 @@ export class TransfersService implements OnModuleInit, NativeApprovalHandler {
     @Optional() private readonly alerts?: AlertsService,
     // Announces the lifecycle to the customer's registered webhooks.
     @Optional() private readonly webhooks?: WebhookEmitter,
+    // Executes transfers out of other custodians (the custody module registers itself).
+    @Optional() private readonly custody?: CustodyExecutors,
   ) {}
 
   onModuleInit() {
@@ -73,17 +76,40 @@ export class TransfersService implements OnModuleInit, NativeApprovalHandler {
   }
 
   async submit(customer: Customer, keyId: string, kind: TransferKind, req: AnyRequest, initiator: Initiator): Promise<SubmitResult> {
+    // A transfer out of another custodian is never run straight away: this platform
+    // cannot apply its spending policy to someone else's account, so it applies the
+    // one control it can, a human quorum, to every one of them.
+    if (kind === 'custodian') return this.parkCustodian(customer, keyId, req as CustodianTransferRequest, initiator);
     try {
       const result = await this.run(kind, customer, keyId, req, false, undefined);
       void this.webhooks?.emit(customer.customer_id, 'transfer.completed', { kind, result });
       return { status: 'completed', result };
     } catch (err) {
       if (!(err instanceof ApprovalRequiredException)) throw err;
-      return this.park(customer, keyId, kind, req, initiator, err.reasons);
+      return this.park(customer, keyId, kind as Exclude<TransferKind, 'custodian'>, req, initiator, err.reasons);
     }
   }
 
-  private async park(customer: Customer, keyId: string, kind: TransferKind, req: AnyRequest, initiator: Initiator, reasons: string[]): Promise<SubmitResult> {
+  private async parkCustodian(customer: Customer, custodianId: string, req: CustodianTransferRequest, initiator: Initiator): Promise<SubmitResult> {
+    const exec = this.custody?.get();
+    if (!exec) throw new ServiceUnavailableException('transfers from other custodians are not available on this deployment');
+    const where = await exec.describe(customer.customer_id, custodianId, req.accountId);
+    const policy = await this.approvals.getPolicy(customer.customer_id);
+    const reasons = ['transfers from another custodian always need approval'];
+    const opened = await this.approvals.openTransferRequest({
+      customerId: customer.customer_id, initiator, requiredApprovals: policy.requiredApprovals, windowMinutes: policy.windowMinutes,
+      keyId: custodianId, kind: 'custodian', request: req as unknown as Record<string, unknown>,
+      summary: {
+        kind: 'native-transfer', blockchain: req.blockchain, keyId: custodianId, keyName: `${where.custodian} / ${where.account}`,
+        to: req.destination, asset: req.asset, decimals: req.decimals, amount: req.amount, valueWei: null, chainId: null, data: '', memo: req.memo ?? null, reasons,
+      },
+    });
+    void this.webhooks?.emit(customer.customer_id, 'transfer.pending_approval', { approval_id: opened.approvalId, kind: 'custodian', asset: req.asset, amount: req.amount, to: req.destination, required_approvals: policy.requiredApprovals, expires_at: opened.expiresAt, reasons });
+    void this.alerts?.notify({ severity: 'warning', organisation: customer.name, title: `A ${req.asset} transfer from ${where.custodian} is waiting for approval`, detail: `${initiator.label} asked to send ${req.amount} base units to ${req.destination.slice(0, 8)}…; ${policy.requiredApprovals} approval(s) needed.` });
+    return { status: 'pending_approval', approvalId: opened.approvalId, expiresAt: opened.expiresAt, requiredApprovals: policy.requiredApprovals, reasons };
+  }
+
+  private async park(customer: Customer, keyId: string, kind: Exclude<TransferKind, 'custodian'>, req: AnyRequest, initiator: Initiator, reasons: string[]): Promise<SubmitResult> {
     const { asset, decimals } = DISPLAY[kind];
     const amount = (req as { amount: string }).amount;
     const to = (req as { destination: string }).destination;
@@ -212,6 +238,13 @@ export class TransfersService implements OnModuleInit, NativeApprovalHandler {
         return (await this.keys.sendCosmos(customer, keyId, req as CosmosTransactionDto, { approvalGranted })) as Record<string, unknown>;
       case 'evm':
         return this.runEvm(customer, keyId, req as EvmTransferRequest, approvalGranted, ctx);
+      case 'custodian': {
+        // Only ever reached once approved; there is no other way to run one.
+        const exec = this.custody?.get();
+        if (!approvalGranted || !exec) throw new ServiceUnavailableException('a transfer from another custodian runs only after approval');
+        const { idempotencyKey, ...request } = req as CustodianTransferRequest & { idempotencyKey: string };
+        return exec.execute(customer.customer_id, keyId, request, idempotencyKey);
+      }
     }
   }
 

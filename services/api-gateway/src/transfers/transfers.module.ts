@@ -7,6 +7,7 @@ import { WebhooksModule } from '../webhooks/webhooks.module';
 import { OrgTransfersController } from './org-transfers.controller';
 import { ApiTransfersController } from './api-transfers.controller';
 import { TransfersService } from './transfers.service';
+import { CustodyExecutors } from './custody-executor';
 
 // Starting a transfer from a threshold key, and acting on its approval.
 // Needs the keys module (to sign) and the approvals module (to ask), which
@@ -14,7 +15,7 @@ import { TransfersService } from './transfers.service';
 @Module({
   imports: [CustomersModule, KeysModule, ApprovalsModule, TokensModule, WebhooksModule],
   controllers: [OrgTransfersController, ApiTransfersController],
-  providers: [TransfersService],
-  exports: [TransfersService],
+  providers: [TransfersService, CustodyExecutors],
+  exports: [TransfersService, CustodyExecutors],
 })
 export class TransfersModule {}

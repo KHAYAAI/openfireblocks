@@ -225,6 +225,15 @@ spec:
                   name: {{ .Values.workos.apiKeySecret }}
                   key: workos-api-key
             {{- end }}
+            {{- range .Values.custody.tokens }}
+            # A custodian connector's bearer token (docs/deployment/MULTI-CUSTODIAN.md).
+            # Only variables named CUSTODY_TOKEN_* are ever read for a connector.
+            - name: {{ required "custody.tokens[].env is required" .env | quote }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "custody.tokens[].secretName is required" .secretName | quote }}
+                  key: {{ .key | default "token" | quote }}
+            {{- end }}
             {{- if .Values.trisa.enabled }}
             # Direct Travel Rule exchange with other providers (TRISA): mutual TLS,
             # envelopes only the recipient can open. The certificate must come

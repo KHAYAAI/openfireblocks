@@ -58,7 +58,7 @@ if have helm; then
   ALL=(--set mpcParty.mtls.enabled=true --set mpcParty.mtls.autoIssue.enabled=true --set temporalWorker.mtls.enabled=true --set temporalWorker.mtls.autoIssue.enabled=true
        --set oidc.enabled=true --set oidc.issuer=https://id.example/realms/t --set oidc.clientId=ofb --set oidc.redirectUri=https://c.example/console/sso-callback
        --set billing.consolePublicUrl=https://c.example --set billing.returnHosts=c.example --set networkPolicy.enabled=true --set 'networkPolicy.gatewayIngressNamespaces={ingress-nginx}'
-       --set serviceMonitor.enabled=true --set ingress.enabled=true --set backup.enabled=true --set backup.offsite.enabled=true --set backup.offsite.bucket=b --set backup.offsite.keySecret=k --set trisa.enabled=true --set trisa.secretName=trisa-node --set trisa.sealingKeyInSecret=true)
+       --set serviceMonitor.enabled=true --set ingress.enabled=true --set backup.enabled=true --set backup.offsite.enabled=true --set backup.offsite.bucket=b --set backup.offsite.keySecret=k --set trisa.enabled=true --set trisa.secretName=trisa-node --set trisa.sealingKeyInSecret=true --set 'custody.tokens[0].env=CUSTODY_TOKEN_BANKX' --set 'custody.tokens[0].secretName=bankx')
   run "helm template (every optional feature)" bash -c "helm template ci '$ROOT/infrastructure/helm/openfireblocks' ${ALL[*]@Q} >/dev/null"
   KC="$(command -v kubeconform || echo "$(go env GOPATH 2>/dev/null)/bin/kubeconform")"
   if [ -x "$KC" ]; then run "kubeconform strict (every optional feature)" bash -c "helm template ci '$ROOT/infrastructure/helm/openfireblocks' ${ALL[*]@Q} | '$KC' -strict -ignore-missing-schemas -summary -kubernetes-version 1.29.0"

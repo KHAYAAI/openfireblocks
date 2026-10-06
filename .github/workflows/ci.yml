@@ -199,7 +199,7 @@ jobs:
           RECON_EVM_RPC: http://127.0.0.1:18545
         run: |
           npm ci
-          npx jest src/approvals src/travel-rule src/agents src/reconciliation src/transfers src/controls src/identity src/keys src/sweeps
+          npx jest src/approvals src/travel-rule src/agents src/reconciliation src/transfers src/controls src/identity src/keys src/sweeps src/custody
 
   gateway:
     name: API gateway
@@ -289,6 +289,7 @@ jobs:
             --set backup.enabled=true \
             --set backup.offsite.enabled=true --set backup.offsite.bucket=b --set backup.offsite.keySecret=k \
             --set trisa.enabled=true --set trisa.secretName=trisa-node --set trisa.sealingKeyInSecret=true \
+            --set 'custody.tokens[0].env=CUSTODY_TOKEN_BANKX' --set 'custody.tokens[0].secretName=bankx' \
             | $(go env GOPATH)/bin/kubeconform -strict -summary \
                 -ignore-missing-schemas \
                 -kubernetes-version 1.29.0

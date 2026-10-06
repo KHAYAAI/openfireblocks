@@ -65,7 +65,7 @@ export type Decision = 'approve' | 'reject';
 // natural key). Settlements keep their Temporal workflow ids.
 export const NATIVE_WORKFLOW_PREFIX = 'native:';
 
-export type TransferKind = 'bitcoin' | 'solana' | 'cosmos' | 'evm';
+export type TransferKind = 'bitcoin' | 'solana' | 'cosmos' | 'evm' | 'custodian';
 
 export interface PendingTransferRow {
   approvalId: string;

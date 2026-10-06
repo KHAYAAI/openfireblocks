@@ -453,6 +453,15 @@ oidc:
   # "oidc-client-secret".
   clientSecretSecret: ""
 
+# Connector credentials for custodians registered through the API. Each entry maps an
+# environment variable named CUSTODY_TOKEN_<NAME> to a key in a Kubernetes secret; the
+# API stores only the variable's name, never the token.
+custody:
+  tokens: []
+  # - env: CUSTODY_TOKEN_BANKX
+  #   secretName: bankx-connector
+  #   key: token
+
 # Direct Travel Rule exchange with other providers over TRISA. Off by default.
 # Needs a secret holding tls.crt, tls.key and ca.crt (and optionally sealing.key)
 # from the TRISA certificate authority -- obtained by registering this provider
