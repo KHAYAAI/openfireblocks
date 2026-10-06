@@ -48,9 +48,11 @@ function build(opts: { run?: jest.Mock; approvals?: ReturnType<typeof fakeApprov
   };
   const hooks = { register: jest.fn() };
   const customers = { getByCustomerId: jest.fn().mockResolvedValue(customer) };
-  const svc = new TransfersService(approvals as never, hooks as never, keys as never, customers as never, (opts.rpc ?? {}) as never);
+  const events: Array<[string, string, Record<string, unknown>]> = [];
+  const webhooks = { emit: jest.fn(async (c: string, t: string, d: Record<string, unknown>) => { events.push([c, t, d]); }) };
+  const svc = new TransfersService(approvals as never, hooks as never, keys as never, customers as never, (opts.rpc ?? {}) as never, undefined, webhooks as never);
   svc.onModuleInit();
-  return { svc, approvals, keys, hooks };
+  return { svc, approvals, keys, hooks, events };
 }
 
 const dto = { destination: 'DST', amount: '10000000000' }; // 10 SOL
@@ -116,6 +118,27 @@ describe('TransfersService', () => {
       expect(req).toMatchObject({ ...dto, idempotencyKey: 'approval:ap-1' });
       expect(opts).toEqual({ approvalGranted: true });
       expect(approvals.rows.get('ap-1').status).toBe('completed');
+    });
+
+    it('announces the lifecycle to the customer\'s webhooks: held, then completed', async () => {
+      const { svc, events } = await parked();
+      await svc.onDecision('cust-1', decided('approved'));
+      expect(events.map((e) => e[1])).toEqual(['transfer.pending_approval', 'transfer.completed']);
+      expect(events[0][2]).toMatchObject({ approval_id: 'ap-1', kind: 'solana', asset: 'SOL', required_approvals: 2 });
+      expect(events[1][2]).toMatchObject({ approval_id: 'ap-1', result: { signature: 'SolSig' } });
+    });
+
+    it('announces a rejection, and a failure with its reason', async () => {
+      const a = await parked();
+      await a.svc.onDecision('cust-1', decided('rejected'));
+      expect(a.events.map((e) => e[1])).toEqual(['transfer.pending_approval', 'transfer.rejected']);
+
+      const run = jest.fn().mockRejectedValueOnce(new ApprovalRequiredException(['big'], 'r')).mockRejectedValue(new Error('node down'));
+      const b = build({ run });
+      await b.svc.submit(customer, 'k1', 'solana', dto as never, APPROVER);
+      await b.svc.onDecision('cust-1', decided('approved'));
+      expect(b.events.map((e) => e[1])).toEqual(['transfer.pending_approval', 'transfer.failed']);
+      expect(b.events[1][2]).toMatchObject({ error: 'node down' });
     });
 
     it('sends the transfer once even if the decision is delivered twice', async () => {

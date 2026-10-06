@@ -2,6 +2,7 @@ import { Global, Module } from '@nestjs/common';
 import { CustomersModule } from '../customers/customers.module';
 import { IdentityModule } from '../identity/identity.module';
 import { ApprovalsModule } from '../approvals/approvals.module';
+import { WebhooksModule } from '../webhooks/webhooks.module';
 import { AlertsService } from './alerts.service';
 import { ControlsController } from './controls.controller';
 import { ControlsService } from './controls.service';
@@ -10,7 +11,7 @@ import { ControlsService } from './controls.service';
 // questions without each module importing this one.
 @Global()
 @Module({
-  imports: [CustomersModule, IdentityModule, ApprovalsModule],
+  imports: [CustomersModule, IdentityModule, ApprovalsModule, WebhooksModule],
   controllers: [ControlsController],
   providers: [ControlsService, AlertsService],
   exports: [ControlsService, AlertsService],

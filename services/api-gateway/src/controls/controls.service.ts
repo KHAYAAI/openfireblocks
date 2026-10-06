@@ -1,4 +1,5 @@
-import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { WebhookEmitter } from '../webhooks/webhooks.service';
+import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { Pool } from 'pg';
 import { PG_POOL } from '../database/pg-pool.token';
 import { withTenant } from '../approvals/tenant-db';
@@ -50,6 +51,7 @@ export class ControlsService {
     @Inject(PG_POOL) private readonly pool: Pool,
     private readonly audit: AuditService,
     private readonly alerts: AlertsService,
+    @Optional() private readonly webhooks?: WebhookEmitter,
   ) {}
 
   async get(customerId: string): Promise<ControlsView> {
@@ -118,6 +120,7 @@ export class ControlsService {
       ),
     );
     await this.record(customerId, 'controls.frozen', `${email} froze the organisation: ${why}`);
+    void this.webhooks?.emit(customerId, 'org.frozen', { reason: why, by: email });
     void this.alerts.notify({ severity: 'critical', organisation: orgName, title: 'Organisation FROZEN: nothing can be signed', detail: `${email}: ${why}` });
     return this.get(customerId);
   }
@@ -130,6 +133,7 @@ export class ControlsService {
       ),
     );
     await this.record(customerId, 'controls.unfrozen', `${email} lifted the freeze`);
+    void this.webhooks?.emit(customerId, 'org.unfrozen', { by: email });
     void this.alerts.notify({ severity: 'warning', organisation: orgName, title: 'Freeze lifted: signing is possible again', detail: email });
     return this.get(customerId);
   }

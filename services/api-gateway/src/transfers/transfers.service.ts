@@ -1,3 +1,4 @@
+import { WebhookEmitter } from '../webhooks/webhooks.service';
 import { AlertsService } from '../controls/alerts.service';
 import { BadRequestException, Injectable, Logger, OnModuleInit, Optional, ServiceUnavailableException } from '@nestjs/common';
 import { v4 as uuidv4 } from 'uuid';
@@ -63,6 +64,8 @@ export class TransfersService implements OnModuleInit, NativeApprovalHandler {
     private readonly rpc: EvmRpcService,
     // Optional like the rest of the test seams; always present when running.
     @Optional() private readonly alerts?: AlertsService,
+    // Announces the lifecycle to the customer's registered webhooks.
+    @Optional() private readonly webhooks?: WebhookEmitter,
   ) {}
 
   onModuleInit() {
@@ -72,6 +75,7 @@ export class TransfersService implements OnModuleInit, NativeApprovalHandler {
   async submit(customer: Customer, keyId: string, kind: TransferKind, req: AnyRequest, initiator: Initiator): Promise<SubmitResult> {
     try {
       const result = await this.run(kind, customer, keyId, req, false, undefined);
+      void this.webhooks?.emit(customer.customer_id, 'transfer.completed', { kind, result });
       return { status: 'completed', result };
     } catch (err) {
       if (!(err instanceof ApprovalRequiredException)) throw err;
@@ -124,6 +128,7 @@ export class TransfersService implements OnModuleInit, NativeApprovalHandler {
         reasons,
       },
     });
+    void this.webhooks?.emit(customer.customer_id, 'transfer.pending_approval', { approval_id: opened.approvalId, kind, asset, amount, to, required_approvals: policy.requiredApprovals, expires_at: opened.expiresAt, reasons });
     void this.alerts?.notify({ severity: 'warning', organisation: customer.name, title: `A ${asset} transfer is waiting for approval`, detail: `${initiator.label} asked to send ${amount} base units to ${to.slice(0, 8)}…; ${policy.requiredApprovals} approval(s) needed. ${reasons[0] ?? ''}` });
     return { status: 'pending_approval', approvalId: opened.approvalId, expiresAt: opened.expiresAt, requiredApprovals: policy.requiredApprovals, reasons };
   }
@@ -135,10 +140,12 @@ export class TransfersService implements OnModuleInit, NativeApprovalHandler {
     if (!pending) return undefined;
     if (request.status === 'rejected') {
       await this.approvals.transitionTransfer(customerId, request.approvalId, ['awaiting_approval'], 'rejected');
+      void this.webhooks?.emit(customerId, 'transfer.rejected', { approval_id: request.approvalId });
       return { status: 'rejected' };
     }
     if (request.status === 'expired') {
       await this.approvals.transitionTransfer(customerId, request.approvalId, ['awaiting_approval'], 'expired');
+      void this.webhooks?.emit(customerId, 'transfer.expired', { approval_id: request.approvalId });
       return { status: 'expired' };
     }
     if (request.status !== 'approved') return { status: 'awaiting_approval' };
@@ -174,11 +181,13 @@ export class TransfersService implements OnModuleInit, NativeApprovalHandler {
         { prepared: pending.prepared ?? undefined, save: (p) => this.approvals.transitionTransfer(customerId, approvalId, ['executing'], 'executing', { prepared: p }) },
       );
       await this.approvals.transitionTransfer(customerId, approvalId, ['executing'], 'completed', { result });
+      void this.webhooks?.emit(customerId, 'transfer.completed', { approval_id: approvalId, kind: pending.kind, result });
       return { status: 'completed', result };
     } catch (err) {
       const message = errorText(err);
       this.logger.error(`executing approved transfer ${approvalId} failed: ${message}`);
       await this.approvals.transitionTransfer(customerId, approvalId, ['executing'], 'failed', { error: message });
+      void this.webhooks?.emit(customerId, 'transfer.failed', { approval_id: approvalId, kind: pending.kind, error: message.slice(0, 500) });
       void this.alerts?.notify({ severity: 'critical', title: 'An approved transfer failed to send', detail: message.slice(0, 300) });
       return { status: 'failed', error: message };
     }

@@ -51,6 +51,13 @@ var KnownEventTypes = []string{
 	"signature.created",
 	"transaction.broadcast",
 	"settlement.completed",
+	"transfer.pending_approval",
+	"transfer.rejected",
+	"transfer.expired",
+	"transfer.completed",
+	"transfer.failed",
+	"org.frozen",
+	"org.unfrozen",
 	"compliance.alert",
 }
 

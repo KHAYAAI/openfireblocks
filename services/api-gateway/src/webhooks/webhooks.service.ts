@@ -20,7 +20,15 @@ export type WebhookEventType =
   | 'key.activated'
   | 'key.failed'
   | 'signature.created'
-  | 'transaction.broadcast';
+  | 'transaction.broadcast'
+  // Transfers that needed approval, and the organisation's emergency stop.
+  | 'transfer.pending_approval'
+  | 'transfer.rejected'
+  | 'transfer.expired'
+  | 'transfer.completed'
+  | 'transfer.failed'
+  | 'org.frozen'
+  | 'org.unfrozen';
 
 @Injectable()
 export class WebhookEmitter {
