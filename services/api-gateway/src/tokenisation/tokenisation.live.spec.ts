@@ -37,15 +37,18 @@ const TENANT_DSN = process.env.DATABASE_URL ?? 'postgres://app:dev-only@localhos
 const ADMIN_DSN = process.env.DATABASE_ADMIN_URL ?? 'postgres://app_admin:dev-only@localhost:5432/openfireblocks?sslmode=disable';
 const CHAIN = 1337;
 
-let reachable = false; const chainUp = true;
+let reachable = false; let chainUp = false; let chainError = ''; let sharedChain: TestChain | undefined;
 beforeAll(async () => {
   const p = new Pool({ connectionString: ADMIN_DSN, connectionTimeoutMillis: 1500 });
   try { reachable = (await p.query(`SELECT to_regclass('security_tokens') IS NOT NULL AS ok`)).rows[0].ok; } catch { reachable = false; } finally { await p.end().catch(() => undefined); }
-});
+  if (reachable) {
+    try { sharedChain = await startChain(); chainUp = true; } catch (err) { chainError = (err as Error).message; }
+  }
+}, 120000);
 function skipped(): boolean {
   if (reachable && chainUp) return false;
-  if (process.env.REQUIRE_LIVE_DB) throw new Error('REQUIRE_LIVE_DB is set but no database with migration 034 is reachable');
-  console.warn('skipping tokenisation live test -- no database with migration 034');
+  if (process.env.REQUIRE_LIVE_DB || process.env.REQUIRE_EVM_CHAIN) throw new Error(`live prerequisites missing (database with migration 034: ${reachable}; dev chain: ${chainUp ? 'up' : chainError || 'not started'})`);
+  console.warn('skipping tokenisation live test -- needs a database with migration 034 and a dev chain (ganache via npx)');
   return true;
 }
 
@@ -113,7 +116,7 @@ describe('security token issuance (live Postgres, real EVM chain)', () => {
 
   beforeAll(async () => {
     if (!(reachable && chainUp)) return;
-    chain = await startChain(); provider = chain.provider;
+    chain = sharedChain!; provider = chain.provider;
     process.env.DATABASE_ADMIN_URL = ADMIN_DSN; process.env.EVM_RPC_1337 = chain.url;
     deployer = new NonceManager(await fundedWallet(provider));
     const issuerWallet = await fundedWallet(provider, '5');

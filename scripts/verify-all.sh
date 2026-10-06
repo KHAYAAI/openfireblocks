@@ -41,6 +41,8 @@ if [ -d "$GW/node_modules" ]; then
   run "gateway typecheck" bash -c "cd '$GW' && npx --no-install tsc --noEmit"
   run "gateway build" bash -c "cd '$GW' && npx --no-install nest build"
   run "gateway npm audit (production, high+)" bash -c "cd '$GW' && npm audit --omit=dev --audit-level=high"
+  run "contract artifact matches its source" bash -c "cd '$GW' && node scripts/build-contracts.js --check"
+  run "route inventory: guarded or recorded public, and current" bash -c "cd '$GW' && node scripts/route-inventory.js --check && node scripts/route-inventory.js | diff -q - '$ROOT/docs/assurance/ROUTE-INVENTORY.md'"
   if [ "$QUICK" = 1 ]; then skip "gateway tests (with live Postgres)" "--quick"
   elif have psql && { have pg_ctl || [ -d /usr/lib/postgresql ]; }; then
     export PGLOCAL_PORT=55497 PGLOCAL_DIR="${TMPDIR:-/tmp}/ofb-verify-pg-$$"

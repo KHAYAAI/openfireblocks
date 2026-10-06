@@ -217,7 +217,24 @@ jobs:
       - working-directory: services/api-gateway
         run: npm run build
       - working-directory: services/api-gateway
+        env:
+          # The security-token contract specs launch their own dev chain through npx and
+          # must not silently skip here.
+          REQUIRE_EVM_CHAIN: "1"
         run: npm test
+      # The contract the platform verifies deployed code against must be exactly what the
+      # audited source compiles to.
+      - name: Contract artifact matches its source
+        working-directory: services/api-gateway
+        run: node scripts/build-contracts.js --check
+      # Every route is guarded, or public with a recorded reason, and the inventory handed
+      # to penetration testers and auditors is the current one.
+      - name: Route inventory
+        working-directory: services/api-gateway
+        run: |
+          node scripts/route-inventory.js --check
+          node scripts/route-inventory.js | diff - ../../docs/assurance/ROUTE-INVENTORY.md \
+            || { echo "::error::docs/assurance/ROUTE-INVENTORY.md is out of date: run node scripts/route-inventory.js > ../../docs/assurance/ROUTE-INVENTORY.md"; exit 1; }
 
   sdk-js:
     name: JS SDK

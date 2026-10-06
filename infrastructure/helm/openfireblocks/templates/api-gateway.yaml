@@ -225,6 +225,14 @@ spec:
                   name: {{ .Values.workos.apiKeySecret }}
                   key: workos-api-key
             {{- end }}
+            {{- if .Values.metrics.tokenSecret }}
+            # /metrics needs this bearer token (the ServiceMonitor presents it).
+            - name: METRICS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.metrics.tokenSecret | quote }}
+                  key: metrics-token
+            {{- end }}
             {{- range .Values.custody.tokens }}
             # A custodian connector's bearer token (docs/deployment/MULTI-CUSTODIAN.md).
             # Only variables named CUSTODY_TOKEN_* are ever read for a connector.

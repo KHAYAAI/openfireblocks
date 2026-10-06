@@ -36,9 +36,9 @@ Every row blocks "production ready". None of them is an engineering task.
 
 | Gate | Status | Why it is outside the code |
 |---|---|---|
-| Independent cryptographic audit of the threshold-signing layer (tss-lib, `mpc-party`, `mpc-signer/tss`) | Not started | Needs reviewers who did not write it. Longest lead time. `docs/security/TSS-LIB-ADVISORY-REVIEW.md` |
-| External penetration test | Not started | A third party attacking the live system |
-| SOC 2 Type II | Not engaged | Needs a CPA firm observing controls over 6-12 months |
+| Independent cryptographic audit of the threshold-signing layer (tss-lib, `mpc-party`, `mpc-signer/tss`) and of `PermissionedToken.sol` | Not started; brief, scope addendum and plan written (`docs/assurance/`) | Needs reviewers who did not write it. Longest lead time. `docs/security/TSS-LIB-ADVISORY-REVIEW.md` |
+| External penetration test | Not started; scope, rules of engagement and route inventory written | A third party attacking the live system; needs a deployed staging environment |
+| SOC 2 Type II | Not engaged; control matrix written | Needs a CPA firm observing controls over 6-12 months |
 | MPC parties on isolated hosts, applied for real | Code and Terraform exist; never deployed | Needs separate hosts / accounts. On one host this is effectively a single-owner key |
 | `terraform apply` against a real AWS account | Never applied | Needs credentials and an account |
 | Hardware HSM in the loop | PKCS#11 tested on SoftHSM2 only | Needs a physical HSM or cloud HSM |
@@ -194,11 +194,9 @@ Reviewed and found already covered: Mpcium's authenticated peers and
 replay-bounded messages (here: certificate-bound party ids and a ceremony
 authoriser with a bounded age).
 
-Not built from that review: deposit **sweeps** (need deposit-address
-infrastructure and gas funding that cannot be tested without a chain),
-TRISA transmission (needs directory certificates and a counterparty),
-multi-custodian orchestration, tokenisation. An OpenBao evaluation is written
-(`docs/security/OPENBAO-EVALUATION.md`) and not run.
+Not built at the time of that review, and built since (see the sixth pass): deposit
+sweeps, TRISA transmission, multi-custodian orchestration, tokenisation. An OpenBao
+evaluation is written (`docs/security/OPENBAO-EVALUATION.md`) and not run.
 
 Fixed in the fifth pass ("close the gaps and test everything"):
 
@@ -230,6 +228,47 @@ Fixed in the fifth pass ("close the gaps and test everything"):
 - `scripts/verify-all.sh` runs everything that can run on one machine and says
   plainly what it skipped.
 
+Fixed in the sixth pass (CI read, then the four missing features, then assurance):
+
+- **The first real CI runs found three genuine failures** that this sandbox could not
+  show: a tenant-isolation test that ran as the BYPASSRLS role because of how bash expands
+  `A="$X" B="$A" cmd` (the isolation itself was correct); 15 Go standard-library advisories
+  on go1.24 (every module and image now pins go1.25.10); and `mpc-party` tests killed at ten
+  minutes. The last one hid a **real liveness race**: a party was published to the message
+  handler before tss-lib's `Start()`, so a message that arrived in between was acknowledged
+  and never re-examined, and a round hung (a ceremony finishing on two parties of three).
+  Keygen, signing and resharing now publish after `Start()`.
+- **Deposit sweeps** (`docs/deployment/SWEEPS.md`): rules fixed in the database, each run an
+  ordinary transfer so freeze, whitelist, policy and approvals apply, opt-in scheduler.
+  Native asset on Solana, Cosmos and EVM; not tokens, not Bitcoin.
+- **A TRISA Travel Rule link** (`docs/deployment/TRISA.md`): the real wire protocol over
+  mutual-TLS gRPC, as sender and receiver. **Checked against TRISA's own Go implementation
+  in both directions**, which found two defects while it was being built. Counterparties are
+  trusted by a second person who states the key signature. **Not** tested against the live
+  TRISA network (needs TRISA-issued certificates and a counterparty), no directory discovery.
+- **Multi-custodian orchestration** (`docs/deployment/MULTI-CUSTODIAN.md`): a connector
+  contract, a combined balance sheet, routing rules, and an approval quorum on every transfer
+  out of another custodian. It cannot apply the spending policy to someone else's account, so
+  every such transfer needs approval. **Run only against a stand-in connector**; no vendor
+  connectors ship, and Travel Rule stays with the sending custodian.
+- **Tokenisation** (`docs/deployment/TOKENISATION.md`): a permissioned ERC-20, registration that
+  verifies the deployed code against the audited artifact, every administrative act held for
+  approval and simulated first, a holder register and a cap table read from the chain.
+  **The contract has not been independently audited**, there is no primary-market workflow,
+  and it has only run on a local dev chain.
+- **Two bugs in the existing EVM transfer path**, found by the tokenisation tests: ethers'
+  250 ms read cache gave two simultaneous transfers from one key the same nonce (the second
+  failed with a signature that cannot be redone), and calldata recognition threw on malformed
+  arguments. Nonce assignment is now serialised per key with a Postgres advisory lock.
+- `/metrics` can require a bearer token (`metrics.tokenSecret`); 149 routes inventoried, each
+  guarded or recorded as public with a reason, checked in CI.
+- `scripts/assurance-pack.sh` and the documents in `docs/assurance/` prepare the audit,
+  penetration test and SOC 2 engagements. **None is engaged.** What only a person can do next
+  is listed in `docs/assurance/PROCUREMENT-PLAN.md`.
+
+What the CI run showed about the earlier claims: the whole-platform job and the OIDC job
+**passed on real GitHub runners**, which is the first confirmation outside this sandbox.
+
 Still open (engineering):
 
 - No image has been built and no chart installed on a real cluster (no Docker
@@ -240,8 +279,6 @@ Still open (engineering):
 - Bitcoin and Cosmos were not part of the full-stack run (no regtest node or
   Cosmos stand-in in it); their transaction code is covered by unit tests and,
   for Bitcoin, the regtest drills in CI.
-- Sweeps (moving deposits to treasury automatically), a TRISA Travel Rule link,
-  multi-custodian orchestration and tokenisation are not built.
 - Solana and Cosmos amounts are governed by unit-normalised policy, not by
   price. A deployment that wants USD limits needs a price source.
 - Cosmos' "spent without us" check needs exactly one Cosmos key per

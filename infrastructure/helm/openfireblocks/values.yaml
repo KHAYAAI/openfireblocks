@@ -504,6 +504,12 @@ serviceAccount:
   # e.g. eks.amazonaws.com/role-arn for an IAM role bound to the pods
   annotations: {}
 
+# Protects the gateway's /metrics with a bearer token. A secret holding key "metrics-token".
+# Unset, /metrics is open to anything that can reach the gateway: set it whenever the
+# gateway is reachable from outside the cluster. The ServiceMonitor presents it.
+metrics:
+  tokenSecret: ""
+
 serviceMonitor:
   enabled: false # set true if the Prometheus Operator is installed
 

@@ -28,6 +28,11 @@ export async function startChain(chainId = 1337): Promise<TestChain> {
   // Its own process group, so stopping takes down what npx spawned too.
   const child = spawn('npx', ['--yes', 'ganache@7.9.2', '--chain.chainId', String(chainId), '--server.port', String(port), '--logging.quiet',
     '--wallet.accounts', `${FUNDED_KEY},${10n ** 24n}`], { detached: true, stdio: 'ignore' });
+  // Failing to launch at all (no npx) or exiting early (no network to fetch ganache) is a
+  // reason to stop waiting now, not after the timeout.
+  let launchFailure = '';
+  child.on('error', (e) => { launchFailure = e.message; });
+  child.on('exit', (code) => { if (code !== null) launchFailure = `ganache exited with code ${code}`; });
   const url = `http://127.0.0.1:${port}`;
   const provider = new JsonRpcProvider(url, undefined, { staticNetwork: true, batchMaxCount: 1, pollingInterval: 50, cacheTimeout: -1 });
   const stop = async () => {
@@ -40,7 +45,7 @@ export async function startChain(chainId = 1337): Promise<TestChain> {
       const r = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"jsonrpc":"2.0","id":1,"method":"eth_chainId"}' });
       if (r.ok) break;
     } catch { /* not up yet */ }
-    if (Date.now() > deadline) { await stop(); throw new Error('the dev chain did not start (is ganache available through npx?)'); }
+    if (launchFailure || Date.now() > deadline) { await stop(); throw new Error(`the dev chain did not start (is ganache available through npx?): ${launchFailure || 'timed out'}`); }
     await new Promise((res) => setTimeout(res, 250));
   }
   return { url, chainId, provider, stop };
