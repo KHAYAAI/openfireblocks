@@ -14,6 +14,7 @@ const { execSync } = require('child_process');
 const crypto = require('crypto');
 const { authenticator } = require(process.env.OTPLIB_PATH || 'otplib');
 const { ethers } = require(process.env.ETHERS_PATH || 'ethers');
+const fs = require('fs');
 
 const G = process.env.GATEWAY || 'http://127.0.0.1:3999';
 const NODE = process.env.SOLANA_MOCK || 'http://127.0.0.1:18899';
@@ -59,14 +60,15 @@ async function relogin(p) {
   const apiKey = 'ofb_' + crypto.randomBytes(24).toString('hex');
   const hash = crypto.createHash('sha256').update(apiKey).digest('hex');
   const cust = psql(`INSERT INTO customers (name,email,api_key_hash,status,tier) VALUES ('E2E Treasury Co','ops@e2e.example',decode('${hash}','hex'),'active','enterprise') RETURNING customer_id`);
-  const ada = await person('ada', cust), alice = await person('alice', cust), bob = await person('bob', cust);
+  const ada = await person('ada', cust), alice = await person('alice', cust), bob = await person('bob', cust), oscar = await person('oscar', cust);
   check((await call('POST', '/organisation/first-admin', { key: apiKey, body: { email: ada.email, role: 'admin' } })).s === 201, 'the first admin is appointed with the API key');
   await relogin(ada);
   for (const [p, role] of [[alice, 'approver'], [bob, 'approver']]) await call('PUT', `/organisations/${cust}/members`, { token: ada.token, body: { email: p.email, role } });
-  await relogin(alice); await relogin(bob);
+  await call('PUT', `/organisations/${cust}/members`, { token: ada.token, body: { email: oscar.email, role: 'operator' } });
+  await relogin(alice); await relogin(bob); await relogin(oscar);
 
   // --- a real key: real DKG over three real parties
-  let r = await call('POST', '/keys', { key: apiKey, body: { blockchain: 'solana', name: 'e2e', threshold: 2, total_parties: 3 } });
+  let r = await call('POST', '/keys', { key: apiKey, body: { blockchain: 'solana', name: 'sol-key', threshold: 2, total_parties: 3 } });
   check(r.s === 201, 'a key is requested over the API', JSON.stringify(r.d));
   const keyId = r.d.id; let key; const t0 = Date.now();
   while (Date.now() - t0 < 240000) { key = (await call('GET', '/keys/' + keyId, { key: apiKey })).d; if (!['pending', 'pending_dkg'].includes(key.status)) break; await sleep(2000); }
@@ -98,7 +100,7 @@ async function relogin(p) {
   // signature is a valid signature by the key's address.
   if (process.env.EVM_RPC) {
     const provider = new ethers.JsonRpcProvider(process.env.EVM_RPC, 1337, { staticNetwork: ethers.Network.from(1337) });
-    r = await call('POST', '/keys', { key: apiKey, body: { blockchain: 'ethereum', name: 'e2e-evm', threshold: 2, total_parties: 3 } });
+    r = await call('POST', '/keys', { key: apiKey, body: { blockchain: 'ethereum', name: 'evm-key', threshold: 2, total_parties: 3 } });
     const evmId = r.d.id; let evm; const e0 = Date.now();
     while (Date.now() - e0 < 240000) { evm = (await call('GET', '/keys/' + evmId, { key: apiKey })).d; if (!['pending', 'pending_dkg'].includes(evm.status)) break; await sleep(2000); }
     check(evm.status === 'active' && ethers.isAddress(evm.address), `a real 2-of-3 secp256k1 DKG produced an Ethereum address (${Math.round((Date.now() - e0) / 1000)}s)`, JSON.stringify(evm));
@@ -122,6 +124,14 @@ async function relogin(p) {
   r = await call('POST', `/keys/${keyId}/transfers`, { key: apiKey, body: { destination: DEST, amount: '1000000', travelRule: TRAVEL } });
   check(r.s === 200, 'and signing works again', JSON.stringify(r.d).slice(0, 160));
   check((await (await fetch(NODE + '/__sent')).json()).length === 3, 'three transfers in all reached the node');
+
+  // What a browser run (console.js, the recordings) needs to continue as these people.
+  if (process.env.E2E_STATE) {
+    fs.writeFileSync(process.env.E2E_STATE, JSON.stringify({
+      gateway: G, customerId: cust, apiKey, password: PW, keyId, keyAddress: key.address, keyName: 'sol-key',
+      people: Object.fromEntries([ada, alice, bob, oscar].map((p) => [p.name, { email: p.email, secret: p.secret }])),
+    }));
+  }
 
   const failed = results.filter((x) => !x).length;
   console.log(failed ? `\nFAILED: ${failed} of ${results.length}` : `\nPASS: ${results.length} of ${results.length}`);

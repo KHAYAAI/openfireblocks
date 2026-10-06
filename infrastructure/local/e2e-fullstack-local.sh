@@ -23,11 +23,13 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 WORK="$(mktemp -d)"
 TEMPORAL_BIN="${TEMPORAL_BIN:-$(command -v temporal || true)}"
 PIDS=()
-cleanup() { "$ROOT/infrastructure/local/postgres-local.sh" stop >/dev/null 2>&1 || true; for p in "${PIDS[@]:-}"; do kill "$p" >/dev/null 2>&1 || true; done; sleep 1; for p in "${PIDS[@]:-}"; do kill -9 "$p" >/dev/null 2>&1 || true; done; rm -rf "$WORK" "${PGLOCAL_DIR:-/nonexistent}"; }
+cleanup() { "$ROOT/infrastructure/local/postgres-local.sh" stop >/dev/null 2>&1 || true; for p in "${PIDS[@]:-}"; do kill -- "-$p" >/dev/null 2>&1 || kill "$p" >/dev/null 2>&1 || true; done; sleep 1; for p in "${PIDS[@]:-}"; do kill -9 -- "-$p" >/dev/null 2>&1 || kill -9 "$p" >/dev/null 2>&1 || true; done; rm -rf "$WORK" "${PGLOCAL_DIR:-/nonexistent}"; }
 trap cleanup EXIT
 fail() { echo "FAIL: $*" >&2; for f in "$WORK"/*.log; do [ -e "$f" ] || continue; echo "--- $(basename "$f") (last 15) ---" >&2; tail -15 "$f" >&2; done; exit 1; }
 up() { for _ in $(seq 1 "${3:-60}"); do (exec 3<>/dev/tcp/127.0.0.1/$2) 2>/dev/null && return 0; sleep 0.5; done; fail "$1 did not come up on :$2"; }
-start() { local name="$1"; shift; "$@" > "$WORK/$name.log" 2>&1 & PIDS+=($!); disown $! 2>/dev/null || true; }
+# setsid: each service leads its own process group, so cleanup can take down what
+# it spawned too (npx leaves its child, ganache, running otherwise).
+start() { local name="$1"; shift; setsid "$@" > "$WORK/$name.log" 2>&1 & PIDS+=($!); disown $! 2>/dev/null || true; }
 
 [ -n "$TEMPORAL_BIN" ] || fail "the temporal CLI is required (https://docs.temporal.io/cli); set TEMPORAL_BIN"
 [ -d "$ROOT/services/api-gateway/node_modules/otplib" ] || fail "run npm ci in services/api-gateway first"
@@ -79,4 +81,14 @@ sleep 2
 echo "==> the scenario"
 GATEWAY=http://127.0.0.1:$P_GW SOLANA_MOCK=http://127.0.0.1:$P_SOL OTPLIB_PATH="$ROOT/services/api-gateway/node_modules/otplib" \
   PSQL="PGPASSWORD=dev-only psql -h 127.0.0.1 -p $PGPORT -U app_admin -d openfireblocks -Atc" \
-  node "$ROOT/infrastructure/local/e2e/fullstack.js" || fail "the scenario failed"
+  E2E_STATE="$WORK/state.json" node "$ROOT/infrastructure/local/e2e/fullstack.js" || fail "the scenario failed"
+
+# The console in a real browser, as the people who run it, if Playwright's
+# Chromium is available (CI installs it; set E2E_CONSOLE=0 to skip).
+if [ "${E2E_CONSOLE:-1}" = "1" ] && PW="$(cd "$ROOT/services/api-gateway" && node -e "console.log(require.resolve('playwright'))" 2>/dev/null || ls /opt/node22/lib/node_modules/playwright/index.js 2>/dev/null)"; then
+  echo "==> the console, in a browser"
+  PLAYWRIGHT_PATH="$PW" E2E_STATE="$WORK/state.json" SOLANA_MOCK=http://127.0.0.1:$P_SOL OTPLIB_PATH="$ROOT/services/api-gateway/node_modules/otplib" \
+    node "$ROOT/infrastructure/local/e2e/console.js" || fail "the console scenario failed"
+else
+  echo "==> the console scenario was skipped: Playwright is not installed"
+fi

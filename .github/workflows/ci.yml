@@ -473,6 +473,11 @@ jobs:
       - uses: temporalio/setup-temporal@v0
       - run: npm ci
         working-directory: services/api-gateway
+      - name: A browser for the console scenario
+        working-directory: services/api-gateway
+        run: |
+          npm install --no-save playwright
+          npx playwright install --with-deps chromium
       - run: ./infrastructure/local/e2e-fullstack-local.sh
 
   e2e-oidc:
