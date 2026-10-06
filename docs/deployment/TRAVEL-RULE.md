@@ -15,15 +15,10 @@ The platform POSTs `{ "ivms101": {...}, "txHash": "0x..." }` with an
 and a bearer token, and expects 2xx, optionally with `{ "reference": "..." }`.
 Anything else is recorded as a failed attempt and kept for a retry.
 
-## TRISA
+## TRISA (direct provider-to-provider exchange)
 
-TRISA (travelrule.io, Apache-2.0) is an open protocol for the counterparty
-exchange. The practical route is to run a TRISA node (`trisacrypto/envoy`),
-which needs mTLS certificates from the TRISA directory for a registered VASP,
-and put a small adapter in front of it that implements the contract above.
-
-**Not built, and why:** a direct TRISA integration. It needs TRISA directory
-registration and certificates, and a counterparty on a TRISA network to test
-against; none are available to this repository, and Envoy's request shapes
-were not verifiable from here. Treat TRISA as an integration to do during a
-pilot with a real counterparty, not as something this platform already speaks.
+Built: the gateway speaks the TRISA wire protocol itself, as sender and receiver, so a
+transfer to a beneficiary provider you have a trusted TRISA relationship with goes
+straight to that provider in an envelope only it can open, with no intermediary. Anything
+else still uses the provider URL above, or waits for export. Full detail, including what
+is verified and what is not, in [TRISA.md](TRISA.md).

@@ -1,9 +1,11 @@
-import { Inject, Injectable, Logger, NotFoundException, UnprocessableEntityException, BadRequestException } from '@nestjs/common';
+import { Inject, Injectable, Logger, NotFoundException, Optional, UnprocessableEntityException, BadRequestException } from '@nestjs/common';
 import { Pool } from 'pg';
 import { PG_POOL } from '../database/pg-pool.token';
 import { withTenant, UUID_RE } from '../approvals/tenant-db';
+import { TrisaService } from './trisa/trisa.service';
 import {
   configFromEnv,
+  Ivms101Payload,
   problems,
   Requirement,
   requirementFor,
@@ -55,7 +57,11 @@ export class TravelRuleService {
   private readonly logger = new Logger(TravelRuleService.name);
   private readonly cfg: TravelRuleConfig;
 
-  constructor(@Inject(PG_POOL) private readonly pool: Pool) {
+  constructor(
+    @Inject(PG_POOL) private readonly pool: Pool,
+    // Direct exchange with other providers, when this node has a TRISA identity.
+    @Optional() private readonly trisa?: TrisaService,
+  ) {
     this.cfg = configFromEnv();
   }
 
@@ -144,6 +150,12 @@ export class TravelRuleService {
   // right after signing and again for a retry. Never throws for a provider
   // failure: the information is kept and the failure recorded.
   private async transmit(customerId: string, recordId: string, ivms101: unknown, txHash: string | null): Promise<{ status: string; reference?: string; error?: string }> {
+    // A beneficiary provider this organisation has a trusted TRISA relationship with
+    // gets the information directly, in an envelope only it can open. Anyone else goes
+    // through the provider URL, or waits for export.
+    const direct = await this.transmitDirect(customerId, recordId, ivms101 as Ivms101Payload, txHash);
+    if (direct) return direct;
+
     const url = process.env.TRAVEL_RULE_PROVIDER_URL;
     if (!url) return { status: 'awaiting_transmission' };
 
@@ -178,13 +190,35 @@ export class TravelRuleService {
     }
   }
 
+  private async transmitDirect(customerId: string, recordId: string, ivms: Ivms101Payload, txHash: string | null): Promise<{ status: string; reference?: string; error?: string } | null> {
+    if (!this.trisa?.configured()) return null;
+    let counterparty;
+    try {
+      counterparty = await this.trisa.findCounterparty(customerId, ivms.beneficiaryVASP);
+    } catch (err) {
+      this.logger.error(`TRISA counterparty lookup for ${recordId} failed: ${(err as Error).message}`);
+      return null;
+    }
+    if (!counterparty) return null;
+    const out = await this.trisa.send(counterparty, recordId, ivms, {
+      txid: txHash, originator: ivms.originator.accountNumber[0], beneficiary: ivms.beneficiary.accountNumber[0],
+      amount: ivms.transfer.amount, decimals: ivms.transfer.decimals, chainId: ivms.transfer.chainId, asset: ivms.transfer.asset,
+    });
+    if (out.status === 'transmitted') await this.mark(customerId, recordId, 'transmitted', out.reference ?? null, null);
+    else {
+      this.logger.error(`TRISA transmission for ${recordId} failed: ${out.error}`);
+      await this.mark(customerId, recordId, 'failed', null, out.error ?? 'unknown');
+    }
+    return out;
+  }
+
   // Try again for a record that is waiting or whose last attempt failed.
   // A record already transmitted is left alone: sending it twice is how a
   // counterparty ends up with two copies.
   async retransmit(customerId: string, recordId: string): Promise<TravelRuleRecordView> {
     if (!UUID_RE.test(recordId)) throw new NotFoundException('record not found');
-    if (!process.env.TRAVEL_RULE_PROVIDER_URL) {
-      throw new UnprocessableEntityException('no Travel Rule provider is configured (TRAVEL_RULE_PROVIDER_URL), so there is nowhere to send it; record it as sent elsewhere instead');
+    if (!process.env.TRAVEL_RULE_PROVIDER_URL && !this.trisa?.configured()) {
+      throw new UnprocessableEntityException('no Travel Rule provider (TRAVEL_RULE_PROVIDER_URL) or TRISA identity is configured, so there is nowhere to send it; record it as sent elsewhere instead');
     }
     const r = await withTenant(this.pool, customerId, (c) =>
       c.query(`SELECT transmission_status, ivms101, tx_hash FROM travel_rule_records WHERE record_id = $1 AND customer_id = $2`, [recordId, customerId]),

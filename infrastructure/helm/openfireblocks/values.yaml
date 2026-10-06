@@ -453,6 +453,20 @@ oidc:
   # "oidc-client-secret".
   clientSecretSecret: ""
 
+# Direct Travel Rule exchange with other providers over TRISA. Off by default.
+# Needs a secret holding tls.crt, tls.key and ca.crt (and optionally sealing.key)
+# from the TRISA certificate authority -- obtained by registering this provider
+# with the TRISA directory, which this chart cannot do. See docs/deployment/TRISA.md.
+trisa:
+  enabled: false
+  port: 8443
+  secretName: ""
+  # true when the secret also holds a separate RSA sealing.key (recommended).
+  sealingKeyInSecret: false
+  service:
+    type: LoadBalancer
+    annotations: {}
+
 workos:
   enabled: false
   # The OpenFireblocks WorkOS project's Staging environment

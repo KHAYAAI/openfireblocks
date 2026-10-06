@@ -40,6 +40,10 @@ spec:
           ports:
             - name: http
               containerPort: {{ .Values.apiGateway.port }}
+            {{- if .Values.trisa.enabled }}
+            - name: trisa
+              containerPort: {{ .Values.trisa.port }}
+            {{- end }}
           env:
             # Makes each service refuse to fall back to local development
             # credentials if its DSN/config env var is missing, instead of
@@ -221,6 +225,30 @@ spec:
                   name: {{ .Values.workos.apiKeySecret }}
                   key: workos-api-key
             {{- end }}
+            {{- if .Values.trisa.enabled }}
+            # Direct Travel Rule exchange with other providers (TRISA): mutual TLS,
+            # envelopes only the recipient can open. The certificate must come
+            # from the TRISA certificate authority
+            # (services/api-gateway/src/travel-rule/trisa, docs/deployment/TRISA.md).
+            - name: TRISA_CERT_FILE
+              value: /etc/trisa/tls.crt
+            - name: TRISA_KEY_FILE
+              value: /etc/trisa/tls.key
+            - name: TRISA_CA_FILE
+              value: /etc/trisa/ca.crt
+            {{- if .Values.trisa.sealingKeyInSecret }}
+            - name: TRISA_SEALING_KEY_FILE
+              value: /etc/trisa/sealing.key
+            {{- end }}
+            - name: TRISA_LISTEN
+              value: {{ printf "0.0.0.0:%v" .Values.trisa.port | quote }}
+            {{- end }}
+          {{- if .Values.trisa.enabled }}
+          volumeMounts:
+            - name: trisa
+              mountPath: /etc/trisa
+              readOnly: true
+          {{- end }}
           livenessProbe:
             httpGet: { path: /health, port: http }
             initialDelaySeconds: 10
@@ -231,6 +259,13 @@ spec:
             periodSeconds: 5
           resources:
             {{- toYaml .Values.apiGateway.resources | nindent 12 }}
+      {{- if .Values.trisa.enabled }}
+      volumes:
+        - name: trisa
+          secret:
+            secretName: {{ required "trisa.secretName is required when trisa.enabled: a secret with tls.crt, tls.key and ca.crt" .Values.trisa.secretName | quote }}
+            defaultMode: 0440
+      {{- end }}
       affinity:
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
@@ -255,6 +290,31 @@ spec:
     - name: http
       port: {{ .Values.apiGateway.port }}
       targetPort: http
+{{- if .Values.trisa.enabled }}
+---
+# Where other providers reach this node. A separate Service from the API's, so
+# the public Travel Rule endpoint can be exposed (a load balancer) without
+# exposing the API itself.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ofb.fullname" . }}-trisa
+  labels:
+    {{- include "ofb.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api-gateway
+  {{- with .Values.trisa.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.trisa.service.type }}
+  selector:
+    app.kubernetes.io/component: api-gateway
+  ports:
+    - name: trisa
+      port: {{ .Values.trisa.port }}
+      targetPort: trisa
+{{- end }}
 {{- if .Values.apiGateway.autoscaling.enabled }}
 ---
 apiVersion: autoscaling/v2

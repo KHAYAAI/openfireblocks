@@ -85,6 +85,27 @@ spec:
         {{- if and (not .Values.networkPolicy.gatewayIngressNamespaces) (not .Values.networkPolicy.gatewayIngressCIDRs) }}
         {{- fail "networkPolicy.enabled needs networkPolicy.gatewayIngressNamespaces or gatewayIngressCIDRs: otherwise nothing could reach the API gateway" }}
         {{- end }}
+{{- if .Values.trisa.enabled }}
+---
+# Other providers reach the TRISA port from anywhere. The access control is
+# mutual TLS with a certificate from the TRISA CA, checked before any of this
+# service's code runs, not the network address.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "ofb.fullname" . }}-allow-trisa
+  labels:
+    {{- include "ofb.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: api-gateway
+  policyTypes: ["Ingress"]
+  ingress:
+    - ports:
+        - port: {{ .Values.trisa.port }}
+          protocol: TCP
+{{- end }}
 {{- if .Values.serviceMonitor.enabled }}
 ---
 # Prometheus scraping every component, from the monitoring namespace.

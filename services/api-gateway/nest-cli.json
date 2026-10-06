@@ -8,6 +8,10 @@
       {
         "include": "approvals/console/**/*",
         "watchAssets": true
+      },
+      {
+        "include": "travel-rule/trisa/proto/**/*.proto",
+        "watchAssets": true
       }
     ]
   }

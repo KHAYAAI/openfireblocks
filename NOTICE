@@ -24,6 +24,18 @@ This product bundles software from the projects below. Their licences
 govern those components, not this one.
 
 --------------------------------------------------------------------------------
+TRISA protocol definitions (MIT)
+--------------------------------------------------------------------------------
+
+services/api-gateway/src/travel-rule/trisa/proto/ holds .proto files copied
+unchanged from https://github.com/trisacrypto/trisa -- Copyright (c) 2021 TRISA
+(https://travelrule.io), MIT licence. The IVMS101 files carry their own notices
+(Copyright (c) 2020 Joint Working Group on interVASP Messaging Standards;
+protocol buffer specification Copyright (c) 2020 CipherTrace, Inc.; MIT). The
+test tool in services/api-gateway/test/trisa-interop builds against the same
+project's Go library and is not shipped.
+
+--------------------------------------------------------------------------------
 COPYLEFT: NONE
 --------------------------------------------------------------------------------
 

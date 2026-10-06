@@ -193,10 +193,13 @@ jobs:
         working-directory: services/api-gateway
         env:
           REQUIRE_LIVE_DB: "1"
+          # The TRISA wire-compatibility test builds TRISA's own Go reference
+          # implementation and must not silently skip here.
+          REQUIRE_TRISA_INTEROP: "1"
           RECON_EVM_RPC: http://127.0.0.1:18545
         run: |
           npm ci
-          npx jest src/approvals src/travel-rule src/agents src/reconciliation src/transfers src/controls src/identity src/keys
+          npx jest src/approvals src/travel-rule src/agents src/reconciliation src/transfers src/controls src/identity src/keys src/sweeps
 
   gateway:
     name: API gateway
@@ -285,6 +288,7 @@ jobs:
             --set ingress.enabled=true \
             --set backup.enabled=true \
             --set backup.offsite.enabled=true --set backup.offsite.bucket=b --set backup.offsite.keySecret=k \
+            --set trisa.enabled=true --set trisa.secretName=trisa-node --set trisa.sealingKeyInSecret=true \
             | $(go env GOPATH)/bin/kubeconform -strict -summary \
                 -ignore-missing-schemas \
                 -kubernetes-version 1.29.0
