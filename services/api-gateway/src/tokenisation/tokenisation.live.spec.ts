@@ -47,7 +47,11 @@ beforeAll(async () => {
 }, 120000);
 function skipped(): boolean {
   if (reachable && chainUp) return false;
-  if (process.env.REQUIRE_LIVE_DB || process.env.REQUIRE_EVM_CHAIN) throw new Error(`live prerequisites missing (database with migration 034: ${reachable}; dev chain: ${chainUp ? 'up' : chainError || 'not started'})`);
+  // Each variable demands only what it names: REQUIRE_LIVE_DB a database with the migration,
+  // REQUIRE_EVM_CHAIN a dev chain (which is only attempted once there is a database to test
+  // against, so a job with no database is not failed by it).
+  if (!reachable && process.env.REQUIRE_LIVE_DB) throw new Error('REQUIRE_LIVE_DB is set but no database with migration 034 is reachable');
+  if (reachable && !chainUp && (process.env.REQUIRE_EVM_CHAIN || process.env.REQUIRE_LIVE_DB)) throw new Error(`the dev chain did not start: ${chainError || 'unknown'}`);
   console.warn('skipping tokenisation live test -- needs a database with migration 034 and a dev chain (ganache via npx)');
   return true;
 }
