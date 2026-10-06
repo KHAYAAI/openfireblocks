@@ -33,7 +33,16 @@ function acceptTransaction(b64) {
   const payer = message.subarray(koff, koff + 32);
   if (!crypto.verify(null, message, spki(payer), sigs[0])) throw new Error('signature verification failed');
   const signature = b58(sigs[0]);
-  sent.push({ signature, payer: b58(payer), accounts: nkeys, bytes: tx.length });
+  // First instruction of a System Program transfer: [program, accounts..., data = u32 index(2) + u64 lamports]
+  const keys = []; for (let i = 0; i < nkeys; i++) keys.push(message.subarray(koff + 32 * i, koff + 32 * i + 32));
+  let io = koff + 32 * nkeys + 32; let ninst; [ninst, io] = shortvec(message, io);
+  let transfer = null;
+  if (ninst >= 1) {
+    io += 1; let nacc; [nacc, io] = shortvec(message, io); const accIdx = [...message.subarray(io, io + nacc)]; io += nacc;
+    let dlen; [dlen, io] = shortvec(message, io); const data = message.subarray(io, io + dlen);
+    if (dlen === 12 && data.readUInt32LE(0) === 2) transfer = { source: b58(keys[accIdx[0]]), destination: b58(keys[accIdx[1]]), lamports: data.readBigUInt64LE(4).toString() };
+  }
+  sent.push({ signature, payer: b58(payer), accounts: nkeys, bytes: tx.length, transfer });
   return signature;
 }
 
@@ -45,6 +54,7 @@ http.createServer((req, res) => {
       switch (m.method) {
         case 'getLatestBlockhash': out.result = { value: { blockhash: b58(crypto.createHash('sha256').update(String(Date.now())).digest()), lastValidBlockHeight: 99 } }; break;
         case 'getBalance': out.result = { value: balance }; break;
+        case 'getTransaction': { const t = sent.find((x) => x.signature === m.params[0]); out.result = t && t.transfer ? { slot: 1, transaction: { message: { instructions: [{ program: 'system', parsed: { type: 'transfer', info: t.transfer } }] } } } : null; break; }
         case 'getFeeForMessage': out.result = { value: 5000 }; break;
         case 'sendTransaction': out.result = acceptTransaction(m.params[0]); break;
         case 'getSignatureStatuses': out.result = { value: m.params[0].map((s) => (sent.find((x) => x.signature === s) ? { slot: 1, confirmations: null, err: null, confirmationStatus: 'finalized' } : null)) }; break;

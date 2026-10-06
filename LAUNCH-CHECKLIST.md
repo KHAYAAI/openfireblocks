@@ -52,16 +52,16 @@ Every row blocks "production ready". None of them is an engineering task.
 
 | Service | Status | Notes |
 |---|---|---|
-| mpc-signer | Verified (EVM, Bitcoin regtest, PKCS#11 on SoftHSM2); Solana and Cosmos protocol-tested | See section 3 |
-| mpc-party | Verified (live multi-party DKG, signing, resharing over HTTP/mTLS) | Isolation only simulated on one host |
+| mpc-signer | Verified (EVM on a real dev chain, Bitcoin regtest, PKCS#11 on SoftHSM2); Solana threshold-signed through the whole stack and accepted by a signature-checking stand-in; Cosmos protocol-tested | See section 3 |
+| mpc-party | Verified (live multi-party DKG, signing, resharing over HTTP/mTLS; recovery from SIGKILL of every party with Vault and with the encrypted file store) | Isolation only simulated on one host |
 | temporal-worker | Verified | Workflows run against a real Temporal dev server in CI |
-| api-gateway | Verified (about 430 tests, including live specs on real Postgres over HTTP) | JWT/role console; API-key API; approval flow for every chain; OIDC sign-in; freeze, whitelist, alerts |
+| api-gateway | Verified (441 tests, including live specs on real Postgres over HTTP; zero production dependency advisories; the full-stack run drives it through the API and a browser) | JWT/role console; API-key API; approval flow for every chain; OIDC sign-in; freeze, whitelist, alerts |
 | policy-service | Verified | OPA/Rego engine; sanctions list reloadable |
 | webhooks | Verified, thin tests | HMAC-signed delivery drilled in `webhook-drill.sh` |
 | vault-pki-init | Verified | mTLS leaf issuance |
 | compliance | Pilot: OFAC address screening works and fails closed; KYC vendor and filings unverified | See section 4 |
 | billing | Pilot: charge, card-saving and console screen built and unit-tested against a stub; never run against Stripe | Needs a Stripe account and a test-mode run (`stripe_live_test.go` exists, unrun). The gateway also keeps its own usage-metering module |
-| backup | Deployable (image, chart, daily schedule, token auth); image not built here | Dumps stay in the same cluster; only Postgres failover is real |
+| backup | Deployable (image, chart, daily schedule, token auth); image not built here | Optional encrypted off-site copy to S3-compatible storage (tested against a stand-in, not a real bucket); only Postgres failover is real |
 | vault-unseal | Dev only | Source says "NOT PRODUCTION-GRADE KEY HANDLING" |
 | policy, settlement, marketplace | Not part of the launch path; off by default in the chart | Nothing calls them |
 
@@ -69,22 +69,24 @@ Every row blocks "production ready". None of them is an engineering task.
 
 | Chain | Key generation | Address | Spend path | Real-network accepted |
 |---|---|---|---|---|
-| Ethereum / Polygon | Verified | Verified | Verified (dev chain) | Not from this repo |
+| Ethereum / Polygon | Verified (real 2-of-3 secp256k1 DKG through the gateway) | Verified | Verified: the gateway's own transfer path (nonce, fees, broadcast) on a real EVM dev chain, which accepted the threshold signature | Dev chain only; not a public network |
 | Bitcoin | Verified | Verified | Verified (regtest) | Not from this repo |
-| Solana (native SOL) | Verified: real 3-party Ed25519 DKG, address is the base58 key | Verified | Protocol-tested: fake node, signature checked against the fee payer before relay | **No** |
+| Solana (native SOL) | Verified: real 3-party Ed25519 DKG through the gateway, address is the base58 key | Verified | Verified end to end against a stand-in RPC node that checks the Ed25519 signature against the fee payer (routine and approval-released transfers, console and API). It is not Solana | **No** |
 | Cosmos (bank send) | Verified: real 3-party secp256k1 DKG, bech32 address from the group key, threshold signature verifies as secp256k1 | Verified against independent known answers | Protocol-tested: SIGN_MODE_DIRECT decoded and verified the way a node does, low-S enforced, fake LCD | **No** |
 
-What "protocol-tested" does and does not mean here. Nothing in this
+What "protocol-tested" and "stand-in" mean here. Nothing in this
 environment can reach a public chain, so no real Solana or Cosmos node has
-ever accepted a transaction from this code. The Solana wire format is the
+ever accepted a transaction from this code. For Solana the three real
+parties produce a signature a signature-checking stand-in accepts, which is
+strong evidence the signature is right and none that the wire format is
+accepted by a validator. The Solana wire format is the
 published legacy message format; the Cosmos encoding follows the SDK protos'
 field numbers but there is no SDK-published wire vector among the tests. The
 first thing to do with either chain is point it at devnet / a public testnet,
 fund a key, and send a transfer (`SOLANA_RPC_URL`, `COSMOS_LCD_URL`; see the
 chart values). Until that has happened, do not sell either as live.
 
-Not offered for Solana and Cosmos: SPL tokens, staking, IBC, CosmWasm, and
-reconciliation against the chain (it is EVM-only).
+Not offered for Solana and Cosmos: SPL tokens, staking, IBC, CosmWasm.
 
 ## 4. Known gaps in code
 
@@ -198,34 +200,64 @@ TRISA transmission (needs directory certificates and a counterparty),
 multi-custodian orchestration, tokenisation. An OpenBao evaluation is written
 (`docs/security/OPENBAO-EVALUATION.md`) and not run.
 
-Still open:
+Fixed in the fifth pass ("close the gaps and test everything"):
 
-- Backups land on a volume in the same cluster, so losing the cluster loses
-  them. Only Postgres failover is real; Vault, gateway and Temporal failover
-  are not implemented. The backup image has not been built (no Docker daemon
-  where this was written).
-- No pipeline step has run against a real cluster or AWS account.
-- Billing has not been run against Stripe, and the gateway still has its own
-  usage-metering module separate from `services/billing`.
-- EVM transfers started from the console have not been broadcast to a real
-  network from this repository (the gateway's RPC needs `ETHEREUM_RPC_*`); the
-  nonce, fee and broadcast steps are covered by unit tests with a stubbed
-  provider only.
-- Approval-needed transfers from an API key (not a person) are parked the same
-  way; the console's approvers then decide them. There is no approver-facing
-  API or mobile surface yet.
-- The only way to see a held transfer's outcome is the console or polling the
-  approval; there is no webhook for "approved and executed".
+- **A bug no unit test could see**: a Solana transaction id is 88 characters and
+  the Travel Rule record's `tx_hash` was `VARCHAR(80)`, so a transfer that had
+  been signed and broadcast returned a 500 when its record was completed.
+  Found by the full-stack run; migration 030 and a regression test.
+- **The whole platform now runs end to end with real processes**
+  (`infrastructure/local/e2e-fullstack-local.sh`): a real 2-of-3 DKG, real
+  threshold signatures, a held transfer released by two approvers with one-time
+  codes, a freeze, an Ethereum transfer accepted by a real EVM dev chain, and
+  the console driven in Chromium by the four roles. 21 API checks and 14
+  browser checks pass. The earlier note here that a real ceremony could not
+  complete in the sandbox was wrong.
+- OIDC sign-in verified against an independent, OpenID-certified provider
+  (`e2e-oidc-local.sh`, 8 checks). It exposed a real gap (a certified provider
+  keeps email out of the ID token; UserInfo is now read, and trusted only for
+  the same subject). Not yet run against Keycloak, Entra ID or Okta.
+- Recovery drill without Vault: shares in the encrypted file store survive
+  SIGKILL of every party, restore, and sign for the original key.
+- Gateway production dependencies: 21 advisories (2 critical) to zero (NestJS 11,
+  bcrypt 6). CI now fails on high advisories and runs `govulncheck` on every Go
+  module (that scan could not run here: its database is blocked).
+- Chart: default-deny ingress NetworkPolicies (opt-in, never applied to a
+  cluster), PodDisruptionBudgets, seccomp, and strict validation of every
+  optional feature.
+- Webhooks for the transfer lifecycle and the freeze; an encrypted off-site
+  backup copy with a restore route.
+- `scripts/verify-all.sh` runs everything that can run on one machine and says
+  plainly what it skipped.
+
+Still open (engineering):
+
+- No image has been built and no chart installed on a real cluster (no Docker
+  daemon, no cluster here). The chart's NetworkPolicies and the off-site backup
+  have never met a real cluster or bucket.
+- Billing has never run against Stripe (a stand-in is used), and the gateway
+  still has its own usage-metering module separate from `services/billing`.
+- Bitcoin and Cosmos were not part of the full-stack run (no regtest node or
+  Cosmos stand-in in it); their transaction code is covered by unit tests and,
+  for Bitcoin, the regtest drills in CI.
+- Sweeps (moving deposits to treasury automatically), a TRISA Travel Rule link,
+  multi-custodian orchestration and tokenisation are not built.
 - Solana and Cosmos amounts are governed by unit-normalised policy, not by
   price. A deployment that wants USD limits needs a price source.
 - Cosmos' "spent without us" check needs exactly one Cosmos key per
   organisation, because the ledger does not record which key signed.
-- `go vet` reports a lock copy at `mpc-party/tss_signing.go:257`
-  (pre-existing).
+- Ceremony authorisations are bounded in age but not single-use.
+- `go vet` reports a lock copy at `mpc-party/tss_signing.go:257`; it comes from
+  tss-lib's channel type and CI exempts it.
 - Legacy duplicates remain: `sdks/go`, `sdks/javascript`, `sdks/python`.
 - `apps/web`, `apps/admin`, `apps/mobile`, `apps/customer` are unbuilt
   scaffolds that call routes the gateway does not have. The working UI is the
   gateway console (`/console`).
+
+## How to check this file against the code
+
+    ./scripts/verify-all.sh          # everything that runs on one machine
+    ./scripts/verify-all.sh --quick  # no databases, no end to end
 
 ## 5. Minimum bar to call it production ready
 

@@ -62,6 +62,7 @@ if command -v npx >/dev/null && [ "${E2E_EVM:-1}" = "1" ]; then
   export EVM_RPC=http://127.0.0.1:18545 EVM_FUNDER_KEY ETHERS_PATH="$ROOT/services/api-gateway/node_modules/ethers"
 fi
 start solana env BALANCE_LAMPORTS=100000000000 PORT=$P_SOL node "$ROOT/infrastructure/local/mock-solana-node.js"
+start billing env PORT=18085 BILLING_API_TOKEN=bill-tok node "$ROOT/infrastructure/local/e2e/mock-billing.js"
 start policy env PORT=$P_POL "$WORK/policy-service"
 start signer env PORT=$P_SIGN SOLANA_RPC_URL=http://127.0.0.1:$P_SOL \
   MPC_SIGNER_PRIVATE_KEY=0x4c0883a69102937d6231471b5dbb6204fe5129617082792ae468d01a3f362318 IMMUDB_URL=127.0.0.1:1 "$WORK/mpc-signer"
@@ -73,9 +74,9 @@ done
 start worker env TEMPORAL_HOSTPORT=127.0.0.1:$P_TEMP DATABASE_URL="$DATABASE_ADMIN_URL" ETHEREUM_RPC_SEPOLIA=http://127.0.0.1:1 \
   MPC_SIGNER_URL=http://127.0.0.1:$P_SIGN POLICY_SERVICE_URL=http://127.0.0.1:$P_POL "$WORK/temporal-worker"
 start gateway env PORT=$P_GW TEMPORAL_HOSTPORT=127.0.0.1:$P_TEMP POLICY_SERVICE_URL=http://127.0.0.1:$P_POL MPC_SIGNER_URL=http://127.0.0.1:$P_SIGN \
-  ${EVM_RPC:+EVM_RPC_1337=$EVM_RPC} MPC_PARTY_ENDPOINT_TEMPLATE='http://127.0.0.1:1770{id}' MPC_PARTY_HEALTH_TEMPLATE='http://127.0.0.1:1770{id}/health' \
+  ${EVM_RPC:+EVM_RPC_1337=$EVM_RPC} BILLING_URL=http://127.0.0.1:18085 BILLING_API_TOKEN=bill-tok CONSOLE_PUBLIC_URL=https://console.example MPC_PARTY_ENDPOINT_TEMPLATE='http://127.0.0.1:1770{id}' MPC_PARTY_HEALTH_TEMPLATE='http://127.0.0.1:1770{id}/health' \
   JWT_SECRET=e2e-secret-e2e-secret-e2e-secret-e2e node "$ROOT/services/api-gateway/dist/main.js"
-for pp in $P_SOL $P_SIGN $P_POL 17701 17702 17703 $P_GW; do up service $pp; done
+for pp in 18085 $P_SOL $P_SIGN $P_POL 17701 17702 17703 $P_GW; do up service $pp; done
 sleep 2
 
 echo "==> the scenario"
@@ -91,4 +92,13 @@ if [ "${E2E_CONSOLE:-1}" = "1" ] && PW="$(cd "$ROOT/services/api-gateway" && nod
     node "$ROOT/infrastructure/local/e2e/console.js" || fail "the console scenario failed"
 else
   echo "==> the console scenario was skipped: Playwright is not installed"
+fi
+
+# A command to run against the live stack before it is torn down, for example
+# the recorder: E2E_AFTER="node infrastructure/local/e2e/record.js" with
+# E2E_STATE pointing at the organisation the scenarios built.
+if [ -n "${E2E_AFTER:-}" ]; then
+  echo "==> E2E_AFTER: ${E2E_AFTER}"
+  E2E_STATE="$WORK/state.json" SOLANA_MOCK=http://127.0.0.1:$P_SOL OTPLIB_PATH="$ROOT/services/api-gateway/node_modules/otplib" PLAYWRIGHT_PATH="${PW:-}" \
+    bash -c "$E2E_AFTER" || fail "E2E_AFTER failed"
 fi

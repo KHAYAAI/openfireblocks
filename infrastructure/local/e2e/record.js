@@ -1,12 +1,20 @@
-// Records the REAL console (live gateway, Postgres, Temporal, policy service, a mock Solana node and a
-// mock billing service) for three customer stories. Nothing on screen is scripted animation: every
-// page is the running product; the overlays only add titles and captions.
-const { chromium } = require('playwright');
-const { authenticator } = require('otplib');
-const fs = require('fs'); const { execSync, spawn } = require('child_process');
-const seed = require(process.env.SEED_JSON);
-const G = 'http://localhost:3999'; const B = G + '/console';
-const OUT = process.env.OUT_DIR || (__dirname + '/../docs/showcase'); fs.mkdirSync(OUT, { recursive: true });
+// Records the REAL console for three customer stories, against the full local
+// stack (run it through e2e-fullstack-local.sh):
+//
+//   E2E_AFTER="node infrastructure/local/e2e/record.js" ./infrastructure/local/e2e-fullstack-local.sh
+//
+// Nothing on screen is scripted animation: every page is the running product,
+// backed by a real DKG and real threshold signatures. The only stand-ins are the
+// chain (mock-solana-node.js checks the signature but is not Solana), Stripe
+// (mock-billing.js) and single sign-on (not shown). The overlays only add
+// titles and captions.
+const { chromium } = require(process.env.PLAYWRIGHT_PATH || 'playwright');
+const { authenticator } = require(process.env.OTPLIB_PATH || 'otplib');
+const fs = require('fs');
+const st = JSON.parse(fs.readFileSync(process.env.E2E_STATE, 'utf8'));
+const seed = { PW: st.password, cust: st.customerId, key: st.apiKey, sol: st.keyId, secrets: Object.fromEntries(Object.entries(st.people).map(([n, p]) => [n, p.secret])) };
+const G = st.gateway; const B = G + '/console';
+const OUT = process.env.OUT_DIR || (__dirname + '/../../../docs/showcase'); fs.mkdirSync(OUT, { recursive: true });
 const DEST = '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM';
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 const lastCode = {};
@@ -64,7 +72,7 @@ async function login(p, name, note) {
   await p.goto(B); await p.waitForSelector('#email'); await prep(p);
   if (note) await caption(p, 'Sign in', note);
   await sleep(900);
-  await type(p, '#email', name + '@forgeco.example'); await type(p, '#password', seed.PW, 30);
+  await type(p, '#email', st.people[name].email); await type(p, '#password', seed.PW, 30);
   await click(p, 'button[type=submit]'); await p.waitForSelector('#code');
   await caption(p, 'Step-up', 'Second factor: a one-time code from the person\'s authenticator app.');
   await type(p, '#code', await code(name), 90); await click(p, 'button[type=submit]'); await p.waitForSelector('.sidebar'); await prep(p); await sleep(900);
@@ -74,7 +82,7 @@ async function nav(p, id, cap) { await click(p, `[data-nav=${id}]`); await sleep
 
 async function startTransfer(p, amount, withTravel = true) {
   await nav(p, 'keys');
-  await click(p, 'tr.link:has-text("Solana ops")'); await p.waitForSelector('text=New transfer'); await sleep(800);
+  await click(p, `tr.link:has-text("${st.keyName}")`); await p.waitForSelector('text=New transfer'); await sleep(800);
   await click(p, 'text=New transfer'); await p.waitForSelector('#s-dest');
   await type(p, '#s-dest', DEST, 25); await type(p, '#s-amt', amount, 90);
   if (withTravel) {
@@ -95,9 +103,7 @@ async function openFirstPending(p) {
   await nav(p, 'approvals'); await click(p, '.card.link'); await p.waitForSelector('text=Why this needs approval'); await prep(p); await sleep(1200);
 }
 
-function restartMockBilling() { try { execSync(`pkill -f "^node mock-billing.js$"`); } catch (e) {} spawn('node', ['mock-billing.js'], { cwd: __dirname, detached: true, stdio: 'ignore' }).unref(); return sleep(1200); }
-
-const NOTE = 'In this sandbox the send fails for a real reason: the mock chain holds 5 SOL.';
+const NOTE = 'Signed by the three parties and accepted by the chain stand-in, which checked the signature against the key.';
 
 async function reconcile(p) {
   await nav(p, 'reconciliation', ['Reconciliation', 'The ledger is checked against the chain, and anything signed elsewhere is flagged.']);
@@ -115,7 +121,7 @@ const FLOWS = {
     await nav(p, 'keys', ['Keys', 'Each key is held by three signing parties; any two sign. This one is a Solana key, 2-of-3.']);
     // the real API call, made now, shown beside the console
     const body = { destination: DEST, amount: '15000000000', idempotencyKey: 'north-' + Date.now(), travelRule: { originator: { legalPerson: { name: 'Forge Treasury Co', geographicAddress: { addressLine: ['1 Main St, Cape Town'], country: 'ZA' } } }, beneficiary: { legalPerson: { name: 'External Counterparty Ltd' } }, beneficiaryUnhosted: true } };
-    await caption(p, 'The app calls the API', 'A real request, sent to this gateway just now.');
+    await caption(p, 'The app calls the API', 'A real request, sent to this gateway just now. The key behind it came from a real three-party ceremony.');
     const r = await fetch(`${G}/keys/${seed.sol}/transfers`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': seed.key }, body: JSON.stringify(body) });
     const resp = JSON.parse(await r.text());
     await p.evaluate(([req, status, res]) => { const d = document.createElement('div'); d.id = 'rec-api'; const b = document.createElement('b'); b.textContent = 'POST /keys/:id/transfers  ·  x-api-key'; d.appendChild(b); d.appendChild(document.createTextNode(req + '\n\n→ HTTP ' + status + '\n' + res)); document.body.appendChild(d); },
@@ -131,9 +137,9 @@ const FLOWS = {
     await logout(p); await login(p, 'ada', null);
     await nav(p, 'billing', ['Billing', 'The platform bills its own customers. The card is saved on Stripe\'s hosted page; the console never sees the number.']);
     await click(p, 'button:has-text("Add card")'); await p.waitForURL(/checkout\.stripe\.com/, { timeout: 15000 }); await sleep(2500);
-    await p.goto(B + '#/billing?card=saved'); await p.waitForSelector('text=visa'); await prep(p); await caption(p, 'Billing', 'Back from Stripe: the console shows brand and last four only. (Stripe is a stand-in in this sandbox.)'); await sleep(3500);
+    await p.goto(B + '#/billing?card=saved'); await p.waitForSelector('text=visa'); await prep(p); await caption(p, 'Billing', 'Back from Stripe: the console shows brand and last four only. (Stripe is a stand-in here.)'); await sleep(3500);
     await reconcile(p);
-    await card(p, 'What this recording is', ['Real console, ', { i: 'test sandbox.' }], null, ['Real: sign-in, one-time codes, policy, approvals, the stored request, the database rules', 'Stand-ins: the chain (a mock Solana node), Stripe (a mock billing service)', 'Not shown: a transaction confirming on a live network', 'A fintech can start as a pilot on testnet or capped funds'], 9000);
+    await card(p, 'What this recording is', ['Real platform, ', { i: 'stand-in chain.' }], null, ['Real: the console, sign-in and one-time codes, policy, approvals, a real 2-of-3 key ceremony and real threshold signatures', 'Stand-ins: the chain (a Solana RPC stand-in that verifies the signature; it is not Solana), Stripe', 'Not shown: a transaction confirming on a live network', 'A fintech can start as a pilot on testnet or capped funds'], 10000);
   },
 
   async bank(p) {
@@ -155,7 +161,7 @@ const FLOWS = {
     await logout(p); await login(p, 'ada', 'The administrator reviews the evidence afterwards.');
     await nav(p, 'travel-rule', ['Travel Rule', 'The originator and beneficiary details are held with the transfer.']);
     await reconcile(p);
-    await card(p, 'What this recording is', ['Real console, ', { i: 'test sandbox.' }], null, ['Real: roles, one-time codes, policy, approvals, the stored request, Travel Rule capture', 'Stand-ins: single sign-on provider, the chain (a mock Solana node)', 'Offered to banks as a pilot with milestones while SOC 2 Type II, an independent audit and a penetration test are pending'], 9500);
+    await card(p, 'What this recording is', ['Real platform, ', { i: 'stand-in chain.' }], null, ['Real: roles, one-time codes, policy, approvals, Travel Rule capture, a real key ceremony and real threshold signatures', 'Stand-ins: single sign-on (built, not shown here) and the chain (a signature-checking stand-in, not Solana)', 'Offered to banks as a pilot with milestones while SOC 2 Type II, an independent audit and a penetration test are pending'], 10000);
   },
 
   async government(p) {
@@ -176,17 +182,20 @@ const FLOWS = {
     await resultPanel(p, 'Three decisions, each with who, when and how verified. ' + NOTE);
     await nav(p, 'policy', null);
     await reconcile(p);
-    await card(p, 'What this recording is', ['Real console, ', { i: 'test sandbox.' }], null, ['Real: the quorum, one-time codes, approvals, the stored request, the audit record', 'Stand-ins: the chain (a mock Solana node)', 'Not shown: separate-owner hosting, a hardware HSM, a live network', 'Offered to governments as a bounded proof of concept while the audit, penetration test and SOC 2 Type II are pending'], 9500);
+    // put the organisation's policy back before the closing card covers the screen
+    await logout(p); await login(p, 'ada', null); await nav(p, 'policy', null);
+    await p.fill('#req', '2'); await click(p, 'button:has-text("Save policy")'); await p.waitForSelector('text=Saved', { timeout: 15000 });
+    await card(p, 'What this recording is', ['Real platform, ', { i: 'stand-in chain.' }], null, ['Real: the quorum, one-time codes, approvals, the audit record, a real key ceremony and real threshold signatures', 'Stand-ins: the chain (a signature-checking stand-in, not Solana)', 'Not shown: separate-owner hosting, a hardware HSM, a live network', 'Offered to governments as a bounded proof of concept while the audit, penetration test and SOC 2 Type II are pending'], 10000);
     // put the organisation's policy back
-    execSync(`PGPASSWORD=dev-only psql -h 127.0.0.1 -p 55432 -U app_admin -d openfireblocks -Atc "update approval_policies set required_approvals=2 where customer_id='${seed.cust}'"`);
   },
 };
 
 (async () => {
+  await sleep(32000); // the previous scenario used these people's codes; a code cannot be used twice
   const which = process.argv.slice(2).length ? process.argv.slice(2) : ['fintech', 'bank', 'government'];
   const b = await chromium.launch();
   for (const name of which) {
-    await restartMockBilling(); CUR = name; SHOTN = 0;
+    CUR = name; SHOTN = 0;
     const ctx = await b.newContext({ viewport: { width: 1280, height: 800 }, recordVideo: { dir: OUT + '/' + name, size: { width: 1280, height: 800 } } });
     const p = await ctx.newPage(); const errs = [];
     p.on('pageerror', e => errs.push(e.message));
