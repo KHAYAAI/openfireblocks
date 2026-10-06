@@ -267,6 +267,22 @@ describe('Travel Rule on outbound transfers (live Postgres)', () => {
     await expect(travelRule.retransmit(customer.customer_id, out.travel_rule!.record_id)).rejects.toThrow(/no Travel Rule provider/);
   });
 
+  // Found by running a real Solana key through the real stack: the column was
+  // sized for an EVM hash (80), so completing the record after a Solana transfer
+  // had gone out failed with "value too long" and the caller saw a 500.
+  it('has room for a Solana transaction id (88 characters) and any other chain\'s', async () => {
+    if (skipped()) return;
+    const pool = new Pool({ connectionString: ADMIN_DSN });
+    try {
+      const r = await pool.query(
+        `SELECT character_maximum_length AS n FROM information_schema.columns WHERE table_name = 'travel_rule_records' AND column_name = 'tx_hash'`,
+      );
+      expect(r.rows[0].n).toBeGreaterThanOrEqual(128);
+    } finally {
+      await pool.end();
+    }
+  });
+
   it('an unhosted beneficiary is recorded, and nothing is transmitted', async () => {
     if (skipped()) return;
     process.env.TRAVEL_RULE_PROVIDER_URL = PROVIDER;

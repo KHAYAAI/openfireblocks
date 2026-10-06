@@ -32,6 +32,10 @@
 # binary on PATH, in which case the drill starts and stops its own.
 set -euo pipefail
 
+# SEAL=vault (default): shares sealed in a real Vault.
+# SEAL=file: shares sealed to the encrypted file store, with no Vault at all
+# (services/mpc-party/file_seal.go).
+SEAL="${SEAL:-vault}"
 CURVE="${CURVE:-ed25519}"
 PARTY_COUNT="${PARTY_COUNT:-3}"
 THRESHOLD="${THRESHOLD:-1}" # threshold+1 parties sign; 1 means a 2-of-3
@@ -73,7 +77,13 @@ url_for() { echo "http://127.0.0.1:$(port_for "$1")"; }
 # ---------------------------------------------------------------------------
 
 echo "==> Vault"
-if [[ -n "${VAULT_ADDR:-}" ]]; then
+if [[ "${SEAL}" == "file" ]]; then
+  echo "    not used: shares go to the encrypted file store"
+  SHARE_DIR="${WORKDIR}/shares"
+  SHARE_KEY="${WORKDIR}.sharekey"   # outside the share directory, as the party insists
+  head -c 32 /dev/urandom | od -An -tx1 | tr -d " \n" > "${SHARE_KEY}"; chmod 600 "${SHARE_KEY}"
+  VAULT_ADDR=""; VAULT_TOKEN="n/a"
+elif [[ -n "${VAULT_ADDR:-}" ]]; then
   echo "    using the Vault already configured at ${VAULT_ADDR}"
 else
   command -v vault >/dev/null || fail "no VAULT_ADDR and no vault binary; install Vault or point VAULT_ADDR at one"
@@ -113,6 +123,7 @@ start_parties() {
       TSS_ALLOW_UNAUTHENTICATED_PEERS=1 \
       TSS_PREPARAMS_POOL=0 \
       VAULT_ADDR="${VAULT_ADDR}" VAULT_TOKEN="${VAULT_TOKEN}" \
+      SHARE_STORE_DIR="${SHARE_DIR:-}" SHARE_STORE_KEY_FILE="${SHARE_KEY:-}" \
       "${WORKDIR}/mpc-party" > "${WORKDIR}/party-${id}-${label}.log" 2>&1 &
     PARTY_PIDS+=($!)
     # Disowned so the shell does not print a job-control notice when the
@@ -180,11 +191,20 @@ for id in $(seq 1 "${PARTY_COUNT}"); do
   sealed=$("${CURL[@]}" "$(url_for "${id}")/tss/keygen/status?ceremony_id=${CEREMONY_ID}" | jqp 'd.get("sealed")')
   [[ "${sealed}" == "True" ]] || fail "party ${id} reports sealed=${sealed}; nothing was written to Vault"
 done
-echo "    all ${PARTY_COUNT} shares sealed in Vault"
+echo "    all ${PARTY_COUNT} parties report their share sealed"
 
 # And confirm it independently, out of Vault itself, the way an operator
 # recovering would. Asking the parties is not evidence: a party that has
 # lost its memory cannot tell you what it sealed.
+if [[ "${SEAL}" == "file" ]]; then
+  for id in $(seq 1 "${PARTY_COUNT}"); do
+    f="${SHARE_DIR}/party-${id}/${CEREMONY_ID}.sealed"
+    [[ -s "${f}" ]] || fail "party ${id} has no sealed file at ${f}"
+    grep -q "${ADDRESS}" "${f}" && fail "party ${id}'s sealed file contains the address in the clear"
+    grep -q "save_data\|eddsa\|ecdsa" "${f}" && fail "party ${id}'s sealed file contains share material in the clear"
+  done
+  echo "    all ${PARTY_COUNT} shares sealed to encrypted files, none readable without the key"
+else
 for id in $(seq 1 "${PARTY_COUNT}"); do
   entry=$("${CURL[@]}" -H "X-Vault-Token: ${VAULT_TOKEN}" \
     "${VAULT_ADDR}/v1/secret/data/openfireblocks/mpc-party/party-${id}/${CEREMONY_ID}")
@@ -193,6 +213,7 @@ for id in $(seq 1 "${PARTY_COUNT}"); do
     || fail "party ${id}'s share is sealed without its ceremony context and cannot be restored"
 done
 echo "    and each carries its ceremony context"
+fi
 
 # ---------------------------------------------------------------------------
 # Sign, so there is a baseline
@@ -304,9 +325,10 @@ RESTORED_SIG=$(sign_once post-restore "${RESTORED_MSG}") \
 echo "    verified against the original public key"
 
 echo
+STORE="a real Vault"; [[ "${SEAL}" == "file" ]] && STORE="an encrypted file store (no Vault)"
 echo "PASS: ${PARTY_COUNT} real party processes ran a real ${CURVE} DKG, sealed their"
-echo "      shares in a real Vault, were killed with SIGKILL, came back knowing"
-echo "      nothing, were restored from Vault alone, and signed for"
+echo "      shares in ${STORE}, were killed with SIGKILL, came back knowing"
+echo "      nothing, were restored from it alone, and signed for"
 echo "      ${ADDRESS} -- the address the original DKG derived."
 echo
 echo "      Nothing in the restore path contacted a vendor."

@@ -451,6 +451,30 @@ jobs:
           STRIPE_OPENAPI_SPEC: ${{ runner.temp }}/stripe-spec.json
         run: go test -v -run 'Spec|ApiVersion' ./...
 
+  e2e-fullstack:
+    name: Whole platform, real processes (real DKG, real threshold signing)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Postgres, Temporal, policy-service, mpc-signer, three mpc-party processes,
+    # the worker and the gateway, driven through the public API: a real key, a
+    # real threshold-signed transfer verified by a signature-checking Solana
+    # stand-in, a held transfer released by two approvers, and a freeze. The
+    # chain is the only stand-in. See infrastructure/local/e2e-fullstack-local.sh.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: services/api-gateway/package-lock.json
+      - uses: temporalio/setup-temporal@v0
+      - run: npm ci
+        working-directory: services/api-gateway
+      - run: ./infrastructure/local/e2e-fullstack-local.sh
+
   key-recovery:
     name: A key survives losing every party
     runs-on: ubuntu-latest
@@ -477,5 +501,8 @@ jobs:
           unzip -q vault.zip
           sudo install -m 0755 vault /usr/local/bin/vault
           vault version
-      - name: Destroy every party and recover the key
+      - name: Destroy every party and recover the key (Vault)
         run: ./infrastructure/local/recovery-drill-local.sh
+      # The same drill with no Vault: shares sealed to the encrypted file store.
+      - name: Destroy every party and recover the key (file store, no Vault)
+        run: SEAL=file ./infrastructure/local/recovery-drill-local.sh
