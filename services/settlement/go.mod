@@ -2,6 +2,8 @@ module forge-crypto/settlement
 
 go 1.25
 
+toolchain go1.25.10
+
 require (
 	github.com/btcsuite/btcd/btcec/v2 v2.5.0
 	github.com/google/uuid v1.6.0

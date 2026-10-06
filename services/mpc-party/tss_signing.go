@@ -219,14 +219,16 @@ func (m *TSSPartyManager) runSigning(
 		return
 	}
 
-	ceremony.mu.Lock()
-	ceremony.localParty = localParty
-	ceremony.mu.Unlock()
-
+	// Published only after Start(): see startLocalParty. A message that
+	// reaches a party tss-lib has not started is stored and acknowledged but
+	// never re-examined, which can leave the ceremony waiting for ever.
 	if err := localParty.Start(); err != nil {
 		m.failSigning(signID, fmt.Errorf("failed to start local party: %w", err))
 		return
 	}
+	ceremony.mu.Lock()
+	ceremony.localParty = localParty
+	ceremony.mu.Unlock()
 
 	m.driveSigning(signID, ceremony, outCh, endCh, errCh)
 }

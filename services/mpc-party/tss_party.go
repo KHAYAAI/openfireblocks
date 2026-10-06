@@ -288,14 +288,21 @@ func (m *TSSPartyManager) runKeygen(ceremonyID string, ceremony *tssKeygenCeremo
 // caller should continue. Shared so the curve branches above differ only in
 // the types they name.
 func (m *TSSPartyManager) startLocalParty(ceremonyID string, ceremony *tssKeygenCeremony, localParty tsscommon.Party) bool {
-	ceremony.mu.Lock()
-	ceremony.localParty = localParty
-	ceremony.mu.Unlock()
-
+	// Published only after Start(), never before. HandleIncomingMessage
+	// treats a ceremony with no localParty as "not ready" and the sender
+	// retries. Publishing first left a window in which a faster peer's
+	// message reached a party that tss-lib had not started: tss-lib stores
+	// such a message and acknowledges it, but nothing re-examines the stored
+	// messages once Start() returns, so if that was the last message the
+	// round needed, the party waited for ever. It showed up as a ceremony
+	// that finished on two parties of three and hung on the third.
 	if err := localParty.Start(); err != nil {
 		m.failCeremony(ceremonyID, fmt.Errorf("failed to start local party: %w", err))
 		return false
 	}
+	ceremony.mu.Lock()
+	ceremony.localParty = localParty
+	ceremony.mu.Unlock()
 	return true
 }
 

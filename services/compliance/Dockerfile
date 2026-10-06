@@ -2,11 +2,11 @@
 
 # Build stage.
 #
-# golang:1.24 because services/compliance/go.mod declares `go 1.24`. The
+# golang:1.25 because services/compliance/go.mod declares `go 1.24`. The
 # golang:1.21-alpine base used across this repository could never have
 # compiled these modules, and its runtime stage ran `apk add`, which needs
 # network access to the Alpine mirrors at build time.
-FROM golang:1.24-bookworm AS build
+FROM golang:1.25.10-bookworm AS build
 
 # Optional trust anchor for building behind a TLS-intercepting egress proxy
 # (corporate MITM, sandboxed CI). A BuildKit secret rather than a build arg:

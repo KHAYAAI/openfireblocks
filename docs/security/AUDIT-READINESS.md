@@ -508,7 +508,7 @@ cd services/mpc-party && go build -o /tmp/mpc-party . && cd ../..
 
 # Approvals: the database rules, the workflow, and the HTTP API
 eval "$(infrastructure/local/postgres-local.sh start)"
-(cd services/temporal-worker && DATABASE_URL="$DATABASE_ADMIN_URL" TENANT_DATABASE_URL="$DATABASE_URL" \
+(cd services/temporal-worker && TENANT_DATABASE_URL="$DATABASE_URL" DATABASE_URL="$DATABASE_ADMIN_URL" \
    go test -count=1 ./activities/ ./workflows/)
 (cd services/api-gateway && npm ci && REQUIRE_LIVE_DB=1 npx jest src/approvals)
 

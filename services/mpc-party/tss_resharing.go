@@ -262,20 +262,21 @@ func (m *TSSPartyManager) startResharingParties(
 	ceremony *tssResharingCeremony,
 	oldParty, newParty tsscommon.Party,
 ) bool {
-	ceremony.mu.Lock()
-	ceremony.oldParty = oldParty
-	ceremony.newParty = newParty
-	ceremony.mu.Unlock()
-
-	// The new committee first. It only receives, so starting it second
-	// would leave a window where an old-committee message arrives for a
-	// party that does not exist yet and is retried for no reason.
+	// Both parties are started before either is published, so an incoming
+	// message is answered "not ready" (and retried) until they can act on
+	// it. Publishing first let a message reach a party tss-lib had not
+	// started: it is stored and acknowledged but never re-examined, which
+	// can leave the ceremony waiting for ever (see startLocalParty).
 	for name, party := range map[string]tsscommon.Party{"new": newParty, "old": oldParty} {
 		if err := party.Start(); err != nil {
 			m.failResharing(reshareID, fmt.Errorf("failed to start the %s-committee party: %w", name, err))
 			return false
 		}
 	}
+	ceremony.mu.Lock()
+	ceremony.oldParty = oldParty
+	ceremony.newParty = newParty
+	ceremony.mu.Unlock()
 	return true
 }
 

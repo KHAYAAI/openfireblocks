@@ -6,6 +6,8 @@ module forge-crypto/mpc-signer
 
 go 1.24
 
+toolchain go1.25.10
+
 require (
 	github.com/bnb-chain/tss-lib/v2 v2.0.0
 	github.com/btcsuite/btcd v0.0.0-20190629003639-c26ffa870fd8

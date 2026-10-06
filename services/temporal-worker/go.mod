@@ -3,7 +3,7 @@ module forge-crypto/temporal-worker
 
 go 1.24.0
 
-toolchain go1.24.7
+toolchain go1.25.10
 
 require (
 	github.com/btcsuite/btcd/btcec/v2 v2.3.4

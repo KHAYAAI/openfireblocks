@@ -7,7 +7,7 @@
 # both reference openfireblocks/vault-pki-init:latest as an initContainer --
 # so the automated per-pod mTLS cert issuance could never have run in a
 # cluster, only from a shell.
-FROM golang:1.24-bookworm AS build
+FROM golang:1.25.10-bookworm AS build
 
 # Optional trust anchor for building behind a TLS-intercepting egress proxy
 # (corporate MITM, sandboxed CI). Passed as a BuildKit secret rather than a
