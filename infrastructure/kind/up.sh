@@ -33,7 +33,10 @@ ROOT="$(cd "${HERE}/../.." && pwd)"
 # services -- so a cluster built from scratch had six deployments stuck in
 # ImagePullBackOff, and the only reason it was not noticed is that the
 # images happened to already exist on the machine where it was developed.
-mapfile -t SERVICES < <("${ROOT}/scripts/build-images.sh" --list)
+# while-read rather than mapfile: macOS ships bash 3.2, which has no mapfile.
+SERVICES=()
+while IFS= read -r line; do [ -n "$line" ] && SERVICES+=("$line"); done \
+  < <("${ROOT}/scripts/build-images.sh" --list)
 DEPENDENCY_IMAGES=(postgres:16-bookworm hashicorp/vault:1.17 temporalio/auto-setup:1.25.2)
 
 need() { command -v "$1" >/dev/null || { echo "missing required tool: $1" >&2; exit 1; }; }
