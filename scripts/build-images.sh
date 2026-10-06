@@ -77,7 +77,7 @@ failed=()
 for svc in "${SERVICES[@]}"; do
   image="${REGISTRY}/${svc}:${TAG}"
   echo "==> ${image}"
-  if ! docker build "${build_args[@]}" -t "${image}" "${ROOT}/services/${svc}"; then
+  if ! docker build ${build_args[@]+"${build_args[@]}"} -t "${image}" "${ROOT}/services/${svc}"; then
     failed+=("${svc}")
   fi
 done
