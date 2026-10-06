@@ -475,6 +475,20 @@ jobs:
         working-directory: services/api-gateway
       - run: ./infrastructure/local/e2e-fullstack-local.sh
 
+  e2e-oidc:
+    name: OIDC sign-in against an independent provider
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: services/api-gateway/package-lock.json
+      - run: npm ci
+        working-directory: services/api-gateway
+      - run: ./infrastructure/local/e2e-oidc-local.sh
+
   key-recovery:
     name: A key survives losing every party
     runs-on: ubuntu-latest

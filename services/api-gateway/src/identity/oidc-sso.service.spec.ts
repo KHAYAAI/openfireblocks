@@ -25,7 +25,7 @@ describe('OidcSsoService', () => {
   let server: Server; let base: string; let privateKey: CryptoKey; let jwk: any;
   let users: FakeUsers; let svc: OidcSsoService;
   // What the next ID token says; each test adjusts it.
-  let claims: Row; let tokenOpts: { aud?: string; iss?: string; expSeconds?: number; badNonce?: boolean; pkceSeen?: string[] };
+  let claims: Row; let tokenOpts: { aud?: string; iss?: string; expSeconds?: number; badNonce?: boolean; pkceSeen?: string[]; claimsInUserInfo?: boolean; userInfoSub?: string };
   const pkceSeen: string[] = [];
 
   beforeAll(async () => {
@@ -34,9 +34,13 @@ describe('OidcSsoService', () => {
       const url = new URL(req.url!, base);
       const send = (o: unknown) => { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify(o)); };
       if (url.pathname === '/realm/.well-known/openid-configuration') {
-        return send({ issuer: tokenOpts.iss === 'discovery-mismatch' ? 'https://other.example' : `${base}/realm`, authorization_endpoint: `${base}/realm/auth`, token_endpoint: `${base}/realm/token`, jwks_uri: `${base}/realm/jwks` });
+        return send({ issuer: tokenOpts.iss === 'discovery-mismatch' ? 'https://other.example' : `${base}/realm`, authorization_endpoint: `${base}/realm/auth`, token_endpoint: `${base}/realm/token`, jwks_uri: `${base}/realm/jwks`, userinfo_endpoint: `${base}/realm/userinfo` });
       }
       if (url.pathname === '/realm/jwks') return send({ keys: [jwk] });
+      if (url.pathname === '/realm/userinfo') {
+        if (req.headers.authorization !== 'Bearer at-1') { res.statusCode = 401; return res.end(); }
+        return send({ sub: tokenOpts.userInfoSub ?? claims.sub, email: claims.email, email_verified: claims.email_verified, name: claims.name });
+      }
       if (url.pathname === '/realm/token') {
         let b = ''; for await (const c of req) b += c;
         const f = new URLSearchParams(b);
@@ -44,10 +48,11 @@ describe('OidcSsoService', () => {
         // The real check an IdP does: the verifier must hash to the challenge sent at /auth.
         if (createHash('sha256').update(f.get('code_verifier') ?? '').digest('base64url') !== challenge) { res.statusCode = 400; return res.end('invalid_grant'); }
         pkceSeen.push(f.get('code_verifier')!);
-        const jwt = await new SignJWT({ ...claims, nonce: tokenOpts.badNonce ? 'wrong' : nonce })
+        const idClaims = tokenOpts.claimsInUserInfo ? { sub: claims.sub } : claims;
+        const jwt = await new SignJWT({ ...idClaims, nonce: tokenOpts.badNonce ? 'wrong' : nonce })
           .setProtectedHeader({ alg: 'RS256', kid: 'k1' }).setIssuer(tokenOpts.iss && tokenOpts.iss !== 'discovery-mismatch' ? tokenOpts.iss : `${base}/realm`)
           .setAudience(tokenOpts.aud ?? 'ofb-console').setIssuedAt().setExpirationTime(`${tokenOpts.expSeconds ?? 300}s`).sign(privateKey);
-        return send({ id_token: jwt, access_token: 'x', token_type: 'Bearer' });
+        return send({ id_token: jwt, access_token: 'at-1', token_type: 'Bearer' });
       }
       res.statusCode = 404; res.end();
     });
@@ -72,6 +77,11 @@ describe('OidcSsoService', () => {
     const code = Buffer.from(`${q.get('nonce')}|${q.get('code_challenge')}`).toString('base64url');
     return { code, state, q };
   }
+
+  it('refuses a provider that is not served over https, except on this machine', async () => {
+    process.env.OIDC_ISSUER = 'http://id.bank.example/realm';
+    await expect(svc.authorizationUrl()).rejects.toThrow(/https/);
+  });
 
   it('is off until configured, and says so', async () => {
     delete process.env.OIDC_ISSUER;
@@ -123,6 +133,21 @@ describe('OidcSsoService', () => {
     const { state: other } = await svc.authorizationUrl(); // a different login's state => different verifier
     await expect(svc.completeLogin(code, other)).rejects.toThrow();
     void state;
+  });
+
+  describe('when the provider keeps profile claims out of the ID token', () => {
+    it('reads them from UserInfo, as a certified provider requires of its clients', async () => {
+      tokenOpts.claimsInUserInfo = true;
+      const { code, state } = await login();
+      await svc.completeLogin(code, state);
+      expect(users.rows[0]).toMatchObject({ email: 'ada@bank.example', auth_provider: 'oidc' });
+    });
+    it('refuses UserInfo that is about a different person than the ID token', async () => {
+      tokenOpts.claimsInUserInfo = true; tokenOpts.userInfoSub = 'someone-else';
+      const { code, state } = await login();
+      await expect(svc.completeLogin(code, state)).rejects.toThrow();
+      expect(users.rows).toHaveLength(0);
+    });
   });
 
   it('can be limited to the customer\'s own email domains', async () => {

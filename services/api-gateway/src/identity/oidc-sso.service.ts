@@ -15,6 +15,7 @@ interface Discovery {
   authorization_endpoint: string;
   token_endpoint: string;
   jwks_uri: string;
+  userinfo_endpoint?: string;
 }
 
 // Sign-in through any standards-compliant OpenID Connect provider (Keycloak,
@@ -51,7 +52,14 @@ export class OidcSsoService {
     if (!this.isConfigured()) {
       throw new ServiceUnavailableException('OIDC sign-in is not configured (OIDC_ISSUER, OIDC_CLIENT_ID, OIDC_REDIRECT_URI)');
     }
-    return (process.env.OIDC_ISSUER as string).replace(/\/+$/, '');
+    const issuer = (process.env.OIDC_ISSUER as string).replace(/\/+$/, '');
+    // Tokens and codes cross this connection: it must be encrypted, except to
+    // a provider on this machine (development, tests).
+    const u = new URL(issuer);
+    if (u.protocol !== 'https:' && !['localhost', '127.0.0.1', '[::1]'].includes(u.hostname)) {
+      throw new ServiceUnavailableException('OIDC_ISSUER must be an https URL');
+    }
+    return issuer;
   }
 
   private async fetchJson(url: string, init?: RequestInit): Promise<any> {
@@ -112,6 +120,7 @@ export class OidcSsoService {
     if (process.env.OIDC_CLIENT_SECRET) body.set('client_secret', process.env.OIDC_CLIENT_SECRET);
 
     let idToken: string;
+    let providerAccessToken: string | undefined;
     try {
       const tok = await this.fetchJson(meta.token_endpoint, {
         method: 'POST',
@@ -119,6 +128,7 @@ export class OidcSsoService {
         body,
       });
       idToken = tok.id_token;
+      providerAccessToken = tok.access_token;
       if (!idToken) throw new Error('no id_token in the token response');
     } catch (e) {
       this.logger.warn(`OIDC code exchange failed: ${(e as Error).message}`);
@@ -143,6 +153,21 @@ export class OidcSsoService {
     if (claims.nonce !== derive('nonce', state as string)) {
       this.logger.warn('OIDC ID token nonce does not match this login');
       throw new UnauthorizedException('SSO authentication failed');
+    }
+    // The specification lets a provider leave profile claims out of the ID
+    // token and serve them from the UserInfo endpoint instead (certified
+    // implementations do exactly that when the client also receives an access
+    // token). Ask for them there, and only trust that answer if it is about the
+    // same person: its subject must equal the verified ID token's.
+    if (claims.sub && typeof claims.email !== 'string' && meta.userinfo_endpoint && providerAccessToken) {
+      try {
+        const info = await this.fetchJson(meta.userinfo_endpoint, { headers: { authorization: `Bearer ${providerAccessToken}` } });
+        if (info.sub !== claims.sub) throw new Error('UserInfo describes a different subject than the ID token');
+        claims = { ...claims, email: info.email, email_verified: info.email_verified, name: info.name ?? claims.name, given_name: info.given_name, family_name: info.family_name };
+      } catch (e) {
+        this.logger.warn(`OIDC UserInfo lookup failed: ${(e as Error).message}`);
+        throw new UnauthorizedException('SSO authentication failed');
+      }
     }
     if (!claims.sub || typeof claims.email !== 'string') {
       throw new UnauthorizedException('the identity provider did not return an email address; request the "email" scope');
