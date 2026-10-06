@@ -2,7 +2,7 @@ module forge-crypto/backup
 
 go 1.24.0
 
-toolchain go1.25.10
+toolchain go1.25.14
 
 require github.com/hashicorp/vault/api v1.23.0
 

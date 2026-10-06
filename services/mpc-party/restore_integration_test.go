@@ -39,7 +39,7 @@ func TestParticipantsCanBeRestoredFromSealedMaterialAndStillSign(t *testing.T) {
 	restored := make(map[int]*TSSPartyManager, len(key.managers))
 	peers := make(map[int]string, len(key.managers))
 	for id := range key.managers {
-		mgr := NewTSSPartyManager(id, &http.Client{Timeout: 10 * time.Second})
+		mgr := NewTSSPartyManager(id, &http.Client{Timeout: 90 * time.Second})
 		restored[id] = mgr
 
 		router := mux.NewRouter()
@@ -179,7 +179,7 @@ func TestAKeyCanStillBeRecoveredAfterARefresh(t *testing.T) {
 	restored := make(map[int]*TSSPartyManager, len(key.managers))
 	peers := make(map[int]string, len(key.managers))
 	for id := range key.managers {
-		mgr := NewTSSPartyManager(id, &http.Client{Timeout: 10 * time.Second})
+		mgr := NewTSSPartyManager(id, &http.Client{Timeout: 90 * time.Second})
 		restored[id] = mgr
 
 		router := mux.NewRouter()

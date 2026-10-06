@@ -2,7 +2,7 @@ module forge-crypto/webhooks
 
 go 1.24
 
-toolchain go1.25.10
+toolchain go1.25.14
 
 require (
 	github.com/google/uuid v1.6.0

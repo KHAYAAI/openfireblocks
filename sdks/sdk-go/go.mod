@@ -3,4 +3,4 @@ module github.com/openfireblocks/sdk-go
 
 go 1.24
 
-toolchain go1.25.10
+toolchain go1.25.14

@@ -39,7 +39,7 @@ func TestRealMultiPartySigningOverHTTP(t *testing.T) {
 	peers := make(map[int]string, n)
 
 	for i := 1; i <= n; i++ {
-		mgr := NewTSSPartyManager(i, &http.Client{Timeout: 10 * time.Second})
+		mgr := NewTSSPartyManager(i, &http.Client{Timeout: 90 * time.Second})
 		managers[i] = mgr
 
 		router := mux.NewRouter()

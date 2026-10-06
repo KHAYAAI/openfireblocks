@@ -2,7 +2,7 @@ module openfireblocks.com/services/mpc-party
 
 go 1.24.0
 
-toolchain go1.25.10
+toolchain go1.25.14
 
 require (
 	github.com/bnb-chain/tss-lib/v2 v2.0.0

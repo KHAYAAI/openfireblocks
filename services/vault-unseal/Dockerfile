@@ -4,7 +4,7 @@
 #
 # Runs as a sidecar next to every Vault replica -- see the package doc in
 # main.go for why a Vault with real storage needs one at all.
-FROM golang:1.25.10-bookworm AS build
+FROM golang:1.25-bookworm AS build
 
 # Optional trust anchor for building behind a TLS-intercepting egress proxy
 # (corporate MITM, sandboxed CI). Passed as a BuildKit secret rather than a

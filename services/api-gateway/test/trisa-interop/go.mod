@@ -2,7 +2,7 @@ module trisa-interop
 
 go 1.24
 
-toolchain go1.25.10
+toolchain go1.25.14
 
 require (
 	github.com/trisacrypto/trisa v1.7.0

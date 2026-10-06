@@ -233,7 +233,7 @@ Fixed in the sixth pass (CI read, then the four missing features, then assurance
 - **The first real CI runs found three genuine failures** that this sandbox could not
   show: a tenant-isolation test that ran as the BYPASSRLS role because of how bash expands
   `A="$X" B="$A" cmd` (the isolation itself was correct); 15 Go standard-library advisories
-  on go1.24 (every module and image now pins go1.25.10); and `mpc-party` tests killed at ten
+  on go1.24 (every module pins a patched toolchain and CI and the images track the latest 1.25 patch); and `mpc-party` tests killed at ten
   minutes. The last one hid a **real liveness race**: a party was published to the message
   handler before tss-lib's `Start()`, so a message that arrived in between was acknowledged
   and never re-examined, and a round hung (a ceremony finishing on two parties of three).

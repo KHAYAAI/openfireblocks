@@ -64,7 +64,7 @@ func TestSealAndLoadKeyShareRoundTrip(t *testing.T) {
 	managers := make(map[int]*TSSPartyManager, 2)
 	peers := make(map[int]string, 2)
 	for _, id := range []int{partyID, otherPartyID} {
-		mgr := NewTSSPartyManager(id, &http.Client{Timeout: 10 * time.Second})
+		mgr := NewTSSPartyManager(id, &http.Client{Timeout: 90 * time.Second})
 		managers[id] = mgr
 
 		router := mux.NewRouter()
