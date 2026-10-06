@@ -53,7 +53,7 @@ need docker; need kind; need kubectl; need helm
 # snapshotter" and refuses. Piping a saved archive straight into the node's
 # own ctr sidesteps kind's detection entirely.
 #
-# --platform linux/amd64 rather than --all-platforms: a multi-arch image
+# --platform <node arch> rather than --all-platforms: a multi-arch image
 # pulled for this host only has this platform's blobs locally, and
 # --all-platforms fails on the missing ones.
 # The nodes that can actually run workloads.
@@ -74,14 +74,25 @@ schedulable_nodes() {
   fi
 }
 
+# The nodes' own architecture: amd64 on Intel hosts, arm64 on Apple Silicon.
+# Hardcoding amd64 made the import fail on an M-series Mac ("no unpack
+# platforms defined"), because the images built there are arm64.
+node_arch() {
+  case "$(docker exec "$(schedulable_nodes | head -n1)" uname -m)" in
+    aarch64|arm64) echo arm64 ;;
+    *) echo amd64 ;;
+  esac
+}
+
 load_image() {
   local image="$1"
-  local archive
+  local archive arch
   archive="$(mktemp)"
+  arch="$(node_arch)"
   docker save "${image}" -o "${archive}"
   for node in $(schedulable_nodes); do
     docker exec -i "${node}" \
-      ctr -n k8s.io images import --platform linux/amd64 - < "${archive}" >/dev/null
+      ctr -n k8s.io images import --platform "linux/${arch}" - < "${archive}" >/dev/null
   done
   rm -f "${archive}"
 }
