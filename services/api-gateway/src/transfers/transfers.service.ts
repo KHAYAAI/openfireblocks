@@ -1,6 +1,8 @@
 import { WebhookEmitter } from '../webhooks/webhooks.service';
 import { AlertsService } from '../controls/alerts.service';
-import { BadRequestException, Injectable, Logger, OnModuleInit, Optional, ServiceUnavailableException } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, Logger, OnModuleInit, Optional, ServiceUnavailableException } from '@nestjs/common';
+import { Pool } from 'pg';
+import { PG_POOL } from '../database/pg-pool.token';
 import { v4 as uuidv4 } from 'uuid';
 import { ApprovalsService, ApprovalRequestView, TransferKind } from '../approvals/approvals.service';
 import { NativeApprovalHandler, NativeApprovalHooks, TransferExecution } from '../approvals/native-approval-hooks';
@@ -20,6 +22,10 @@ export interface EvmTransferRequest {
   chainId: number;
   destination: string;
   amount: string; // wei, base-10
+  // A call to a contract the platform governs (a security token), rather than a payment.
+  // The signing path refuses calldata it cannot read, so this only ever carries a call
+  // some module has vouched for.
+  data?: string;
   country?: string;
   travelRule?: Record<string, unknown>;
   idempotencyKey?: string;
@@ -30,6 +36,15 @@ type AnyRequest = BitcoinTransactionDto | SolanaTransactionDto | CosmosTransacti
 export interface Initiator {
   userId: string | null; // null for an API key: there is no person to exclude
   label: string;
+}
+
+// Extra conditions on one submission.
+export interface SubmitOptions {
+  // Hold for approval whatever policy says, and say why. For acts that move no value but
+  // matter more than a payment (minting a security, freezing a holder).
+  requireApproval?: string[];
+  // Shown to the approvers beside the transfer (what the call means in words).
+  summaryExtra?: Record<string, unknown>;
 }
 
 export type SubmitResult =
@@ -69,17 +84,23 @@ export class TransfersService implements OnModuleInit, NativeApprovalHandler {
     @Optional() private readonly webhooks?: WebhookEmitter,
     // Executes transfers out of other custodians (the custody module registers itself).
     @Optional() private readonly custody?: CustodyExecutors,
+    // For the per-key nonce lock. Without it (unit tests) transfers from one key are not
+    // serialised across processes, only the chain's own rejection protects them.
+    @Optional() @Inject(PG_POOL) private readonly pool?: Pool,
   ) {}
 
   onModuleInit() {
     this.hooks.register(this);
   }
 
-  async submit(customer: Customer, keyId: string, kind: TransferKind, req: AnyRequest, initiator: Initiator): Promise<SubmitResult> {
+  async submit(customer: Customer, keyId: string, kind: TransferKind, req: AnyRequest, initiator: Initiator, opts: SubmitOptions = {}): Promise<SubmitResult> {
     // A transfer out of another custodian is never run straight away: this platform
     // cannot apply its spending policy to someone else's account, so it applies the
     // one control it can, a human quorum, to every one of them.
     if (kind === 'custodian') return this.parkCustodian(customer, keyId, req as CustodianTransferRequest, initiator);
+    if (opts.requireApproval?.length) {
+      return this.park(customer, keyId, kind as Exclude<TransferKind, 'custodian'>, req, initiator, opts.requireApproval, opts.summaryExtra);
+    }
     try {
       const result = await this.run(kind, customer, keyId, req, false, undefined);
       void this.webhooks?.emit(customer.customer_id, 'transfer.completed', { kind, result });
@@ -109,7 +130,7 @@ export class TransfersService implements OnModuleInit, NativeApprovalHandler {
     return { status: 'pending_approval', approvalId: opened.approvalId, expiresAt: opened.expiresAt, requiredApprovals: policy.requiredApprovals, reasons };
   }
 
-  private async park(customer: Customer, keyId: string, kind: Exclude<TransferKind, 'custodian'>, req: AnyRequest, initiator: Initiator, reasons: string[]): Promise<SubmitResult> {
+  private async park(customer: Customer, keyId: string, kind: Exclude<TransferKind, 'custodian'>, req: AnyRequest, initiator: Initiator, reasons: string[], summaryExtra: Record<string, unknown> = {}): Promise<SubmitResult> {
     const { asset, decimals } = DISPLAY[kind];
     const amount = (req as { amount: string }).amount;
     const to = (req as { destination: string }).destination;
@@ -149,9 +170,10 @@ export class TransfersService implements OnModuleInit, NativeApprovalHandler {
         // 18-decimal equivalent, for readers that only know this field.
         valueWei: toPolicyUnits(amount, decimals),
         chainId: (req as EvmTransferRequest).chainId ?? null,
-        data: '',
+        data: (req as EvmTransferRequest).data ?? '',
         memo: (req as CosmosTransactionDto).memo ?? null,
         reasons,
+        ...summaryExtra,
       },
     });
     void this.webhooks?.emit(customer.customer_id, 'transfer.pending_approval', { approval_id: opened.approvalId, kind, asset, amount, to, required_approvals: policy.requiredApprovals, expires_at: opened.expiresAt, reasons });
@@ -265,6 +287,39 @@ export class TransfersService implements OnModuleInit, NativeApprovalHandler {
     }
     const key = await this.keys.getKey(keyId, customer.customer_id);
     if (!key?.address) throw new BadRequestException(`key ${keyId} has no address yet`);
+    // One transfer at a time per (chain, key address), from reading the nonce until the
+    // transaction is in the mempool. Two approvals decided together would otherwise both
+    // read the same nonce, and the second would be rejected by the chain after it had been
+    // signed -- and a signature is replayed by idempotency key, so it could not be redone.
+    return this.withNonceLock(req.chainId, key.address, () => this.runEvmLocked(customer, keyId, key.address, req, approvalGranted, ctx));
+  }
+
+  private async withNonceLock<T>(chainId: number, address: string, fn: () => Promise<T>): Promise<T> {
+    if (!this.pool) return fn();
+    const lockKey = `evm-nonce:${chainId}:${address.toLowerCase()}`;
+    const client = await this.pool.connect();
+    try {
+      const deadline = Date.now() + 60_000;
+      for (;;) {
+        const r = await client.query('SELECT pg_try_advisory_lock(hashtextextended($1, 0)) AS got', [lockKey]);
+        if (r.rows[0].got) break;
+        if (Date.now() > deadline) throw new ServiceUnavailableException('another transfer from this key is still in progress; try again shortly');
+        await new Promise((res) => setTimeout(res, 100));
+      }
+      try { return await fn(); }
+      finally { await client.query('SELECT pg_advisory_unlock(hashtextextended($1, 0))', [lockKey]).catch(() => undefined); }
+    } finally { client.release(); }
+  }
+
+  private async runEvmLocked(
+    customer: Customer,
+    keyId: string,
+    keyAddress: string,
+    req: EvmTransferRequest,
+    approvalGranted: boolean,
+    ctx: { prepared?: Record<string, any>; save?: (p: Record<string, unknown>) => Promise<boolean> } | undefined,
+  ): Promise<Record<string, unknown>> {
+    const key = { address: keyAddress };
     const provider = this.rpc.provider(req.chainId);
 
     let prepared = ctx?.prepared;
@@ -272,7 +327,7 @@ export class TransfersService implements OnModuleInit, NativeApprovalHandler {
       const [nonce, fee, estimate] = await Promise.all([
         provider.getTransactionCount(key.address, 'pending'),
         provider.getFeeData(),
-        provider.estimateGas({ from: key.address, to: req.destination, value: BigInt(req.amount) }),
+        provider.estimateGas({ from: key.address, to: req.destination, value: BigInt(req.amount), ...(req.data ? { data: req.data } : {}) }),
       ]);
       prepared = {
         nonce,
@@ -288,7 +343,7 @@ export class TransfersService implements OnModuleInit, NativeApprovalHandler {
     const signed = await this.keys.signTransaction(
       customer, keyId,
       {
-        to: req.destination, value: req.amount, chainId: req.chainId,
+        to: req.destination, value: req.amount, chainId: req.chainId, ...(req.data ? { data: req.data } : {}),
         nonce: prepared.nonce, gasLimit: Math.max(21000, prepared.gasLimit),
         maxFeePerGas: prepared.maxFeePerGas, maxPriorityFeePerGas: prepared.maxPriorityFeePerGas, gasPrice: prepared.gasPrice,
         country: req.country, travelRule: req.travelRule as never, idempotencyKey: req.idempotencyKey ?? uuidv4(),

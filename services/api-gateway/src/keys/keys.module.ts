@@ -7,6 +7,7 @@ import { PolicyModule } from '../policies/policy.module';
 import { WebhookEmitter } from '../webhooks/webhooks.service';
 import { TokensModule } from '../tokens/tokens.module';
 import { TravelRuleModule } from '../travel-rule/travel-rule.module';
+import { GovernedContracts } from './governed-contracts';
 
 // Threshold key lifecycle: creation (kicks off a real DKG ceremony via
 // KeysTemporalService -> ProvisionKeyWorkflow), listing, share-distribution
@@ -20,7 +21,7 @@ import { TravelRuleModule } from '../travel-rule/travel-rule.module';
 @Module({
   imports: [CustomersModule, PolicyModule, TokensModule, TravelRuleModule],
   controllers: [KeysController],
-  providers: [KeysService, KeysTemporalService, WebhookEmitter],
-  exports: [KeysService],
+  providers: [KeysService, KeysTemporalService, WebhookEmitter, GovernedContracts],
+  exports: [KeysService, GovernedContracts],
 })
 export class KeysModule {}

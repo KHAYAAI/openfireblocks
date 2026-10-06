@@ -196,10 +196,11 @@ jobs:
           # The TRISA wire-compatibility test builds TRISA's own Go reference
           # implementation and must not silently skip here.
           REQUIRE_TRISA_INTEROP: "1"
+          # The tokenisation specs launch their own dev chain through npx.
           RECON_EVM_RPC: http://127.0.0.1:18545
         run: |
           npm ci
-          npx jest src/approvals src/travel-rule src/agents src/reconciliation src/transfers src/controls src/identity src/keys src/sweeps src/custody
+          npx jest src/approvals src/travel-rule src/agents src/reconciliation src/transfers src/controls src/identity src/keys src/sweeps src/custody src/tokenisation
 
   gateway:
     name: API gateway

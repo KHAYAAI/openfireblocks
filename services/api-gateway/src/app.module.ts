@@ -21,6 +21,7 @@ import { TransfersModule } from './transfers/transfers.module';
 import { ControlsModule } from './controls/controls.module';
 import { SweepsModule } from './sweeps/sweeps.module';
 import { CustodyModule } from './custody/custody.module';
+import { TokenisationModule } from './tokenisation/tokenisation.module';
 
 // Root module. Phase 1 wires multi-tenancy (CustomersModule), Prometheus
 // metrics (MetricsModule + global interceptor), the tenant-facing SignModule and
@@ -52,6 +53,7 @@ import { CustodyModule } from './custody/custody.module';
     ControlsModule,
     SweepsModule,
     CustodyModule,
+    TokenisationModule,
   ],
   controllers: [AppController],
   providers: [

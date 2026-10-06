@@ -61,8 +61,13 @@ export class EvmRpcService {
     // auto-detects will happily attach to whatever chain the endpoint
     // actually serves, which is how a mainnet key ends up reading testnet
     // balances.
+    // cacheTimeout -1: ethers answers an identical read from a 250 ms cache by default.
+    // For a transaction count that is wrong in the one way that matters -- two transfers
+    // prepared in the same instant from one key are handed the same nonce, and the second
+    // is rejected by the chain with a signature that cannot be redone.
     const provider = new ethers.JsonRpcProvider(url, chainId, {
       staticNetwork: ethers.Network.from(chainId),
+      cacheTimeout: -1,
     });
     this.providers.set(chainId, provider);
     return provider;

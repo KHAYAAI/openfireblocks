@@ -48,6 +48,7 @@ import {
 import { TokenRegistryService } from '../tokens/token-registry.service';
 import { EvmRpcService } from '../tokens/evm-rpc.service';
 import { TokenTransferDto } from './dto/token-transfer.dto';
+import { GovernedContracts } from './governed-contracts';
 import { TravelRuleService } from '../travel-rule/travel-rule.service';
 import type { TravelRuleInput } from '../travel-rule/travel-rule';
 
@@ -186,6 +187,8 @@ export class KeysService {
     // Optional like the others (existing tests construct this directly); the
     // running application always provides it. Freeze and whitelist.
     private readonly controls?: ControlsService,
+    // Contract calls vouched for by the module that owns the contract (security tokens).
+    private readonly governed?: GovernedContracts,
   ) {}
 
   // The organisation-level stops, asked first on every path that signs:
@@ -259,6 +262,23 @@ export class KeysService {
         assetDecimals: 18,
         effectiveTo: to,
         effectiveAmount: value,
+      };
+    }
+
+    // A call to a contract a module of this platform governs, with a selector and
+    // arguments that module has read in full. Not a payment: nothing is paid to anyone, so
+    // it has no recipient or amount to limit, and it is not an unreadable call either. The
+    // policy engine sees an unnamed asset of zero and escalates it for approval.
+    const governed = await this.governed?.recognise(customer.customer_id, chainId, to, value, data as string);
+    if (governed) {
+      return {
+        policyTo: to,
+        asset: 'GOVERNED',
+        assetAmount: '0',
+        assetDecimals: 18,
+        effectiveTo: null,
+        effectiveAmount: null,
+        method: governed.description,
       };
     }
 
