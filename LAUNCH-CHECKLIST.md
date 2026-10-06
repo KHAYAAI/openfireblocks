@@ -260,6 +260,12 @@ Fixed in the sixth pass (CI read, then the four missing features, then assurance
   250 ms read cache gave two simultaneous transfers from one key the same nonce (the second
   failed with a signature that cannot be redone), and calldata recognition threw on malformed
   arguments. Nonce assignment is now serialised per key with a Postgres advisory lock.
+- Go advisories: every called third-party advisory is fixed (`x/net`, `x/text`, `go-jose`,
+  `grpc`, `otel/sdk`) **except three `btcd` ones in `mpc-signer`'s Bitcoin path**, which are
+  accepted in writing with an expiry (`docs/security/accepted-vulnerabilities.json`) because the
+  fix is coupled to a `tss-lib` upgrade. The gate (`scripts/govulncheck-gate.py`) fails on
+  anything unlisted and on an expired acceptance. It has been tested against a fake tool, not
+  the real one, which cannot run here.
 - `/metrics` can require a bearer token (`metrics.tokenSecret`); 149 routes inventoried, each
   guarded or recorded as public with a reason, checked in CI.
 - `scripts/assurance-pack.sh` and the documents in `docs/assurance/` prepare the audit,

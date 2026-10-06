@@ -35,6 +35,9 @@ for d in "$ROOT"/services/*/; do
   fi
 done
 
+echo "== Vulnerability gate"
+run "govulncheck gate logic (fake tool, three decisions)" bash "$ROOT/scripts/test-govulncheck-gate.sh"
+
 echo "== API gateway"
 GW="$ROOT/services/api-gateway"
 if [ -d "$GW/node_modules" ]; then

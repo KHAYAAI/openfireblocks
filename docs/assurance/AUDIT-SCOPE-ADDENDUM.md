@@ -49,6 +49,19 @@ closed or only the instance:
   made the "tenant" connection the BYPASSRLS admin role. The isolation itself was correct.
   The class: tests that cannot fail.
 
+## 3b. Known, accepted, time-boxed
+
+Three `btcd` advisories are reachable from `services/mpc-signer`'s Bitcoin path (the script
+engine, used to verify a transaction the service has just assembled from standard scripts,
+and the wire decoder, used on transactions the gateway assembled). They are recorded in
+`docs/security/accepted-vulnerabilities.json` with reasons and an expiry (2027-01-15); CI
+fails when an acceptance expires. The fix needs btcd >= 0.24.2, which removes the `btcec` v1
+package `bnb-chain/tss-lib` v2.0.0 imports, so it is coupled to a **`tss-lib` upgrade
+(v2.0.2 drops that import)**. A btcd 0.25 / btcec v2 migration of the Bitcoin code was written
+and passed its tests, then backed out because the `tss-lib` bump changes the dependency
+resolution of the threshold-signing core. **Whether to upgrade `tss-lib` is a question for the
+cryptographic reviewer**, and is better answered before the review than after it.
+
 ## 4. Explicitly out of scope, and why
 
 * `tss-lib` itself (a dependency; `TSS-LIB-ADVISORY-REVIEW.md` is our reading of its advisories).

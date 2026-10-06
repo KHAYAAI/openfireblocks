@@ -1,0 +1,32 @@
+{
+  "about": "Called Go vulnerabilities that are known and deliberately not fixed yet. Each has a reason, an owner and an expiry; scripts/govulncheck-gate.py fails when one expires. Fix, then delete the entry.",
+  "accepted": [
+    {
+      "id": "GO-2024-3189",
+      "module_dir": "services/mpc-signer",
+      "module": "github.com/btcsuite/btcd",
+      "reason": "Consensus failure in btcd's script engine. mpc-signer calls txscript.Engine.Execute only to verify, before returning it, a transaction it has just assembled from standard P2PKH/P2WPKH scripts it built itself; no script is taken from the network. The fix (btcd >= 0.24.2-beta.rc1) removes the btcec v1 package that bnb-chain/tss-lib v2.0.0 imports, so it needs a tss-lib upgrade (v2.0.2 drops that import) and a re-review of the signing library. A migration of this module to btcd 0.25 / btcec v2 was written and passed its tests; it was backed out because tss-lib v2.0.2 pulls dependency-resolution changes into the threshold-signing core. See docs/assurance/AUDIT-SCOPE-ADDENDUM.md.",
+      "accepted_by": "engineering (to be confirmed by the owner of the cryptographic review)",
+      "accepted_on": "2026-10-06",
+      "expires": "2027-01-15"
+    },
+    {
+      "id": "GO-2024-2818",
+      "module_dir": "services/mpc-signer",
+      "module": "github.com/btcsuite/btcd",
+      "reason": "Consensus failures in btcd's script engine; same call site, same reasoning and same fix as GO-2024-3189.",
+      "accepted_by": "engineering (to be confirmed by the owner of the cryptographic review)",
+      "accepted_on": "2026-10-06",
+      "expires": "2027-01-15"
+    },
+    {
+      "id": "GO-2022-1098",
+      "module_dir": "services/mpc-signer",
+      "module": "github.com/btcsuite/btcd",
+      "reason": "Denial of service in btcd's message decoding (wire.MsgTx.Deserialize). mpc-signer decodes transactions the gateway assembled for it over an authenticated internal call, not bytes from a peer. Same fix and dependency as GO-2024-3189.",
+      "accepted_by": "engineering (to be confirmed by the owner of the cryptographic review)",
+      "accepted_on": "2026-10-06",
+      "expires": "2027-01-15"
+    }
+  ]
+}
