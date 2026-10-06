@@ -15,5 +15,6 @@ import { TransfersService } from './transfers.service';
   imports: [CustomersModule, KeysModule, ApprovalsModule, TokensModule, WebhooksModule],
   controllers: [OrgTransfersController, ApiTransfersController],
   providers: [TransfersService],
+  exports: [TransfersService],
 })
 export class TransfersModule {}

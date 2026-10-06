@@ -19,6 +19,7 @@ import { AgentsModule } from './agents/agents.module';
 import { ReconciliationModule } from './reconciliation/reconciliation.module';
 import { TransfersModule } from './transfers/transfers.module';
 import { ControlsModule } from './controls/controls.module';
+import { SweepsModule } from './sweeps/sweeps.module';
 
 // Root module. Phase 1 wires multi-tenancy (CustomersModule), Prometheus
 // metrics (MetricsModule + global interceptor), the tenant-facing SignModule and
@@ -48,6 +49,7 @@ import { ControlsModule } from './controls/controls.module';
     ReconciliationModule,
     TransfersModule,
     ControlsModule,
+    SweepsModule,
   ],
   controllers: [AppController],
   providers: [
