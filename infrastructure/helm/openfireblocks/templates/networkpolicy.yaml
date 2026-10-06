@@ -1,0 +1,108 @@
+{{- if .Values.networkPolicy.enabled }}
+# Who may talk to whom inside the release. Default-deny for ingress, then one
+# allow rule per real call path (read out of the other templates' environment
+# variables). Opt-in because it has been rendered and schema-checked but never
+# applied to a cluster: apply it in staging first and watch for refused
+# connections before turning it on in production.
+#
+# Egress is deliberately not restricted here. Pods need the database, the
+# workflow engine, blockchain RPC and Vault, whose addresses are
+# deployment-specific; restrict egress with your CNI's policy once you know them.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "ofb.fullname" . }}-default-deny-ingress
+  labels:
+    {{- include "ofb.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/part-of: openfireblocks
+  policyTypes: ["Ingress"]
+{{- /* component, [callers], port-name-agnostic: any port, because services listen on one */ -}}
+{{- $callers := dict
+  "policy-service" (list "api-gateway" "temporal-worker")
+  "mpc-signer" (list "api-gateway" "temporal-worker")
+  "billing" (list "api-gateway" "billing-run" "billing-collect")
+  "compliance" (list "api-gateway")
+  "webhooks" (list "api-gateway")
+  "backup" (list "backup-schedule")
+  "mpc-party" (list "mpc-party" "mpc-signer" "temporal-worker" "api-gateway")
+}}
+{{- range $component, $from := $callers }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "ofb.fullname" $ }}-allow-{{ $component }}
+  labels:
+    {{- include "ofb.labels" $ | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: {{ $component }}
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        {{- range $from }}
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: {{ . }}
+        {{- end }}
+        {{- if and (eq $component "mpc-party") $.Values.networkPolicy.externalPartyCIDRs }}
+        {{- range $.Values.networkPolicy.externalPartyCIDRs }}
+        - ipBlock:
+            cidr: {{ . | quote }}
+        {{- end }}
+        {{- end }}
+{{- end }}
+---
+# The gateway is the one component people and applications reach. Who may
+# reach it is set by the deployer: the ingress controller's namespace, a
+# load balancer's address range, or both.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "ofb.fullname" . }}-allow-api-gateway
+  labels:
+    {{- include "ofb.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: api-gateway
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        {{- range .Values.networkPolicy.gatewayIngressNamespaces }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ . | quote }}
+        {{- end }}
+        {{- range .Values.networkPolicy.gatewayIngressCIDRs }}
+        - ipBlock:
+            cidr: {{ . | quote }}
+        {{- end }}
+        {{- if and (not .Values.networkPolicy.gatewayIngressNamespaces) (not .Values.networkPolicy.gatewayIngressCIDRs) }}
+        {{- fail "networkPolicy.enabled needs networkPolicy.gatewayIngressNamespaces or gatewayIngressCIDRs: otherwise nothing could reach the API gateway" }}
+        {{- end }}
+{{- if .Values.serviceMonitor.enabled }}
+---
+# Prometheus scraping every component, from the monitoring namespace.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "ofb.fullname" . }}-allow-monitoring
+  labels:
+    {{- include "ofb.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/part-of: openfireblocks
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.monitoringNamespace | quote }}
+{{- end }}
+{{- end }}

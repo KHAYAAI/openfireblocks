@@ -12,6 +12,8 @@ podSecurityContext:
   runAsNonRoot: true
   runAsUser: 1000
   fsGroup: 1000
+  seccompProfile:
+    type: RuntimeDefault
 containerSecurityContext:
   allowPrivilegeEscalation: false
   readOnlyRootFilesystem: true
@@ -507,3 +509,18 @@ backup:
   resources:
     requests: { cpu: 100m, memory: 128Mi }
     limits: { cpu: "1", memory: 512Mi }
+
+# Ingress isolation between the release's own pods. See templates/networkpolicy.yaml:
+# rendered and schema-checked, never applied to a cluster -- try it in staging first.
+networkPolicy:
+  enabled: false
+  # Required when enabled: who may reach the API gateway.
+  gatewayIngressNamespaces: []   # e.g. ["ingress-nginx"]
+  gatewayIngressCIDRs: []        # e.g. a load balancer's range
+  monitoringNamespace: monitoring
+  # Signing parties that run outside this cluster call in from here.
+  externalPartyCIDRs: []
+
+# Voluntary-disruption budgets for components with more than one replica.
+podDisruptionBudgets:
+  enabled: true

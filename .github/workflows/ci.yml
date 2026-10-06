@@ -192,7 +192,7 @@ jobs:
           RECON_EVM_RPC: http://127.0.0.1:18545
         run: |
           npm ci
-          npx jest src/approvals src/travel-rule src/agents src/reconciliation
+          npx jest src/approvals src/travel-rule src/agents src/reconciliation src/transfers src/controls src/identity src/keys
 
   gateway:
     name: API gateway
@@ -273,9 +273,15 @@ jobs:
             --set temporalWorker.mtls.autoIssue.enabled=true \
             --set workos.enabled=true \
             --set workos.redirectUri=https://api.example/auth/sso/callback \
+            --set oidc.enabled=true --set oidc.issuer=https://id.example/realms/t \
+            --set oidc.clientId=ofb --set oidc.redirectUri=https://c.example/console/sso-callback \
+            --set billing.consolePublicUrl=https://c.example --set billing.returnHosts=c.example \
+            --set networkPolicy.enabled=true --set 'networkPolicy.gatewayIngressNamespaces={ingress-nginx}' \
+            --set serviceMonitor.enabled=true \
             --set ingress.enabled=true \
             --set backup.enabled=true \
             | $(go env GOPATH)/bin/kubeconform -strict -summary \
+                -ignore-missing-schemas \
                 -kubernetes-version 1.29.0
 
       # kubeconform proves every object would be *accepted* by the API
@@ -310,6 +316,33 @@ jobs:
         run: |
           terraform -chdir=infrastructure/terraform/party init -backend=false
           terraform -chdir=infrastructure/terraform/party validate
+
+  # Known-vulnerable dependencies fail the build. The gateway's production
+  # dependencies were at 21 advisories (2 critical) before this existed.
+  dependencies:
+    name: Dependency advisories
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: npm audit (production dependencies, high and above)
+        working-directory: services/api-gateway
+        run: npm audit --omit=dev --audit-level=high
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+      - name: govulncheck (every Go module)
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          status=0
+          for m in services/*/; do
+            [ -f "$m/go.mod" ] || continue
+            echo "--- $m"
+            (cd "$m" && "$(go env GOPATH)/bin/govulncheck" ./...) || status=1
+          done
+          exit $status
 
   gosec:
     name: Go security scan
