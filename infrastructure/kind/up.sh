@@ -12,6 +12,9 @@
 #   ./infrastructure/kind/up.sh              # create and deploy
 #   RESET_DB=1 ./infrastructure/kind/up.sh   # also wipe Postgres first
 #   LITE=1 ./infrastructure/kind/up.sh       # laptop profile: signing path only
+#   ADMIN_API_KEY=... JWT_SECRET=... ./infrastructure/kind/up.sh
+#                                            # REQUIRED before exposing the gateway to any
+#                                            # network: the defaults are published dev values
 #
 # Environment:
 #   CLUSTER            kind cluster name (default: ofb)
@@ -163,8 +166,8 @@ echo "==> secrets"
 kubectl -n "${NS}" create secret generic openfireblocks-secrets \
   --from-literal=database-url='postgresql://app:app-dev-password@postgres:5432/openfireblocks?sslmode=disable' \
   --from-literal=database-admin-url='postgresql://app_admin:app-admin-dev-password@postgres:5432/openfireblocks?sslmode=disable' \
-  --from-literal=admin-api-key='dev-admin-api-key' \
-  --from-literal=jwt-secret='dev-jwt-secret-not-for-production' \
+  --from-literal=admin-api-key="${ADMIN_API_KEY:-dev-admin-api-key}" \
+  --from-literal=jwt-secret="${JWT_SECRET:-dev-jwt-secret-not-for-production}" \
   --from-literal=vault-token='dev-root-token' \
   --from-literal=bitcoin-rpc-password='ofb-regtest' \
   --dry-run=client -o yaml | kubectl apply -f -
