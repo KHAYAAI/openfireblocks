@@ -11,6 +11,7 @@
 #
 #   ./infrastructure/kind/up.sh              # create and deploy
 #   RESET_DB=1 ./infrastructure/kind/up.sh   # also wipe Postgres first
+#   LITE=1 ./infrastructure/kind/up.sh       # laptop profile: signing path only
 #
 # Environment:
 #   CLUSTER            kind cluster name (default: ofb)
@@ -192,8 +193,15 @@ kubectl -n "${NS}" exec "${TPOD}" -- bash -c '
   echo "temporal did not become ready" >&2; exit 1'
 
 echo "==> installing chart"
+VALUES_ARGS=(-f "${HERE}/values-kind.yaml")
+if [[ -n "${LITE:-}" ]]; then
+  echo "==> LITE profile: signing path only, one replica each (see values-kind-lite.yaml)"
+  VALUES_ARGS+=(-f "${HERE}/values-kind-lite.yaml")
+  # The standby database only matters for the failover drill.
+  kubectl -n "${NS}" scale deployment postgres-standby --replicas=0
+fi
 helm upgrade --install ofb "${ROOT}/infrastructure/helm/openfireblocks" \
-  -f "${HERE}/values-kind.yaml" -n "${NS}" --wait --timeout 10m
+  "${VALUES_ARGS[@]}" -n "${NS}" --wait --timeout 10m
 
 echo
 echo "Deployed. Reach the API with:"
