@@ -82,6 +82,8 @@ Run by the project owner from `infrastructure/kind/up.sh`. Stated plainly:
   machine. The earlier gateway stop was not reproduced in the lite profile and
   remains unexplained. `infrastructure/kind/diagnose.sh` captures the
   evidence if it recurs.
+- **Evidence:** the raw output of both runs is saved in
+  `docs/evidence/2026-10-07-kind-lite-smoke-test.md`.
 
 ## Not proven anywhere
 
