@@ -76,14 +76,14 @@ jobs:
         #
         # Raising the budget was not enough: under -race the safe-prime
         # search is slow enough that pre-parameter generation itself timed
-        # out on shared runners, failing the real-keygen tests. Those three
+        # out on shared runners, failing the real-keygen tests. Those five
         # run without the race detector (the search is single-purpose maths
         # with no shared state worth instrumenting); everything else,
         # including all the concurrency in the ceremony code, stays under
         # -race.
         run: |
           if [ "${{ matrix.module }}" = "services/mpc-party" ]; then
-            heavy='TestRealMultiPartyKeygenOverHTTP|TestSigningWithEveryCommittee|TestSealAndLoadKeyShareRoundTrip'
+            heavy='TestRealMultiPartyKeygenOverHTTP|TestRealMultiPartySigningOverHTTP|TestSigningWithEveryCommittee|TestSealAndLoadKeyShareRoundTrip|TestCosmosKeygenAndSignatureByChainName'
             go test -race ./... -count=1 -timeout 40m -skip "^($heavy)\$"
             go test ./... -count=1 -timeout 40m -run "^($heavy)\$"
           else
