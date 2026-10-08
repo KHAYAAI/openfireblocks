@@ -2,6 +2,7 @@ import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { JwtClaims } from './auth.service';
+import { TokenRevocationService } from './token-revocation.service';
 
 // Dev-only fallback so the service boots without extra setup locally; every
 // real deployment must set JWT_SECRET (32+ random bytes) or tokens signed
@@ -21,7 +22,7 @@ export function jwtSecret(): string {
 
 @Injectable()
 export class JwtAuthStrategy extends PassportStrategy(Strategy, 'jwt') {
-  constructor() {
+  constructor(private readonly revocation?: TokenRevocationService) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
@@ -30,10 +31,17 @@ export class JwtAuthStrategy extends PassportStrategy(Strategy, 'jwt') {
   }
 
   // Runs after signature + expiry are already verified by passport-jwt.
-  // Returning the claims attaches them to req.user.
-  validate(payload: JwtClaims): JwtClaims {
+  // Returning the claims attaches them to req.user. Also rejects a token
+  // whose jti is on the revocation denylist (AUTH-03) -- a signature and
+  // expiry that are still both valid is exactly the case a signed-out or
+  // administratively-revoked token is in, which is the whole reason a
+  // denylist exists rather than relying on expiry alone.
+  async validate(payload: JwtClaims): Promise<JwtClaims> {
     if (!payload.sub || !payload.email) {
       throw new UnauthorizedException('malformed token');
+    }
+    if (await this.revocation?.isRevoked(payload.jti)) {
+      throw new UnauthorizedException('token has been revoked');
     }
     return payload;
   }

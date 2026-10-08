@@ -15,6 +15,7 @@ import { PostgresService } from '../database/postgres.service';
 import { KeysService } from '../keys/keys.service';
 import { DashboardService } from './dashboard.service';
 import { clearSessionCookie, issueSession, readSession } from './session';
+import { TokenRevocationService } from '../identity/token-revocation.service';
 import { layout, loginPage, Nav } from './views';
 import {
   compliancePage,
@@ -48,16 +49,30 @@ export class DashboardController {
     private readonly postgres: PostgresService,
     private readonly keys: KeysService,
     private readonly data: DashboardService,
+    // Optional like elsewhere in this codebase: without it, sign-out
+    // still clears the browser's cookie, it just cannot also revoke the
+    // session server-side (the same gap AUTH-04 is about, just not
+    // fixed in this deployment -- see TokenRevocationService's own
+    // comment on why that is a logged, not silent, degradation).
+    private readonly revocation?: TokenRevocationService,
   ) {}
 
   private html(res: Response, body: string, status = 200) {
     res.status(status).type('html').send(body);
   }
 
-  // Resolves the signed-in customer, or null.
+  // Resolves the signed-in customer, or null. Also the enforcement point
+  // for AUTH-04: a session's token is checked against the revocation
+  // denylist on every request, which is what makes sign-out (and an
+  // administrative revoke) actually end a session instead of only
+  // clearing the browser's copy of the cookie while the exact same value
+  // keeps authenticating if replayed.
   private async current(req: Request): Promise<Customer | null> {
     const session = readSession(req.headers.cookie);
     if (!session) {
+      return null;
+    }
+    if (await this.revocation?.isRevoked(session.token)) {
       return null;
     }
     try {
@@ -111,7 +126,12 @@ export class DashboardController {
   }
 
   @Get('sign-out')
-  signOut(@Res() res: Response) {
+  async signOut(@Req() req: Request, @Res() res: Response) {
+    const session = readSession(req.headers.cookie);
+    if (session) {
+      const remainingSeconds = Math.ceil((session.expiresAt - Date.now()) / 1000);
+      await this.revocation?.revoke(session.token, remainingSeconds);
+    }
     res.setHeader('Set-Cookie', clearSessionCookie());
     return res.redirect(303, '/dashboard/sign-in');
   }

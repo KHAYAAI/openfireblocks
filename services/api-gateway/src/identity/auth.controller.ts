@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, HttpStatus, Post, UseGuards } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
 import { UsersService } from './users.service';
@@ -6,6 +6,7 @@ import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { MfaVerifyDto } from './dto/mfa-verify.dto';
 import { MfaEnrollConfirmDto } from './dto/mfa-enroll-confirm.dto';
+import { MfaStepUpDto } from './dto/mfa-step-up.dto';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { CurrentUser } from './current-user.decorator';
 import { JwtClaims } from './auth.service';
@@ -38,6 +39,17 @@ export class AuthController {
     return this.auth.verifyMfaAndLogin(dto.email, dto.challengeToken, dto.code);
   }
 
+  // Revokes the presented token early (AUTH-03) -- a bearer JWT used to
+  // have no revocation route at all; every candidate (logout, revoke,
+  // refresh) returned 404, so a captured token worked until its natural
+  // expiry no matter what the victim did.
+  @Post('logout')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @UseGuards(JwtAuthGuard)
+  async logout(@CurrentUser() claims: JwtClaims) {
+    await this.auth.logout(claims);
+  }
+
   @Get('me')
   @UseGuards(JwtAuthGuard)
   async me(@CurrentUser() claims: JwtClaims) {
@@ -53,9 +65,10 @@ export class AuthController {
   }
 
   @Post('mfa/enroll')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @UseGuards(JwtAuthGuard)
-  beginEnrollment(@CurrentUser() claims: JwtClaims) {
-    return this.auth.beginMfaEnrollment(claims.sub);
+  beginEnrollment(@CurrentUser() claims: JwtClaims, @Body() dto: MfaStepUpDto) {
+    return this.auth.beginMfaEnrollment(claims.sub, dto.password, dto.totpCode);
   }
 
   @Post('mfa/enroll/confirm')
@@ -66,9 +79,10 @@ export class AuthController {
   }
 
   @Post('mfa/disable')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @UseGuards(JwtAuthGuard)
-  async disableMfa(@CurrentUser() claims: JwtClaims) {
-    await this.auth.disableMfa(claims.sub);
+  async disableMfa(@CurrentUser() claims: JwtClaims, @Body() dto: MfaStepUpDto) {
+    await this.auth.disableMfa(claims.sub, dto.password, dto.totpCode);
     return { mfaEnabled: false };
   }
 }

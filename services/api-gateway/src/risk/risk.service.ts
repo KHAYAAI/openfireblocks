@@ -27,7 +27,12 @@ const TIER_HOURLY_LIMITS: Record<string, number> = {
 // transactions in the current hour window and denies once the tier limit is hit.
 //
 // Behaviour:
-//   - no Redis client  → disabled (no-op, always allowed).
+//   - no Redis client  → fail CLOSED (deny) by default. A missing REDIS_URL
+//     used to disable this control silently (allowed:true), which is how a
+//     blank Helm value turned the only per-tenant rate-of-spend control into
+//     a no-op without anyone deciding that on the record. Set
+//     RISK_ALLOW_DISABLED=true to run without velocity limiting anyway --
+//     an explicit opt-out, not a default reachable by an empty string.
 //   - Redis error      → fail-open (allow) with a warning, so a Redis outage
 //     degrades the control rather than halting all signing. Set
 //     RISK_FAIL_CLOSED=true to fail closed instead.
@@ -35,12 +40,20 @@ const TIER_HOURLY_LIMITS: Record<string, number> = {
 export class RiskService implements OnModuleDestroy {
   private readonly logger = new Logger(RiskService.name);
   private readonly failClosed = process.env.RISK_FAIL_CLOSED === 'true';
+  private readonly allowDisabled = process.env.RISK_ALLOW_DISABLED === 'true';
 
   constructor(
     @Inject(REDIS_CLIENT) private readonly redis: RiskRedis | null,
   ) {
     if (!redis) {
-      this.logger.warn('REDIS_URL not set; velocity limiting disabled');
+      if (this.allowDisabled) {
+        this.logger.warn('REDIS_URL not set; velocity limiting disabled (RISK_ALLOW_DISABLED=true)');
+      } else {
+        this.logger.error(
+          'REDIS_URL not set; velocity limiting will DENY every signing request. ' +
+            'Set REDIS_URL, or set RISK_ALLOW_DISABLED=true to run without this control.',
+        );
+      }
     }
   }
 
@@ -52,7 +65,15 @@ export class RiskService implements OnModuleDestroy {
   async checkAndRecord(customerId: string, tier: string): Promise<VelocityDecision> {
     const limit = this.limitForTier(tier);
     if (!this.redis) {
-      return { allowed: true, count: 0, limit };
+      if (this.allowDisabled) {
+        return { allowed: true, count: 0, limit };
+      }
+      return {
+        allowed: false,
+        count: -1,
+        limit,
+        reason: 'velocity limiting is not configured (REDIS_URL unset) and RISK_ALLOW_DISABLED is not set; failing closed',
+      };
     }
 
     const hourBucket = Math.floor(Date.now() / 3_600_000);

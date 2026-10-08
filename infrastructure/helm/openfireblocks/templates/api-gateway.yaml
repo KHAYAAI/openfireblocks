@@ -141,6 +141,10 @@ spec:
               value: http://{{ include "ofb.fullname" . }}-compliance:{{ .Values.compliance.port }}
             - name: REDIS_URL
               value: {{ .Values.external.redisUrl | quote }}
+            # See the comment on external.redisUrl: an empty REDIS_URL now
+            # fails velocity limiting closed unless this is explicitly true.
+            - name: RISK_ALLOW_DISABLED
+              value: {{ .Values.external.riskAllowDisabledVelocityLimiting | default false | quote }}
             # Durable settlements (SettlementsController) and real DKG key
             # provisioning (KeysService.createKey -> ProvisionKeyWorkflow)
             # both need a real Temporal connection -- previously unset

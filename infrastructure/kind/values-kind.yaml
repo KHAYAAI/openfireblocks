@@ -34,7 +34,11 @@ external:
   # leaving it at the mainnet default would derive addresses this node has
   # never heard of and report every balance as zero.
   bitcoinNetwork: regtest
+  # No Redis runs in this local/CI cluster. REDIS_URL empty now fails
+  # velocity limiting closed by default (see values.yaml); this explicit
+  # opt-out keeps the smoke test and local signing working without one.
   redisUrl: ""
+  riskAllowDisabledVelocityLimiting: true
 
 apiGateway:
   enabled: true

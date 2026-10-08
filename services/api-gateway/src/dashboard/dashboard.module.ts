@@ -3,6 +3,7 @@ import { DatabaseModule } from '../database/database.module';
 import { CustomersModule } from '../customers/customers.module';
 import { KeysModule } from '../keys/keys.module';
 import { ApprovalsModule } from '../approvals/approvals.module';
+import { IdentityModule } from '../identity/identity.module';
 import { DashboardController } from './dashboard.controller';
 import { OrgDashboardController } from './org-dashboard.controller';
 import { DashboardService } from './dashboard.service';
@@ -20,7 +21,7 @@ import { DashboardService } from './dashboard.service';
 // implementation would be a second thing that can disagree about what a
 // customer holds.
 @Module({
-  imports: [DatabaseModule, CustomersModule, KeysModule, ApprovalsModule],
+  imports: [DatabaseModule, CustomersModule, KeysModule, ApprovalsModule, IdentityModule],
   controllers: [DashboardController, OrgDashboardController],
   providers: [DashboardService],
 })

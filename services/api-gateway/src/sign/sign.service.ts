@@ -1,8 +1,11 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   InternalServerErrorException,
   Logger,
+  Optional,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { lastValueFrom } from 'rxjs';
@@ -16,6 +19,9 @@ import { BillingService } from '../billing/billing.service';
 import { MetricsService } from '../monitoring/metrics.service';
 import { Customer } from '../customers/customer.service';
 import { SignRequestDto } from './dto/sign-request.dto';
+import { resolveTransferIntent } from '../keys/transfer-intent';
+import { TokenRegistryService } from '../tokens/token-registry.service';
+import { GovernedContracts } from '../keys/governed-contracts';
 
 // Shape of the MPC signer's /sign response.
 interface MpcSignResponse {
@@ -34,6 +40,13 @@ export interface SignResult {
   from: string;
   status: 'signed' | 'broadcasted';
   broadcasted: boolean;
+  // What this transaction actually moves, as decoded from its calldata --
+  // the token symbol (or 'NATIVE'), and the recipient/amount a reader
+  // should compare against the whitelist and amount limit, which for a
+  // token transfer are not req.to/req.value.
+  asset: string;
+  recipient: string | null;
+  amount: string | null;
 }
 
 // Orchestrates a Phase 1 sign request, scoped to an authenticated tenant:
@@ -53,6 +66,13 @@ export class SignService {
     private readonly risk: RiskService,
     private readonly billing: BillingService,
     private readonly metrics: MetricsService,
+    // Optional like elsewhere in this codebase: a deployment or test that
+    // builds this service directly without a token registry or governed-
+    // contracts recogniser gets no token transfers and no governed calls,
+    // which is the same behaviour resolveTransferIntent already gives
+    // KeysService when either is absent.
+    @Optional() private readonly tokens?: TokenRegistryService,
+    @Optional() private readonly governed?: GovernedContracts,
   ) {}
 
   async sign(customer: Customer, req: SignRequestDto): Promise<SignResult> {
@@ -69,14 +89,40 @@ export class SignService {
     });
 
     try {
-      // 1. Policy evaluation (fail-closed).
+      // What this transaction actually moves, decoded from the same
+      // calldata that is about to be forwarded to mpc-signer verbatim --
+      // not the envelope's own to/value, which for an ERC-20 transfer are
+      // the token contract and zero. Evaluating policy on the envelope
+      // instead of this is how a destination whitelist and an amount limit
+      // could both exist, both work for a native transfer, and neither
+      // apply to a token one.
+      const intent = await resolveTransferIntent(
+        {
+          customerId,
+          arbitraryContractCallsEnabled: customer.arbitrary_contract_calls_enabled,
+          tokens: this.tokens,
+          governed: this.governed,
+        },
+        req.chainId,
+        req.to,
+        req.value ?? '0',
+        req.data,
+      );
+
+      // 1. Policy evaluation (fail-closed), against what the transaction
+      // decodes to, not its envelope.
       const overrides = (customer.policies ?? {}) as Record<string, unknown>;
       const decision = await this.policy.evaluate({
         customerId,
         customerTier: customer.tier,
-        to: req.to,
+        to: intent.policyTo,
         value: req.value ?? '0',
         chainId: req.chainId,
+        asset: intent.asset,
+        assetAmount: intent.assetAmount,
+        assetDecimals: intent.assetDecimals,
+        pegCurrency: intent.pegCurrency,
+        isAllowance: intent.isAllowance,
         whitelist: overrides.whitelist as string[] | undefined,
         blockedCountries: overrides.blockedCountries as string[] | undefined,
         country: req.country,
@@ -129,13 +175,19 @@ export class SignService {
       );
       const { signedTx, txHash, from } = response.data;
 
-      // 3. Persist transaction metadata (status: signed), tenant-scoped.
-      await this.postgres.saveTransaction({
+      // 3. Persist transaction metadata (status: signed), tenant-scoped,
+      // including what it actually moves -- recordTransfer, not
+      // saveTransaction, so the decoded asset/recipient/amount lands in
+      // the same columns KeysService's own signing route writes, and the
+      // daily aggregate that decides whether a filing is due is not
+      // silently missing every transfer made through this route.
+      await this.postgres.recordTransfer({
+        rowId: requestId,
         requestId,
         customerId,
         chain: 'ethereum',
         to: req.to,
-        data: req.data ?? '',
+        data: req.data ?? null,
         value: req.value ?? '0',
         gasLimit: req.gasLimit,
         // Record the effective fee: legacy gasPrice, else the 1559 fee cap.
@@ -144,6 +196,12 @@ export class SignService {
         signedTx,
         txHash,
         status: 'signed',
+        assetSymbol: intent.asset,
+        assetContract: intent.contractAddress ?? null,
+        assetDecimals: intent.assetDecimals,
+        assetPeg: intent.pegCurrency ?? null,
+        effectiveTo: intent.effectiveTo,
+        effectiveAmount: intent.effectiveAmount,
       });
 
       await this.audit.logEvent({
@@ -201,10 +259,30 @@ export class SignService {
         from,
         status: broadcasted ? 'broadcasted' : 'signed',
         broadcasted,
+        asset: intent.asset,
+        recipient: intent.effectiveTo,
+        amount: intent.effectiveAmount,
       };
     } catch (error) {
-      // Re-throw policy denials untouched (already audited + counted).
+      // Re-throw policy/risk denials untouched: each is already audited
+      // (POLICY_DENIED / RISK_DENIED) and counted above, and wrapping it
+      // here would both double those and hide its real HTTP status behind
+      // a generic 500.
       if (error instanceof ForbiddenException) {
+        throw error;
+      }
+      // A rejected or undecodable request (bad calldata, no token
+      // registry) is the caller's to fix, not an outage -- carry its own
+      // status and message through rather than reporting "Signing failed".
+      if (error instanceof BadRequestException || error instanceof ServiceUnavailableException) {
+        this.metrics.signRequests.inc({ status: 'failed', chain: 'ethereum' });
+        await this.audit.logEvent({
+          type: 'SIGN_FAILED',
+          requestId,
+          customerId,
+          status: 'failed',
+          errorMessage: (error as Error).message,
+        });
         throw error;
       }
       const message = (error as Error).message;

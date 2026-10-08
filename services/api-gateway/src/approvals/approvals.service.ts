@@ -83,6 +83,17 @@ export interface PendingTransferRow {
 // the worker's OpenApprovalRequest.
 export const DEFAULT_POLICY = { requiredApprovals: 2, windowMinutes: 60 };
 
+// The floor no tenant can self-serve below. A pentest demonstrated a
+// single CAN_MANAGE actor dropping requiredApprovals from 2 to 1 in one
+// PUT, with no second actor, no step-up and no limit -- the one person a
+// quorum exists to constrain unilaterally weakening the constraint. 1 is
+// not "a smaller quorum", it is no quorum: a single signer who needs no
+// one else's agreement. A tenant that genuinely has only one person able
+// to approve cannot be fixed by lowering this number; they need a second
+// approver, which is what the existing "could never be met" check below
+// is for.
+export const MIN_REQUIRED_APPROVALS = 2;
+
 // Postgres SQLSTATEs raised by migration 023's triggers.
 function mapDbError(err: unknown): never {
   const code = (err as { code?: string }).code;
@@ -190,8 +201,13 @@ export class ApprovalsService {
   }
 
   async setPolicy(customerId: string, userId: string, requiredApprovals: number, windowMinutes: number): Promise<ApprovalPolicy> {
-    if (!Number.isInteger(requiredApprovals) || requiredApprovals < 1 || requiredApprovals > 10) {
-      throw new BadRequestException('requiredApprovals must be a whole number from 1 to 10');
+    if (!Number.isInteger(requiredApprovals) || requiredApprovals < MIN_REQUIRED_APPROVALS || requiredApprovals > 10) {
+      throw new BadRequestException(
+        `requiredApprovals must be a whole number from ${MIN_REQUIRED_APPROVALS} to 10; ` +
+          `a quorum of 1 is not a smaller quorum, it is a single signer who needs no one ` +
+          `else's agreement, and this endpoint cannot set that. Add a second approver if ` +
+          `this organisation does not have one.`,
+      );
     }
     if (!Number.isInteger(windowMinutes) || windowMinutes < 5 || windowMinutes > 10080) {
       throw new BadRequestException('windowMinutes must be a whole number from 5 to 10080 (one week)');

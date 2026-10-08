@@ -1,5 +1,20 @@
 # AWS WAF (Web Application Firewall) Configuration
 # Protects API Gateway and Load Balancers from common attacks
+#
+# A Web ACL filters nothing on its own -- it has to be associated with the
+# resource it protects. Neither Web ACL below had an
+# aws_wafv2_web_acl_association, in either region, so every rule here (rate
+# limiting, the managed rule sets, the /admin path block) was defined and
+# never attached to anything. A pentest against the actual deployment found
+# SQLi payloads, known-bad-input probes and a 200-request flood all reaching
+# the origin unfiltered, because that deployment's edge is a Caddy reverse
+# proxy on a single EC2 instance (docs/deployment/STAGING-AWS-AND-SOLANA-DEVNET.md),
+# not an AWS-managed load balancer -- and this file otherwise has no
+# aws_lb resource for a Web ACL to attach to regardless. The associations
+# below are real but conditional on alb_arn/alb_arn_secondary (variables.tf)
+# being set, for whenever an ALB exists in front of this; until then, l7
+# filtering for a Caddy-fronted deployment has to happen in the Caddyfile
+# itself (rate limiting, rejecting known-bad paths), not here.
 
 resource "aws_wafv2_ip_set" "blocked_ips" {
   name               = "openfireblocks-blocked-ips-${var.environment}"
@@ -386,4 +401,21 @@ resource "aws_wafv2_web_acl_logging_configuration" "secondary" {
       requirement = "MEETS_ANY"
     }
   }
+}
+
+# The associations this file was missing. count = 0 (the default, no ALB
+# ARN supplied) plans cleanly and attaches nothing -- the same no-op the
+# rest of this file silently was, except now that is a visible, named
+# condition instead of an absent resource nobody noticed.
+resource "aws_wafv2_web_acl_association" "primary" {
+  count        = var.alb_arn != "" ? 1 : 0
+  resource_arn = var.alb_arn
+  web_acl_arn  = aws_wafv2_web_acl.primary.arn
+}
+
+resource "aws_wafv2_web_acl_association" "secondary" {
+  provider     = aws.secondary
+  count        = var.alb_arn_secondary != "" ? 1 : 0
+  resource_arn = var.alb_arn_secondary
+  web_acl_arn  = aws_wafv2_web_acl.secondary.arn
 }

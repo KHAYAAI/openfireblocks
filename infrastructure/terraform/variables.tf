@@ -37,6 +37,24 @@ variable "enable_vpn_gateway" {
   default     = false
 }
 
+# waf.tf's Web ACLs are useless without being attached to something -- see
+# the comment there. Neither has a default: an empty string means no ALB
+# exists yet in this environment (true today; the actual deployment
+# terminates TLS at Caddy on a single EC2 instance, which this cannot
+# attach to at all), and the association resource is skipped rather than
+# failing to plan against a load balancer that was never provisioned here.
+variable "alb_arn" {
+  description = "ARN of the primary-region Application Load Balancer to attach the WAF Web ACL to. Empty = no association created."
+  type        = string
+  default     = ""
+}
+
+variable "alb_arn_secondary" {
+  description = "ARN of the secondary-region Application Load Balancer to attach the WAF Web ACL to. Empty = no association created."
+  type        = string
+  default     = ""
+}
+
 variable "db_name" {
   description = "Initial database name"
   type        = string

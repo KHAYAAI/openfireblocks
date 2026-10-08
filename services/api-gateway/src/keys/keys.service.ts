@@ -36,13 +36,10 @@ import {
 import { createHash } from 'crypto';
 import { v4 as uuidv4, v5 as uuidv5 } from 'uuid';
 import {
-  Erc20Call,
   Erc20DecodeError,
-  decodeErc20Call,
   encodeTransfer,
   encodeBalanceOf,
   formatUnits,
-  hasCalldata,
   parseUnits,
 } from './erc20';
 import { TokenRegistryService } from '../tokens/token-registry.service';
@@ -51,28 +48,7 @@ import { TokenTransferDto } from './dto/token-transfer.dto';
 import { GovernedContracts } from './governed-contracts';
 import { TravelRuleService } from '../travel-rule/travel-rule.service';
 import type { TravelRuleInput } from '../travel-rule/travel-rule';
-
-// What a transaction moves, as opposed to what it looks like on the wire.
-//
-// policyTo and assetAmount are what the controls evaluate; effectiveTo and
-// effectiveAmount are what gets recorded against the transaction so that a
-// later reader -- a regulatory aggregate, an auditor, a customer's own
-// reconciliation -- can answer "who received how much of what" without an
-// ABI decoder. They are null when the platform could not tell, which is a
-// truthful answer and a better one than a guess.
-interface TransferIntent {
-  policyTo: string;
-  asset: string;
-  assetAmount: string;
-  assetDecimals: number;
-  pegCurrency?: string;
-  isAllowance?: boolean;
-  effectiveTo: string | null;
-  effectiveAmount: string | null;
-  contractAddress?: string;
-  method?: string;
-  unreadable?: string;
-}
+import { TransferIntent, resolveTransferIntent } from './transfer-intent';
 
 // Derives each party's endpoint from MPC_PARTY_ENDPOINT_TEMPLATE (default
 // http://party-{id}:7000, matching infrastructure/helm/openfireblocks's
@@ -230,147 +206,30 @@ export class KeysService {
   }
 
   // Works out what a transaction actually moves, before anything decides
-  // whether it is allowed.
-  //
-  // This is the whole fix. An ERC-20 transfer carries its recipient and
-  // amount inside the calldata; the transaction's own `to` is the token
-  // contract and its `value` is zero. Handing those two fields to the
-  // policy engine -- which is what happened before this existed -- means
-  // the amount limit compares zero against the ceiling and the
-  // counterparty whitelist sees an address that is identical for every
-  // transfer of that token. Neither control could deny anything, and
-  // nothing about the system looked different.
-  //
-  // Three outcomes, and the third is the interesting one:
-  //
-  //   no calldata          -- a native transfer, governed as before
-  //   a registered token   -- governed on the decoded recipient and amount
-  //   anything else        -- refused, unless the tenant has explicitly
-  //                           accepted that policy cannot read it
-  private async resolveTransferIntent(
+  // whether it is allowed. The decoding itself lives in transfer-intent.ts,
+  // shared with SignService's POST /sign -- the single-key route forwards
+  // the same shape of EVM transaction to the same mpc-signer, and a second
+  // copy of this logic there is exactly how one of the two routes would
+  // drift and end up evaluating policy on the envelope again.
+  private resolveTransferIntent(
     customer: Customer,
     chainId: number,
     to: string,
     value: string,
     data: string | undefined,
   ): Promise<TransferIntent> {
-    if (!hasCalldata(data)) {
-      return {
-        policyTo: to,
-        asset: 'NATIVE',
-        assetAmount: value,
-        assetDecimals: 18,
-        effectiveTo: to,
-        effectiveAmount: value,
-      };
-    }
-
-    // A call to a contract a module of this platform governs, with a selector and
-    // arguments that module has read in full. Not a payment: nothing is paid to anyone, so
-    // it has no recipient or amount to limit, and it is not an unreadable call either. The
-    // policy engine sees an unnamed asset of zero and escalates it for approval.
-    const governed = await this.governed?.recognise(customer.customer_id, chainId, to, value, data as string);
-    if (governed) {
-      return {
-        policyTo: to,
-        asset: 'GOVERNED',
-        assetAmount: '0',
-        assetDecimals: 18,
-        effectiveTo: null,
-        effectiveAmount: null,
-        method: governed.description,
-      };
-    }
-
-    let call: Erc20Call | null;
-    try {
-      call = decodeErc20Call(data);
-    } catch (err) {
-      // Undecodable calldata. The platform cannot say who gets paid or how
-      // much, so it cannot claim any control evaluated this transaction.
-      return this.unreadableCalldata(customer, to, value, (err as Error).message);
-    }
-    if (!call) {
-      // hasCalldata said yes and the decoder said no calldata. Not
-      // reachable, but returning a native intent here would mean treating
-      // a contract call as a payment to the contract.
-      throw new BadRequestException('calldata could not be interpreted');
-    }
-
-    if (!this.tokens) {
-      throw new ServiceUnavailableException(
-        'the token registry is not configured, so token transfers cannot be governed or signed',
-      );
-    }
-
-    const token = await this.tokens.byContract(chainId, to);
-    if (!token || token.status !== 'verified') {
-      // A token transfer to a contract nobody registered. The calldata
-      // decoded, so the recipient and amount are known -- but the asset is
-      // not, which means its decimals are not, which means the amount is a
-      // number with no unit. A limit cannot be applied to that.
-      return this.unreadableCalldata(
-        customer,
-        to,
-        value,
-        token
-          ? `${token.symbol} on chain ${chainId} is registered but not verified (${token.status})`
-          : `no token is registered at ${to} on chain ${chainId}`,
-      );
-    }
-
-    return {
-      policyTo: call.recipient,
-      asset: token.symbol,
-      assetAmount: call.amount,
-      assetDecimals: token.decimals,
-      pegCurrency: token.pegCurrency ?? undefined,
-      isAllowance: call.isAllowance,
-      effectiveTo: call.recipient,
-      effectiveAmount: call.amount,
-      contractAddress: token.contractAddress ?? to,
-      method: call.method,
-    };
-  }
-
-  // Calldata the platform cannot account for.
-  //
-  // Refused by default. The tenant-level escape hatch mirrors
-  // raw_digest_signing_enabled and carries the same warning: with it on,
-  // the to and value that policy evaluates are the contract and zero, so
-  // the amount limit and the whitelist are not evaluating this
-  // transaction's payment at all. Calling a contract that is not an ERC-20
-  // is a real requirement and there is no other route for it, so the
-  // capability exists -- turning it on is a decision somebody makes on the
-  // record, not a default.
-  private unreadableCalldata(
-    customer: Customer,
-    to: string,
-    value: string,
-    why: string,
-  ): TransferIntent {
-    if (!customer.arbitrary_contract_calls_enabled) {
-      throw new BadRequestException(
-        `this transaction carries calldata the platform cannot account for: ${why}. ` +
-          'Policy determines the recipient and amount by decoding the call, and it cannot ' +
-          'decode this one -- so signing it would mean no control had read what it does. ' +
-          'To send a token, register and verify it and use POST /keys/:keyId/token-transfers. ' +
-          'To call a contract that is not an ERC-20, arbitrary contract calls must be ' +
-          'enabled for this account explicitly.',
-      );
-    }
-    return {
-      policyTo: to,
-      // Not given a symbol. An unnamed asset with no peg is escalated for
-      // approval by the policy engine rather than held to a limit it has
-      // no units for.
-      asset: 'UNKNOWN',
-      assetAmount: value,
-      assetDecimals: 18,
-      effectiveTo: null,
-      effectiveAmount: null,
-      unreadable: why,
-    };
+    return resolveTransferIntent(
+      {
+        customerId: customer.customer_id,
+        arbitraryContractCallsEnabled: customer.arbitrary_contract_calls_enabled,
+        tokens: this.tokens,
+        governed: this.governed,
+      },
+      chainId,
+      to,
+      value,
+      data,
+    );
   }
 
   // Announce, without ever letting the announcement affect the work.

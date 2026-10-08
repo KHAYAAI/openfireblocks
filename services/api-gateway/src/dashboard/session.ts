@@ -52,6 +52,14 @@ function sessionSecret(): Buffer {
 export interface Session {
   customerId: string;
   expiresAt: number;
+  // The exact signed cookie value this session was read from
+  // (customerId.expiresAt.signature). Unguessable and unique to this one
+  // issued session, so it doubles as a revocation handle (AUTH-04):
+  // DashboardController's sign-out denylists this value, and current()
+  // checks the same denylist on every later request -- the one thing a
+  // purely self-contained signed cookie cannot do for itself, since it
+  // carries no server-side record at all to delete.
+  token: string;
 }
 
 function sign(payload: string): string {
@@ -119,5 +127,5 @@ export function readSession(cookieHeader: string | undefined): Session | null {
   if (!customerId || !Number.isFinite(expiresAt) || expiresAt < Date.now()) {
     return null;
   }
-  return { customerId, expiresAt };
+  return { customerId, expiresAt, token: value };
 }

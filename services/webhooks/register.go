@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -81,6 +82,16 @@ func validateWebhook(req *RegisterWebhookRequest) error {
 	// and the signature proves origin, not confidentiality.
 	if parsed.Scheme != "https" {
 		return fmt.Errorf("%w: url must be https, got %q", ErrInvalidInput, parsed.Scheme)
+	}
+	// Rejects the obvious cases -- a literal loopback, link-local or
+	// private IP as the host -- at registration, when there is a caller to
+	// tell. This is advisory, not the real control: a hostname's DNS can
+	// point anywhere by the time of delivery (and be changed afterwards,
+	// i.e. DNS rebinding), which is why the dialer itself (ssrf_guard.go)
+	// checks the resolved address on every single delivery attempt
+	// regardless of what this registration-time check found.
+	if ip := net.ParseIP(parsed.Hostname()); ip != nil && !isGloballyRoutable(ip) {
+		return fmt.Errorf("%w: url host %q is not a publicly routable address", ErrInvalidInput, parsed.Hostname())
 	}
 	if len(req.Events) == 0 {
 		return fmt.Errorf("%w: subscribe to at least one event", ErrInvalidInput)

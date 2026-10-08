@@ -114,18 +114,22 @@ curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | sudo gpg --d
 curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-stable.list
 sudo apt update && sudo apt install -y caddy
 ```
-Edit `/etc/caddy/Caddyfile`:
-```
-staging.yourdomain.com {
-    @internal path /admin* /metrics*
-    respond @internal 404
-    reverse_proxy 127.0.0.1:3000
-}
-```
-`sudo systemctl reload caddy`. Caddy obtains the certificate automatically.
+Copy `infrastructure/caddy/Caddyfile` from the repo to `/etc/caddy/Caddyfile` and replace
+`staging.example.com` with the real hostname, then `sudo systemctl reload caddy`. Caddy
+obtains the certificate automatically.
 
 The admin and metrics routes are **not** exposed publicly. Use them only on the machine
 itself, through `http://127.0.0.1:3000`.
+
+**Known gap: no WAF at this edge.** This Caddy config is a reverse proxy, not a WAF --
+it filters nothing except the admin/metrics paths above. `infrastructure/terraform/waf.tf`
+defines real AWS WAF rules (rate limiting, managed SQLi/known-bad-input rule sets, IP
+reputation), but they only attach to an AWS ALB, and this single-VM deployment has none.
+A pentest confirmed SQLi payloads, known-bad-input probes and a request flood all reach
+the origin unfiltered here. See the comment at the top of `infrastructure/caddy/Caddyfile`
+for the real options (a proxying CDN in front, a Caddy build with the rate-limit plugin,
+or moving behind a real ALB) -- none are set up by default, and this stays a known,
+accepted gap for a single-VM staging box until one is.
 
 ## Part H: Verify (10 minutes)
 

@@ -113,8 +113,16 @@ type ComplianceCheckEvent struct {
 // deliberately no option to skip verification: an unverified TLS
 // connection carrying what a customer signed and for how much is worse
 // than no delivery at all.
+//
+// The transport's DialContext is safeDialer (ssrf_guard.go): every
+// connection this client makes, including one behind a redirect, is
+// checked against the IP it actually resolved to, not the hostname. And
+// CheckRedirect refuses to follow one at all -- a receiver that wants to
+// move should return its new URL in the body or a 4xx, not a redirect
+// this service would otherwise dial automatically, straight past a
+// registration-time URL check, to wherever the 301 points.
 func NewWebhookService(db *PostgresDB) *WebhookService {
-	client := &http.Client{Timeout: 15 * time.Second}
+	transport := &http.Transport{DialContext: (&safeDialer{}).DialContext}
 
 	if path := os.Getenv("WEBHOOK_CA_FILE"); path != "" {
 		pem, err := os.ReadFile(path)
@@ -132,8 +140,16 @@ func NewWebhookService(db *PostgresDB) *WebhookService {
 		if !pool.AppendCertsFromPEM(pem) {
 			log.Fatalf("WEBHOOK_CA_FILE=%s contains no usable certificates", path)
 		}
-		client.Transport = &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool}}
+		transport.TLSClientConfig = &tls.Config{RootCAs: pool}
 		log.Printf("trusting additional webhook CAs from %s", path)
+	}
+
+	client := &http.Client{
+		Timeout:   15 * time.Second,
+		Transport: transport,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
 	}
 
 	return &WebhookService{db: db, httpClient: client}
@@ -253,9 +269,18 @@ func (s *WebhookService) attemptDelivery(
 	delivery.ResponseTime = time.Since(startTime).Milliseconds()
 
 	if err != nil {
+		// The raw error -- "connection refused", a specific timeout, a DNS
+		// lookup failure -- is exactly what turned this into a working port
+		// scanner against the internal network: an attacker who controls
+		// the destination can read it straight back through
+		// GET /webhooks/deliveries, no admin access required. Logged in
+		// full here, server-side, where only an operator can read it; the
+		// tenant gets a status that says delivery failed and nothing about
+		// why at the network level.
+		log.Printf("webhook %s delivery %s transport error: %v", webhook.WebhookID, delivery.DeliveryID, err)
 		delivery.Success = false
 		delivery.StatusCode = 0
-		delivery.ErrorMessage = err.Error()
+		delivery.ErrorMessage = "delivery failed: could not connect to the destination"
 		s.scheduleRetry(delivery, webhook)
 		return delivery
 	}

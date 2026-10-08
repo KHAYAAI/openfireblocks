@@ -53,7 +53,15 @@ external:
   # mainnet by default because a wrong value does not fail loudly -- it
   # produces addresses for another network and reports a zero balance.
   bitcoinNetwork: mainnet
-  redisUrl: "" # e.g. redis://redis-master:6379 — empty disables velocity limiting
+  # e.g. redis://redis-master:6379 — empty means velocity limiting fails
+  # CLOSED (every signing request denied) unless riskAllowDisabledVelocityLimiting
+  # is also set. An empty string here used to silently disable the only
+  # per-tenant rate-of-spend control; it no longer can by accident.
+  redisUrl: ""
+  # Explicit opt-out for running with no velocity limiting at all (e.g. a
+  # demo/local profile with no Redis). Leave false for any deployment that
+  # should actually enforce the free/pro/enterprise hourly transaction caps.
+  riskAllowDisabledVelocityLimiting: false
 
 # Static admin token for customer provisioning (replace with Keycloak in prod).
 adminApiKeySecret: openfireblocks-secrets # secret holding key "admin-api-key"
