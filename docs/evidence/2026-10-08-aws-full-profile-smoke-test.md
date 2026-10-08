@@ -127,3 +127,28 @@ PASS: threshold key 0xDb56a11eF060Bab77C2423Cb041BB229599fCa9b provisioned by re
   official engine (`get.docker.com`), which bundles buildx.
 - The Docker daemon needed one manual `systemctl restart docker` after that install — the
   first automatic start attempt failed transiently.
+
+## Addendum: public HTTPS (same day)
+
+The gateway is also reachable over real HTTPS, via Caddy reverse-proxying to a systemd-managed
+`kubectl port-forward`, with a Let's Encrypt certificate on a free `sslip.io` hostname
+(`staging.<elastic-ip>.sslip.io` — no domain purchase needed):
+
+```
+$ curl -sv https://staging.52.213.16.179.sslip.io/health/ready
+...
+* Server certificate:
+*  subject: CN=staging.52.213.16.179.sslip.io
+*  issuer: C=US; O=Let's Encrypt; CN=YE1
+*  SSL certificate verify ok.
+* using HTTP/2
+< HTTP/2 200
+{"status":"ready","checks":{"postgres":"ok"}}
+```
+
+`/admin*` and `/metrics*` are blocked at the Caddy layer and return 404 externally; they remain
+reachable only via `127.0.0.1:3000` on the VM itself.
+
+Found and fixed along the way: the VM's `fs.inotify.max_user_instances` was the Linux default
+of 128, too low for a 4-node kind cluster's kubelet/containerd watches, which made `systemctl
+enable` on the port-forward service fail with "Too many open files". Raised to 512 via sysctl.
