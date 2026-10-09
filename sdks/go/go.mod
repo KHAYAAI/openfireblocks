@@ -1,6 +1,7 @@
 module github.com/openfireblocks/sdk-go
 
 go 1.21
+toolchain go1.26.9
 
 // go-ethereum was declared here and never imported -- see client.go, which
 // uses only the standard library and google/uuid. A dependency listed but

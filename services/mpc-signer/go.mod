@@ -4,9 +4,9 @@
 // Binance TSS-Lib distributed key generation / threshold signing.
 module forge-crypto/mpc-signer
 
-go 1.25.0
+go 1.26.0
 
-toolchain go1.25.14
+toolchain go1.26.9
 
 require (
 	github.com/bnb-chain/tss-lib/v2 v2.0.0
@@ -19,7 +19,7 @@ require (
 	github.com/hashicorp/vault/api v1.15.0
 	github.com/miekg/pkcs11 v1.1.1
 	github.com/prometheus/client_golang v1.12.2
-	golang.org/x/crypto v0.51.0
+	golang.org/x/crypto v0.57.0
 	google.golang.org/protobuf v1.36.11
 )
 
@@ -78,10 +78,10 @@ require (
 	github.com/stretchr/testify v1.9.0 // indirect
 	github.com/subosito/gotenv v1.4.2 // indirect
 	github.com/whyrusleeping/go-logging v0.0.0-20170515211332-0457bb6b88fc // indirect
-	golang.org/x/net v0.55.0 // indirect
-	golang.org/x/sys v0.45.0 // indirect
-	golang.org/x/term v0.43.0 // indirect
-	golang.org/x/text v0.39.0 // indirect
+	golang.org/x/net v0.60.0 // indirect
+	golang.org/x/sys v0.48.0 // indirect
+	golang.org/x/term v0.46.0 // indirect
+	golang.org/x/text v0.42.0 // indirect
 	golang.org/x/time v0.5.0 // indirect
 	google.golang.org/genproto v0.0.0-20230803162519-f966b187b2e5 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260526163538-3dc84a4a5aaa // indirect

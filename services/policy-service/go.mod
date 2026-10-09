@@ -3,7 +3,7 @@ module forge-crypto/policy-service
 
 go 1.25.0
 
-toolchain go1.25.14
+toolchain go1.26.9
 
 require github.com/open-policy-agent/opa v0.70.0
 
