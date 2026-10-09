@@ -176,3 +176,5 @@ government bodies.
 | 2026-10-09 | Peach Payments | Fintech | refer@peachpayments.com | Sent, msg 1a120d7bfbdd1b35. Follow up 2026-10-16 |
 | 2026-10-09 | Ozow | Fintech | sales@ozow.com | Sent, msg 1a120d7f2d0b9cd2 (low-confidence route). Follow up 2026-10-16 |
 | 2026-10-09 | Chipper Cash | Fintech | getintouch@chipperbusiness.com | Sent, msg 1a120d8007e3fb72. Follow up 2026-10-16 |
+| 2026-10-09 | Trail of Bits | Crypto audit (screening) | info@trailofbits.com | Sent, msg 1a120d9d8a892a98. Follow up 2026-10-16 |
+| 2026-10-09 | Bank of England DSS | Government (UK) | DSSEnquiries@bankofengland.co.uk | Sent, msg 1a120d9e3deed15f. Follow up 2026-10-16 |
