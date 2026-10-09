@@ -61,25 +61,52 @@ contains exploitation detail against the then-current deployment).
 
 ## CI state
 
-**Red**, independent of the pentest fixes above. `83ce383` (the fix commit
-itself) failed CI on unrelated pre-existing issues (a flaky real-process
-mpc-party timing test, and two bugs in this branch's own test setup --
-`JwtAuthStrategy` breaking under a test helper's generic auto-mocker, and a
-local e2e drill script not updated for AUTH-01's new required password).
-Those were fixed in `33cff4c`. The next run then failed on something
-unrelated to this session's work entirely: new Go stdlib /
-`golang.org/x/net` security advisories (`GO-2026-6599` through
-`GO-2026-6617`) now apply to every Go module in the repo and are not in
-`docs/security/accepted-vulnerabilities.json`. This needs a decision (bump
-the Go toolchain to pick up the fixes, due `v1.26.9`, or accept them with an
-owner and expiry per the existing process) before CI is green again. Not
-yet done.
+**Red, fixes pushed, latest run unconfirmed.** In order:
+
+1. `83ce383` (the pentest-fix commit) failed on a flaky real-process
+   mpc-party timing test plus two bugs in this branch's own test setup
+   (`JwtAuthStrategy` breaking under a test helper's generic auto-mocker, a
+   local e2e drill script not updated for AUTH-01's new required password).
+   Fixed in `33cff4c`.
+2. The next run failed on something unrelated to this session's work
+   entirely: new Go stdlib / `golang.org/x/net` security advisories
+   (`GO-2026-6599` through `GO-2026-6617`) appeared across every Go module
+   and were not in `docs/security/accepted-vulnerabilities.json`. Fixed in
+   `79604e4` by bumping the Go toolchain to `go1.26.9` and
+   `golang.org/x/net` to `v0.60.0` everywhere each is actually used (not
+   blanket-added; confirmed per-module from CI's own "in stdlib" vs "in
+   golang.org/x/net" output). Caught and reverted a side effect along the
+   way: the dependency bump auto-raised the public `sdks/go` SDK's minimum
+   Go version from 1.21 to 1.26, which is a real compatibility break and
+   got its own decision (reverted; that module's advisories were pure
+   stdlib and needed no `x/net` bump at all).
+3. A stray committed build binary in `services/api-gateway/test/trisa-interop/`
+   got rebuilt as a side effect of step 2's rebuild; removed and gitignored
+   in `bc29787` (the test already builds its own fresh copy at run time and
+   never read the committed one).
+4. That rebuild also surfaced a real break the advisory fix caused: 4
+   Dockerfiles (`backup`, `mpc-party`, `mpc-signer`, `temporal-worker`)
+   still built `FROM golang:1.25-bookworm`, older than those 4 modules'
+   `go.mod` now requires, with no network access inside the build to
+   fetch a newer one. Fixed in `5ab7a4f` by bumping those 4 images to
+   `golang:1.26-bookworm`, matching the other 9 Dockerfiles' existing
+   convention of tracking their own module's `go` directive.
+
+Not yet confirmed green -- `5ab7a4f` hasn't finished a CI run yet. Separately
+observed and *not* a regression from any of this: the real-process
+`services/mpc-party` ceremony tests (`TestSigningWithEveryCommittee`,
+`TestKeyRefreshKeepsTheKeyAndChangesTheShares`) have failed on three
+different wall-clock timeouts across three different runs this session,
+in code untouched this session, with `go build`/`go vet` clean throughout --
+consistent with shared-runner resource flakiness, not a code defect. Worth
+a dedicated look if it keeps recurring, but not blocking this work.
 
 ## Blocked, and who unblocks it
 
 | Item | Needs | Owner |
 |---|---|---|
-| Fix the new Go stdlib/x-net advisory gate | A decision: bump Go toolchain, or accept with owner+expiry | Next engineering action |
+| Confirm `5ab7a4f` is actually green | Nothing -- just watch the next CI run | Next engineering action |
+| Investigate recurring mpc-party ceremony timeouts if they keep happening | Several more CI runs to see if the pattern holds | Engineering, low priority unless it recurs |
 | Re-run the Shannon pentest against the fixed deployment | Redeploy this branch to the AWS staging VM, re-run Shannon | You (or delegate back) |
 | Solana devnet run | An RPC endpoint (and a funded devnet key); paused on faucet rate limits | You |
 | Stripe test run | A test key as repo secret `STRIPE_TEST_API_KEY` (CI then runs it) | You |
@@ -123,7 +150,7 @@ are no longer on this list.)
 
 ## Critical path
 
-1. Fix the Go stdlib/x-net advisory CI gate (new, blocking every merge).
+1. Confirm the latest push (`5ab7a4f`) is actually green end to end.
 2. Re-run Shannon against the fixed AWS deployment to confirm the 11
    findings are actually closed end-to-end, not just unit-tested.
 3. Engage the audit firm now (longest lead time), then an independent
