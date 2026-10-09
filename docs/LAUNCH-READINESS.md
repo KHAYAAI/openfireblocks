@@ -24,7 +24,7 @@ disagree.
 | Billing | Built | Stripe job runs only if `STRIPE_TEST_API_KEY` is set, otherwise it skips; no card has been charged |
 | Helm chart, NetworkPolicy, backups | Installed and run on a real AWS cluster (full profile) and locally (lite profile) | Full profile verified on AWS with real generated secrets, public HTTPS via Caddy/Let's Encrypt; NetworkPolicy confirmed to isolate `mpc-signer` to `api-gateway`/`temporal-worker` only |
 | Policy enforcement reads the whole transaction, not just its envelope | Built | `POST /sign` now decodes ERC-20 calldata and evaluates the whitelist/amount limit against the real recipient and amount, matching `POST /keys/:id/sign-transaction` -- see pentest remediation below |
-| Vulnerability gate | **Currently failing** -- see CI state | New Go stdlib / `golang.org/x/net` advisories (GO-2026-66xx series) appeared across every Go module since the last green run and are not yet triaged or accepted |
+| Vulnerability gate | Passing | Go toolchain `go1.26.9` and `golang.org/x/net v0.60.0` clear the GO-2026-66xx advisories; CI green on `5ab7a4f` and `56e6662` |
 
 ## External pentest (Shannon, 2026-10-08) and remediation
 
@@ -61,7 +61,7 @@ contains exploitation detail against the then-current deployment).
 
 ## CI state
 
-**Red, fixes pushed, latest run unconfirmed.** In order:
+**Green on `5ab7a4f` (run 441) and `56e6662` (run 443), 2026-10-09.** How it got there, in order:
 
 1. `83ce383` (the pentest-fix commit) failed on a flaky real-process
    mpc-party timing test plus two bugs in this branch's own test setup
@@ -92,21 +92,18 @@ contains exploitation detail against the then-current deployment).
    `golang:1.26-bookworm`, matching the other 9 Dockerfiles' existing
    convention of tracking their own module's `go` directive.
 
-Not yet confirmed green -- `5ab7a4f` hasn't finished a CI run yet. Separately
-observed and *not* a regression from any of this: the real-process
-`services/mpc-party` ceremony tests (`TestSigningWithEveryCommittee`,
-`TestKeyRefreshKeepsTheKeyAndChangesTheShares`) have failed on three
-different wall-clock timeouts across three different runs this session,
-in code untouched this session, with `go build`/`go vet` clean throughout --
-consistent with shared-runner resource flakiness, not a code defect. Worth
-a dedicated look if it keeps recurring, but not blocking this work.
+Confirmed green: the push runs for `5ab7a4f` and `56e6662` both completed
+with conclusion `success`, including the mpc-party ceremony tests. The
+earlier mpc-party timeouts (three different tests across three runs, in code
+untouched this session) did not recur on either run, which supports runner
+resource flakiness rather than a code defect. Keep watching; if one recurs,
+re-run the job three times and bisect only if it fails identically each time.
 
 ## Blocked, and who unblocks it
 
 | Item | Needs | Owner |
 |---|---|---|
-| Confirm `5ab7a4f` is actually green | Nothing -- just watch the next CI run | Next engineering action |
-| Investigate recurring mpc-party ceremony timeouts if they keep happening | Several more CI runs to see if the pattern holds | Engineering, low priority unless it recurs |
+| Watch for mpc-party ceremony timeouts recurring | Passed on the last two runs; re-run and bisect only if one recurs | Engineering, low priority |
 | Re-run the Shannon pentest against the fixed deployment | Redeploy this branch to the AWS staging VM, re-run Shannon | You (or delegate back) |
 | Solana devnet run | An RPC endpoint (and a funded devnet key); paused on faucet rate limits | You |
 | Stripe test run | A test key as repo secret `STRIPE_TEST_API_KEY` (CI then runs it) | You |
@@ -150,7 +147,7 @@ are no longer on this list.)
 
 ## Critical path
 
-1. Confirm the latest push (`5ab7a4f`) is actually green end to end.
+1. Done: CI green on `5ab7a4f` and `56e6662`.
 2. Re-run Shannon against the fixed AWS deployment to confirm the 11
    findings are actually closed end-to-end, not just unit-tested.
 3. Engage the audit firm now (longest lead time), then an independent
