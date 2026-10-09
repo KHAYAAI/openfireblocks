@@ -164,3 +164,9 @@ government bodies.
 
 | Date | Firm/institution | Category | Route | Status |
 |---|---|---|---|---|
+| 2026-10-09 | SARB Fintech Unit | Government | SARB-FINTECH@resbank.co.za | Sent (v2 formal), msg 1a120a2538e0df9b. Follow up 2026-10-16 |
+| 2026-10-09 | Mauritius FSC Innovation Office | Government | finnovate@fscmauritius.org | Sent, msg 1a120a2642ad9799. Follow up 2026-10-16 |
+| 2026-10-09 | Nigeria SEC Innovation Office | Government | innovation@sec.gov.ng | Sent, msg 1a120a2789c01974. Follow up 2026-10-16 |
+| 2026-10-09 | Bank of Ghana Virtual Assets Dept | Government | vasp@bog.gov.gh | Sent, msg 1a120d1b4b2b3021. Follow up 2026-10-16 |
+| 2026-10-09 | Bank of Mauritius Innov8 | Government | innovationHub@bom.mu | Sent, msg 1a120d1cd95e319b. Follow up 2026-10-16 |
+| 2026-10-09 | Rwanda CMA fintech sandbox | Government | fintech@cma.rw | Sent, msg 1a120d1ddbce8212 (route low confidence; watch for bounce). Follow up 2026-10-16 |
