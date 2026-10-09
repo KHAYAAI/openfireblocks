@@ -2,11 +2,13 @@
 
 # Build stage.
 #
-# golang:1.25 because services/mpc-signer/go.mod declares `go 1.24`. The
-# golang:1.21-alpine base this replaces could never have compiled the
+# golang:1.26 because services/mpc-signer/go.mod declares `go 1.26.0`
+# (the go1.26.9 toolchain bump that fixed the net/http/x-net dependency
+# advisories -- see docs/security/accepted-vulnerabilities.json's "about").
+# The golang:1.21-alpine base this replaces could never have compiled the
 # module, and its runtime stage ran `apk add ca-certificates`, which needs
 # network access to the Alpine package mirrors at build time.
-FROM golang:1.25-bookworm AS build
+FROM golang:1.26-bookworm AS build
 
 # Optional trust anchor for building behind a TLS-intercepting egress proxy
 # (corporate MITM, sandboxed CI). Passed as a BuildKit secret rather than a

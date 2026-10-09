@@ -2,7 +2,10 @@
 
 # services/backup had no Dockerfile, so the backup code (pg_dump, Vault export,
 # failover) had no way to run anywhere but a shell.
-FROM golang:1.25-bookworm AS build
+#
+# golang:1.26 because go.mod declares `go 1.26.0` (the go1.26.9 toolchain
+# bump that fixed the net/http/x-net dependency advisories).
+FROM golang:1.26-bookworm AS build
 
 # Optional trust anchor for building behind a TLS-intercepting egress proxy,
 # passed as a BuildKit secret so it never lands in a layer.
