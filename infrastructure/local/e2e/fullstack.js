@@ -45,7 +45,7 @@ async function person(name, org) {
   let r = await call('POST', '/v1/auth/register', { body: { email, password: PW, fullName: name } });
   if (r.s >= 300) throw new Error('register ' + JSON.stringify(r));
   r = await call('POST', '/v1/auth/login', { body: { email, password: PW } });
-  const tok = r.d.accessToken; const secret = (await call('POST', '/v1/auth/mfa/enroll', { token: tok })).d.secret;
+  const tok = r.d.accessToken; const secret = (await call('POST', '/v1/auth/mfa/enroll', { token: tok, body: { password: PW } })).d.secret;
   await call('POST', '/v1/auth/mfa/enroll/confirm', { token: tok, body: { code: await totp(secret) } });
   return { name, email, secret, token: tok };
 }

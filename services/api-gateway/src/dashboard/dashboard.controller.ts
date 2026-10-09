@@ -72,7 +72,7 @@ export class DashboardController {
     if (!session) {
       return null;
     }
-    if (await this.revocation?.isRevoked(session.token)) {
+    if (typeof this.revocation?.isRevoked === 'function' && (await this.revocation.isRevoked(session.token))) {
       return null;
     }
     try {
@@ -130,7 +130,9 @@ export class DashboardController {
     const session = readSession(req.headers.cookie);
     if (session) {
       const remainingSeconds = Math.ceil((session.expiresAt - Date.now()) / 1000);
-      await this.revocation?.revoke(session.token, remainingSeconds);
+      if (typeof this.revocation?.revoke === 'function') {
+        await this.revocation.revoke(session.token, remainingSeconds);
+      }
     }
     res.setHeader('Set-Cookie', clearSessionCookie());
     return res.redirect(303, '/dashboard/sign-in');

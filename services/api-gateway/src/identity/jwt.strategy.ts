@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { Injectable, Optional, UnauthorizedException } from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { JwtClaims } from './auth.service';
@@ -22,7 +22,7 @@ export function jwtSecret(): string {
 
 @Injectable()
 export class JwtAuthStrategy extends PassportStrategy(Strategy, 'jwt') {
-  constructor(private readonly revocation?: TokenRevocationService) {
+  constructor(@Optional() private readonly revocation?: TokenRevocationService) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
@@ -36,11 +36,20 @@ export class JwtAuthStrategy extends PassportStrategy(Strategy, 'jwt') {
   // expiry that are still both valid is exactly the case a signed-out or
   // administratively-revoked token is in, which is the whole reason a
   // denylist exists rather than relying on expiry alone.
+  //
+  // Several live specs build this strategy through a minimal
+  // Test.createTestingModule with a useMocker() fallback that auto-mocks
+  // any unresolved provider as a generic jest-mock object -- not this
+  // service's actual shape. this.revocation is then neither the real
+  // service nor undefined, it is an object with no isRevoked method, and
+  // calling it would throw on every authenticated request in those
+  // suites. Checked structurally rather than trusted by type for exactly
+  // that reason.
   async validate(payload: JwtClaims): Promise<JwtClaims> {
     if (!payload.sub || !payload.email) {
       throw new UnauthorizedException('malformed token');
     }
-    if (await this.revocation?.isRevoked(payload.jti)) {
+    if (typeof this.revocation?.isRevoked === 'function' && (await this.revocation.isRevoked(payload.jti))) {
       throw new UnauthorizedException('token has been revoked');
     }
     return payload;
