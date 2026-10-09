@@ -170,3 +170,9 @@ government bodies.
 | 2026-10-09 | Bank of Ghana Virtual Assets Dept | Government | vasp@bog.gov.gh | Sent, msg 1a120d1b4b2b3021. Follow up 2026-10-16 |
 | 2026-10-09 | Bank of Mauritius Innov8 | Government | innovationHub@bom.mu | Sent, msg 1a120d1cd95e319b. Follow up 2026-10-16 |
 | 2026-10-09 | Rwanda CMA fintech sandbox | Government | fintech@cma.rw | Sent, msg 1a120d1ddbce8212 (route low confidence; watch for bounce). Follow up 2026-10-16 |
+| 2026-10-09 | Seychelles FSA | Government | enquiries@fsaseychelles.sc | Sent, msg 1a120d66d45da491. Follow up 2026-10-16 |
+| 2026-10-09 | Bank of Namibia (Governor's Office) | Government | gov@bon.com.na | Sent, msg 1a120d784c129671. Follow up 2026-10-16 |
+| 2026-10-09 | Bank of Tanzania | Government | info@bot.go.tz | Sent, msg 1a120d7b2afa2ed7. Follow up 2026-10-16 |
+| 2026-10-09 | Peach Payments | Fintech | refer@peachpayments.com | Sent, msg 1a120d7bfbdd1b35. Follow up 2026-10-16 |
+| 2026-10-09 | Ozow | Fintech | sales@ozow.com | Sent, msg 1a120d7f2d0b9cd2 (low-confidence route). Follow up 2026-10-16 |
+| 2026-10-09 | Chipper Cash | Fintech | getintouch@chipperbusiness.com | Sent, msg 1a120d8007e3fb72. Follow up 2026-10-16 |
