@@ -19,6 +19,23 @@ Do not attach or link the repository before an NDA is signed.
 | Pentest | Bishop Fox, Doyensec, Cobalt, Include Security | still to research |
 | SOC 2 | Via Vanta / Drata / Secureframe partner CPA firms | still to research |
 
+## A2. Verified public contact routes (from search results; confirm on the site before sending)
+
+| Target | Segment | Route | Note |
+|---|---|---|---|
+| IFWG Innovation Hub (SARB, FSCA, National Treasury) | SA government/regulator | innovation@ifwg.co.za | Published on the hub's own FAQ. Right door for a regulator/sandbox conversation |
+| Luno institutional | SA fintech | form at luno.com/institutional | No verified email |
+| VALR, OVEX | SA fintech | contact pages on valr.com, ovex.com | No verified email found; OVEX already uses Fireblocks MPC |
+| Absa CIB digital assets | SA bank | Rob Downes (Head of Digital Assets), Robyn Lawson (Head of Digital Product: Custody) | **Absa launched bank-led digital-asset custody with Ripple in Oct 2026.** Treat as competitor first; approach only as a possible technology partner, via LinkedIn or Absa CIB, no email found |
+| Standard Bank | SA bank | none found | No custody product found; go through CIB |
+| VARA licensed custodians (Hex Trust, Komainu, Cregis) | UAE | vara.ae register, firms' contact pages | Competitors or channel partners. VARA contact page not found |
+| SOC 2 CPA firms | SOC 2 | Sensiba LLP, Prescient Security, Johanson Group, Zero Day CPA, Sage Audits | Names from directories; verify each is a licensed CPA firm |
+| Least Authority | Crypto audit | liz@leastauthority.com (CEO, third-party listing) | Unconfirmed; prefer the site's contact form |
+| OpenZeppelin, Spearbit (Cantina), Cyfrin | Contract audit | each firm's request-a-quote form | No email needed |
+
+Still to find: UK, US, UAE and SA asset managers, insurers and banks. Find a named person
+through each firm's own site or LinkedIn rather than a guessed address.
+
 ## B. Emails
 
 ### 1. Cryptographic / threshold-signature audit (screening)
@@ -106,17 +123,21 @@ digital-asset custody software: threshold signing (no single key ever exists), M
 approvals with no self-approval, per-tenant isolation, policy limits, Travel Rule and
 sanctions tooling. You run it in your own infrastructure; we never hold your keys or data.
 
-Where it stands, plainly:
+Where it stands, plainly (the attached sales brief has the detail):
 - Real key generation and signing have run on a real cloud cluster with public HTTPS.
 - An AI-driven penetration test found 11 issues; all are fixed.
 - Not yet done: an independent cryptographic audit, an independent human-led pentest, SOC 2,
-  and a live public-chain run. We are procuring these now.
+  hardware-isolated shares, and a live public-chain run for every chain family.
+- Cleared for demos, testnet pilots and paid design partnerships. Not cleared to hold
+  material client or public funds.
 
-Because of that we are offering a bounded, supervised pilot on testnet or capped balances,
-not production custody. If [Institution] is exploring digital-asset custody, we'd welcome a
-30-minute call, and can send a short proposal and project overview.
+The way in is a paid six-month pilot at R450,000 (about $25,000), including implementation
+and direct access to the engineering team, ending in an evidence package and a production
+roadmap. It is source-available (Elastic License 2.0) and self-hosted, so your security team
+can inspect it. Nothing in the pilot holds mainnet funds.
 
-Would you be open to that?
+If [Institution] is exploring digital-asset custody, I'd welcome a 30-minute call. Would you
+be open to that?
 
 Kind regards,
 Tebogo Mvelase
@@ -128,8 +149,10 @@ Segment openers (replace the second sentence):
 - Insurer: "...for custody of reserves or insured digital assets."
 - Government: "...for sovereign or public-sector digital-asset safekeeping with full audit."
 
-Attach: a one-page proposal and project overview (to be built from
-docs/PLATFORM-OVERVIEW.md and docs/pilot/PILOT-OFFER.md).
+Attach the matching sales brief PDF: FORGE-CUSTODY-Sales-Asset-Managers.pdf for asset
+managers/insurers, FORGE-CUSTODY-Sales-Governments.pdf for government and regulators.
+Bank and fintech briefs: not yet provided (use the asset-manager brief until they exist).
+USD/ZAR wording: quote R450,000 for South Africa; confirm the USD price for UK/US/UAE.
 
 ## C. Regions and restrictions
 
