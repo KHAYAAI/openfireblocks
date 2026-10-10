@@ -1,6 +1,6 @@
 # Launch readiness
 
-As of 2026-10-09, branch `claude/platform-explanation-h0st5y`. This is a
+As of 2026-10-10, branch `claude/platform-explanation-h0st5y`. This is a
 summary; `LAUNCH-CHECKLIST.md` is the evidence-based source and wins if they
 disagree.
 
@@ -20,7 +20,7 @@ disagree.
 | Approvals, M-of-N, no self-approval, OIDC roles | Built | Real-Postgres CI job; OIDC job against an independent provider; quorum floor of 2 enforced (no self-service downgrade to a single signer) |
 | Tenant isolation (Postgres RLS) | Built | CI tenant-isolation tests |
 | Deposit sweeps, TRISA link, multi-custodian, tokenisation | Built | CI specs; TRISA cross-checked against TRISA's Go reference library; token contract on a dev chain |
-| Bitcoin, Solana, Cosmos, EVM | Protocol-tested | Fixtures and mock nodes; never accepted by a real public network |
+| Bitcoin, Solana, Cosmos, EVM | Protocol-tested | EVM and Bitcoin were driven end to end against a private multi-node EVM network and Bitcoin Core in a controlled mode. Solana and Cosmos used fixtures and mock nodes. **No chain has been accepted by a public network yet.** Sales material must say "private test network", not "real network" |
 | Billing | Built | Stripe job runs only if `STRIPE_TEST_API_KEY` is set, otherwise it skips; no card has been charged |
 | Helm chart, NetworkPolicy, backups | Installed and run on a real AWS cluster (full profile) and locally (lite profile) | Full profile verified on AWS with real generated secrets, public HTTPS via Caddy/Let's Encrypt; NetworkPolicy confirmed to isolate `mpc-signer` to `api-gateway`/`temporal-worker` only |
 | Policy enforcement reads the whole transaction, not just its envelope | Built | `POST /sign` now decodes ERC-20 calldata and evaluates the whitelist/amount limit against the real recipient and amount, matching `POST /keys/:id/sign-transaction` -- see pentest remediation below |
@@ -115,6 +115,30 @@ re-run the job three times and bisect only if it fails identically each time.
 | Custody against a real custodian | Custodian account | You |
 | Licensing, ToS, privacy policy, insurance, sanctions/KYC vendor | Legal and commercial work | You |
 
+## Commercial and assurance outreach (started 2026-10-09)
+
+Sent 14 emails on 2026-10-09 from TKM@myforgepay.com: 9 to government and regulator
+innovation offices (SARB Fintech Unit, Mauritius FSC and Bank of Mauritius, Nigeria SEC, Bank of
+Ghana, Rwanda CMA, Seychelles FSA, Bank of Namibia, Bank of Tanzania), 3 to fintechs (Peach
+Payments, Ozow, Chipper Cash), 1 to Trail of Bits (cryptographic audit screening) and 1 to the Bank
+of England Digital Securities Sandbox. Follow-up drafts sit in Gmail for 2026-10-16. Form-based
+outreach (VALR, OVEX, Luno, Yellow Card, Cross River Bank, plus pentest and SOC 2 firms) is
+prepared but not yet submitted. No replies yet. Details and tracker: `docs/pilot/OUTREACH-BATCH-1.md`,
+`docs/pilot/FORM-TEXTS-BATCH-2.md`, `docs/pilot/NAMED-CONTACTS.md`.
+
+Wording used with institutions, and what is true behind it:
+
+| Statement made | State |
+|---|---|
+| An AI-driven penetration test is complete and all findings are fixed | True. Fixes are unit-tested but the test has not been re-run against the fixed deployment |
+| An independent human-led penetration test is being arranged | Outreach only. No vendor is engaged |
+| An independent cryptographic review is being arranged | One screening email sent (Trail of Bits). No firm is engaged |
+| A SOC 2 programme is planned to begin within 1-2 months | A plan, not a commitment. No auditor or platform is chosen |
+| Cleared for testnet pilots, not for material funds | True. Pilot priced at R450,000 for six months |
+
+Competitive note: Absa launched a bank-led digital-asset custody service (with Ripple) on
+2026-10-02, so South African banks are competitors before they are buyers.
+
 ## AWS staging (2026-10-08) and local kind cluster runs (2026-10-06/07)
 
 - **AWS, full profile, real secrets, public HTTPS:** an `m6i.2xlarge` EC2
@@ -150,8 +174,8 @@ are no longer on this list.)
 1. Done: CI green on `5ab7a4f` and `56e6662`.
 2. Re-run Shannon against the fixed AWS deployment to confirm the 11
    findings are actually closed end-to-end, not just unit-tested.
-3. Engage the audit firm now (longest lead time), then an independent
-   pen-test vendor (the Shannon run does not substitute for this).
+3. Follow up the audit, pen-test and SOC 2 outreach on 2026-10-16 and engage a firm in each
+   category (the Shannon run does not substitute for the human test).
 4. Pick the SOC 2 firm and start the 6-12 month observation window.
 5. Run Solana devnet and Stripe test mode on the existing AWS deployment.
 6. Stand up isolated-host MPC parties and a hardware HSM.
