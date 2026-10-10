@@ -239,7 +239,7 @@ at all. For a cross-border payments buyer that is a live objection.
 | Uptime SLA | None offered | 99.9%+ | Contractual |
 | HA / DR | Postgres replication, Vault Raft, 4-node kind | Multi-region | Multi-site |
 | Observability | Prometheus metrics, audit trail (immudb + Postgres) | Full | Full |
-| **E2E drills in CI** | **Yes — on a real cluster, real chains** | Internal | Internal |
+| **E2E drills in CI** | **Yes — on a real cluster, private test chains** | Internal | Internal |
 
 **The insurance line is worth understanding rather than fixing.** Fireblocks
 carries insurance because they hold keys — the policy covers *their*
@@ -352,7 +352,7 @@ you have today, and it is weeks rather than quarters.
 | Policy engine | **8/10** | Embedded, auditable, calldata-aware. Missing approvals |
 | Stablecoin support | **8/10** | Registry with on-chain verification is better than most |
 | ZAR / FIC compliance | **9/10** | Nobody else has it |
-| Test and proof culture | **9/10** | Real drills on real chains; almost nobody demos this |
+| Test and proof culture | **9/10** | Real drills on private test chains; almost nobody demos this |
 | Cryptographic core | **5/10** | tss-lib is sound; **no refresh, no audit, no hardware** |
 | Key lifecycle | **4/10** | No refresh, no documented recovery |
 | Chain coverage | **3/10** | Two families. No Tron, no Solana transactions |

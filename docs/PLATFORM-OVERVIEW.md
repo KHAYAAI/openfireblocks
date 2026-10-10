@@ -21,7 +21,7 @@ entire security claim, so it is stated per chain rather than as a list.
 
 | Chain | Signature scheme | Threshold (MPC) | Server-side build & broadcast | Proven by |
 |---|---|---|---|---|
-| Ethereum | ECDSA secp256k1 | **Yes** | Yes — `POST /keys/:id/transactions`, and `POST /keys/:id/token-transfers` for ERC-20 | `chain-test.sh` and `stablecoin-drill.sh` against a real multi-node network |
+| Ethereum | ECDSA secp256k1 | **Yes** | Yes — `POST /keys/:id/transactions`, and `POST /keys/:id/token-transfers` for ERC-20 | `chain-test.sh` and `stablecoin-drill.sh` against a private multi-node test network (not a public chain) |
 | Bitcoin | ECDSA secp256k1 | **Yes** | Yes — `POST /keys/:id/bitcoin-transactions` | `bitcoin-api-drill.sh` against Bitcoin Core |
 | Solana | Ed25519 | **Yes** | Not yet — no API route | `TestEd25519ThresholdSignatureVerifies` |
 | Cosmos | ECDSA secp256k1 | Yes (same path as Ethereum) | Not yet — no API route | — |
@@ -67,7 +67,7 @@ fifty-million-rand stablecoin transfer and no control had read it.
 
 Calldata is now decoded before policy, tokens must be registered and
 verified against their own `symbol()` and `decimals()` before they can move
-anything, and `stablecoin-drill.sh` proves the refusals on a real chain.
+anything, and `stablecoin-drill.sh` proves the refusals on a private test chain.
 
 Tokens ship registered but without contract addresses for the rand
 stablecoins — an address belongs to its issuer, not to a migration file.

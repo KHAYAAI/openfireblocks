@@ -188,7 +188,7 @@ workflows. Vault stores sealed key shares and secrets.
 
 | Chain | Scheme | Threshold | Build and broadcast route | Proven by |
 |---|---|---|---|---|
-| Ethereum / EVM | ECDSA | Yes | `POST /keys/:id/transactions`, `/transfers`, ERC-20 via `/token-transfers` | Real multi-node network drills |
+| Ethereum / EVM | ECDSA | Yes | `POST /keys/:id/transactions`, `/transfers`, ERC-20 via `/token-transfers` | Private multi-node test-network drills (not a public chain) |
 | Bitcoin | ECDSA | Yes | `POST /keys/:id/bitcoin-transactions` | Bitcoin Core regtest drill |
 | Solana | Ed25519 | Yes | `POST /keys/:id/solana-transactions` | Protocol tests; **never accepted by a real network** |
 | Cosmos | ECDSA | Yes | `POST /keys/:id/cosmos-transactions` | Protocol tests; **never accepted by a real network** |
