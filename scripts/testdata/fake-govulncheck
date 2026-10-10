@@ -1,0 +1,13 @@
+#!/usr/bin/env python3
+import os,sys
+# pretty-printed, concatenated JSON objects, as govulncheck -format json writes them
+mod=os.path.basename(os.getcwd())
+print('{\n  "config": {"protocol_version": "v1.0.0"}\n}')
+if mod=="mpc-signer":
+    for osv in ("GO-2024-3189","GO-2024-2818","GO-2022-1098"):
+        print('{\n  "finding": {\n    "osv": "%s",\n    "fixed_version": "v0.24.2",\n    "trace": [\n      {"module": "github.com/btcsuite/btcd", "version": "v0.0.0", "package": "txscript", "function": "Execute"},\n      {"module": "forge", "package": "chains", "function": "Assemble", "position": {"filename": "chains/x.go", "line": 351}}\n    ]\n  }\n}' % osv)
+if mod=="webhooks":
+    print('{"finding": {"osv": "GO-2099-0001", "trace": [{"module": "github.com/x/y", "version": "v1"}]}}')
+if mod=="backup":
+    print('{"finding": {"osv": "GO-2099-0002", "fixed_version": "v9", "trace": [{"module": "golang.org/x/net", "package": "http2", "function": "Do", "position": {"filename": "main.go", "line": 7}}]}}')
+sys.exit(0)

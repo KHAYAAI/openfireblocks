@@ -3,17 +3,21 @@ package activities
 import (
 	"bytes"
 	"context"
+	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
+	"os"
+	"strings"
 	"time"
 
-	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/common/hexutil"
-	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/ethclient"
+	"forge-crypto/temporal-worker/internal/ethrpc"
+	"forge-crypto/temporal-worker/internal/ethtypes"
 	"go.temporal.io/sdk/activity"
 
+	"forge-crypto/temporal-worker/db"
 	"forge-crypto/temporal-worker/workflows"
 )
 
@@ -26,19 +30,65 @@ type Activities struct {
 	EthereumRPC           string
 	RequiredConfirmations int64
 	httpClient            *http.Client
+	db                    *sql.DB
+	roundStore            *db.CeremonyRoundStore
+	// Produces the second signature a party can be configured to require
+	// before joining a ceremony. nil when none is configured, which is
+	// the default -- see ceremony_authorization.go.
+	ceremonyAuth *ceremonyAuthorizer
 }
 
-// NewActivities builds an Activities with sane defaults.
-func NewActivities(policyURL, mpcURL, ethRPC string, confirmations int64) *Activities {
+// NewActivities builds an Activities with sane defaults. Its shared
+// httpClient (used for CheckPolicy against services/policy-service among
+// other calls) presents a client certificate when
+// MTLS_CERT_FILE/MTLS_KEY_FILE/MTLS_CA_FILE are all set -- the same
+// opt-in convention as clientTLSConfigFromEnv's other caller,
+// clientTLSConfigFromEnv (mtls.go). Policy evaluation gates every signing
+// request, so it's a high-value link for authenticated, encrypted
+// transport rather than plaintext HTTP; presenting a client cert to
+// endpoints that don't ask for one (blockchain RPC, external services)
+// is harmless, since TLS client-cert auth is opt-in on the server side.
+func NewActivities(policyURL, mpcURL, ethRPC string, confirmations int64, database *sql.DB) *Activities {
 	if confirmations <= 0 {
 		confirmations = 3
 	}
+
+	var roundStore *db.CeremonyRoundStore
+	if database != nil {
+		roundStore = db.NewCeremonyRoundStore(database)
+	}
+
+	httpClient := &http.Client{Timeout: 15 * time.Second}
+	mtlsTransport, mtlsEnabled, err := mtlsTransportFromEnv()
+	if err != nil {
+		// Cert files were specified but unusable -- fail loudly at
+		// startup rather than silently falling back to plaintext, the
+		// same standard the real ceremony path holds itself to.
+		log.Fatalf("mTLS configuration error: %v", err)
+	}
+	if mtlsEnabled {
+		httpClient.Transport = mtlsTransport
+	}
+
+	// Fatal when configured but unusable, for the same reason the mTLS
+	// check above is: a deployment that set an authorising key and got a
+	// worker which silently sends unauthorised ceremony requests believes
+	// it has a control it does not have.
+	ceremonyAuth, err := newCeremonyAuthorizer(os.Getenv, httpClient)
+	if err != nil {
+		log.Fatalf("ceremony authorisation is configured but unusable: %v", err)
+	}
+	log.Printf("ceremony authorisation: %s", ceremonyAuth.describe())
+
 	return &Activities{
 		PolicyURL:             policyURL,
 		MpcSignerURL:          mpcURL,
 		EthereumRPC:           ethRPC,
 		RequiredConfirmations: confirmations,
-		httpClient:            &http.Client{Timeout: 15 * time.Second},
+		httpClient:            httpClient,
+		db:                    database,
+		roundStore:            roundStore,
+		ceremonyAuth:          ceremonyAuth,
 	}
 }
 
@@ -101,37 +151,38 @@ func (a *Activities) SignTransaction(ctx context.Context, req workflows.Transact
 
 // BroadcastTransaction submits a raw signed transaction to the network.
 func (a *Activities) BroadcastTransaction(ctx context.Context, signedTx string) (*workflows.BroadcastResult, error) {
-	client, err := ethclient.DialContext(ctx, a.EthereumRPC)
+	client, err := ethrpc.Dial(a.EthereumRPC)
 	if err != nil {
 		return nil, fmt.Errorf("dial RPC: %w", err)
 	}
-	defer client.Close()
 
-	raw, err := hexutil.Decode(signedTx)
+	raw, err := hex.DecodeString(strings.TrimPrefix(signedTx, "0x"))
 	if err != nil {
 		return nil, fmt.Errorf("decode signed tx: %w", err)
 	}
-	tx := new(types.Transaction)
-	if err := tx.UnmarshalBinary(raw); err != nil {
+	// Decoded to confirm this is a transaction this platform recognises
+	// before it is broadcast, not to derive the hash -- the hash is the
+	// Keccak of the bytes themselves, which is true whatever they encode.
+	if _, err := ethtypes.DecodeSignedTransaction(raw); err != nil {
 		return nil, fmt.Errorf("unmarshal signed tx: %w", err)
 	}
-	if err := client.SendTransaction(ctx, tx); err != nil {
+	if _, err := client.SendRawTransaction(ctx, "0x"+hex.EncodeToString(raw)); err != nil {
 		return nil, fmt.Errorf("send tx: %w", err)
 	}
-	return &workflows.BroadcastResult{TxHash: tx.Hash().Hex()}, nil
+	return &workflows.BroadcastResult{
+		TxHash: "0x" + hex.EncodeToString(ethtypes.TransactionHash(raw)),
+	}, nil
 }
 
 // MonitorTransaction polls for the receipt until the configured number of
 // confirmations is reached. It heartbeats so Temporal can detect a stalled
 // activity, and respects the activity's context cancellation/timeout.
 func (a *Activities) MonitorTransaction(ctx context.Context, txHash string) (*workflows.MonitorResult, error) {
-	client, err := ethclient.DialContext(ctx, a.EthereumRPC)
+	client, err := ethrpc.Dial(a.EthereumRPC)
 	if err != nil {
 		return nil, fmt.Errorf("dial RPC: %w", err)
 	}
-	defer client.Close()
 
-	hash := common.HexToHash(txHash)
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
@@ -142,7 +193,7 @@ func (a *Activities) MonitorTransaction(ctx context.Context, txHash string) (*wo
 		case <-ticker.C:
 			activity.RecordHeartbeat(ctx, "polling for confirmations")
 
-			receipt, err := client.TransactionReceipt(ctx, hash)
+			receipt, err := client.TransactionReceipt(ctx, txHash)
 			if err != nil {
 				// Not mined yet (or transient): keep polling.
 				continue
@@ -151,12 +202,14 @@ func (a *Activities) MonitorTransaction(ctx context.Context, txHash string) (*wo
 			if err != nil {
 				continue
 			}
-			confirmations := int64(head) - receipt.BlockNumber.Int64() + 1
+			confirmations := int64(head) - int64(receipt.BlockNumber) + 1
 			if confirmations >= a.RequiredConfirmations {
 				return &workflows.MonitorResult{
-					BlockNumber:   receipt.BlockNumber.Int64(),
+					BlockNumber:   int64(receipt.BlockNumber),
 					Confirmations: confirmations,
-					Success:       receipt.Status == types.ReceiptStatusSuccessful,
+					// Status 0 is a transaction that was mined and
+					// reverted: on chain, gas paid, nothing moved.
+					Success: receipt.Status == 1,
 				}, nil
 			}
 		}

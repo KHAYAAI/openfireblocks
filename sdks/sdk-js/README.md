@@ -33,6 +33,29 @@ const txs = await client.listTransactions();
 const audit = await client.getAuditTrail(result.requestId);
 ```
 
+## Solana and Cosmos
+
+Spend from a threshold key on Solana or a Cosmos SDK chain. The platform
+builds the transaction, refuses what would fail (overdraft, rent, fee
+shortage) before any signing ceremony, and relays it once the signature
+verifies:
+
+```ts
+const sol = await client.sendSolana(keyId, {
+  destination: '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM',
+  amount: '1000000000', // lamports
+});
+const status = await client.solanaTransactionStatus(keyId, sol.signature);
+
+const atom = await client.sendCosmos(keyId, {
+  destination: 'cosmos1qypqxpq9qcrsszg2pvxq6rs0zqg3yyc5lzv7xu',
+  amount: '1000000', // uatom
+});
+```
+
+Native SOL and bank sends only. Both are protocol-tested but have not been
+accepted by a real network from this repository.
+
 Non-2xx responses throw `OpenFireblocksError` with `.status` and the parsed
 `.body` (e.g. policy denials return HTTP 403 with `{ denials: [...] }`).
 

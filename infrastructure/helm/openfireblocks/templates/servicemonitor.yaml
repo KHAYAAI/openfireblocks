@@ -13,6 +13,11 @@ spec:
     - port: http
       path: /metrics
       interval: 15s
+      {{- if .Values.metrics.tokenSecret }}
+      bearerTokenSecret:
+        name: {{ .Values.metrics.tokenSecret | quote }}
+        key: metrics-token
+      {{- end }}
   namespaceSelector:
     matchNames:
       - {{ .Release.Namespace }}

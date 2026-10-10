@@ -1,0 +1,3 @@
+# Build output. `go run .` and the drills build to a temp dir; a binary
+# committed here would be architecture-specific and immediately stale.
+/authorize

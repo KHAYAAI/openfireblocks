@@ -1,0 +1,293 @@
+import { ControlsService } from '../controls/controls.service';
+import {
+  BadGatewayException,
+  Body,
+  Controller,
+  Optional,
+  Delete,
+  ForbiddenException,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Logger,
+  Param,
+  Post,
+  Put,
+  Query,
+  UnauthorizedException,
+  UseGuards,
+} from '@nestjs/common';
+import { IsIn, IsInt, IsOptional, IsString, Matches, MaxLength } from 'class-validator';
+import { JwtAuthGuard } from '../identity/jwt-auth.guard';
+import { CurrentUser } from '../identity/current-user.decorator';
+import { JwtClaims } from '../identity/auth.service';
+import { UsersService } from '../identity/users.service';
+import { verifyTotpCode } from '../identity/mfa.util';
+import { TemporalService } from '../settlements/temporal.service';
+import { CustomerService } from '../customers/customer.service';
+import { SignRequestDto } from '../sign/dto/sign-request.dto';
+import { AuditService } from '../database/audit.service';
+import { ApprovalsService, Decision, NATIVE_WORKFLOW_PREFIX } from './approvals.service';
+import { NativeApprovalHooks } from './native-approval-hooks';
+import { RequireTenantRole, TenantRoleGuard } from './tenant-role.guard';
+import { ALL_ROLES, CAN_DECIDE, CAN_INITIATE, CAN_MANAGE, CAN_READ_APPROVALS, TenantRole } from './roles';
+import { v4 as uuid } from 'uuid';
+
+export class DecisionDto {
+  @IsIn(['approve', 'reject'])
+  decision: Decision;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  reason?: string;
+
+  // A current one-time code from the approver's authenticator. Required
+  // for password accounts on every decision, not just at sign-in: the
+  // decision is the moment that matters, and a session left open on a
+  // desk should not be enough to move money.
+  @IsOptional()
+  @Matches(/^\d{6}$/)
+  totpCode?: string;
+}
+
+export class PolicyDto {
+  @IsInt()
+  requiredApprovals: number;
+
+  @IsInt()
+  windowMinutes: number;
+}
+
+export class MemberDto {
+  @IsString()
+  @MaxLength(255)
+  email: string;
+
+  @IsIn(ALL_ROLES as TenantRole[])
+  role: TenantRole;
+}
+
+// People acting inside one organisation: the approval queue, decisions,
+// the approval policy, membership, and starting a transfer as a named
+// person.
+//
+// Every route needs a signed-in person (JwtAuthGuard: password + TOTP, or
+// SSO) holding a role in the organisation (TenantRoleGuard). API keys do
+// not work here, by design: an API key is a machine, and this is where
+// people are held accountable by name.
+@Controller('organisations/:customerId')
+@UseGuards(JwtAuthGuard, TenantRoleGuard)
+export class ApprovalsController {
+  private readonly logger = new Logger(ApprovalsController.name);
+
+  constructor(
+    private readonly approvals: ApprovalsService,
+    private readonly users: UsersService,
+    private readonly temporal: TemporalService,
+    private readonly customers: CustomerService,
+    private readonly audit: AuditService,
+    private readonly native: NativeApprovalHooks,
+    // Optional: the existing tests build this controller directly.
+    @Optional() private readonly controls?: ControlsService,
+  ) {}
+
+  // ------------------------------------------------------------ approvals
+
+  @Get('approvals')
+  @RequireTenantRole(...CAN_READ_APPROVALS)
+  list(@Param('customerId') customerId: string, @Query('status') status?: string) {
+    return this.approvals.list(customerId, status);
+  }
+
+  @Get('approvals/:approvalId')
+  @RequireTenantRole(...CAN_READ_APPROVALS)
+  get(@Param('customerId') customerId: string, @Param('approvalId') approvalId: string) {
+    return this.approvals.get(customerId, approvalId);
+  }
+
+  @Post('approvals/:approvalId/decisions')
+  @HttpCode(HttpStatus.OK)
+  @RequireTenantRole(...CAN_DECIDE)
+  async decide(
+    @Param('customerId') customerId: string,
+    @Param('approvalId') approvalId: string,
+    @CurrentUser() claims: JwtClaims,
+    @Body() dto: DecisionDto,
+  ) {
+    // While the organisation is frozen no approval can release anything, so
+    // none is taken: otherwise a quorum reached during a freeze would carry
+    // out the moment it was lifted, on a decision made under different
+    // circumstances. Rejecting stays possible: it only stops things.
+    if (dto.decision === 'approve') await this.controls?.assertCanSign(customerId);
+    const stepUp = await this.stepUp(claims.sub, dto.totpCode, claims);
+
+    const { request, alreadyRecorded } = await this.approvals.recordDecision({
+      customerId,
+      approvalId,
+      userId: claims.sub,
+      decision: dto.decision,
+      reason: dto.reason,
+      stepUp,
+    });
+
+    // A transfer the gateway signs itself has no workflow to signal. Its
+    // decision is acted on here: executed if this decision reached quorum,
+    // recorded if it was a rejection. An execution failure does not undo the
+    // decision; it is reported in `execution` and can be retried.
+    if (request.workflowId.startsWith(NATIVE_WORKFLOW_PREFIX)) {
+      const execution = await this.native.registered?.onDecision(customerId, request);
+      if (!alreadyRecorded) {
+        await this.audit.logEvent({
+          type: `approval.${dto.decision}`,
+          requestId: approvalId,
+          customerId,
+          message: `${claims.email} decided ${dto.decision} (${stepUp}); now ${request.approvals}/${request.requiredApprovals}, ${request.status}`,
+          status: request.status,
+        });
+      }
+      return { ...request, execution: execution ?? request.execution };
+    }
+
+    // Recorded first, delivered second. If delivery fails the decision
+    // still stands; sending the same request again re-delivers it.
+    try {
+      await this.temporal.signalDecision(customerId, request.workflowId, {
+        approverUserId: claims.sub,
+        decision: dto.decision,
+      });
+    } catch (err) {
+      this.logger.error(`decision recorded but not delivered to ${request.workflowId}: ${(err as Error).message}`);
+      throw new BadGatewayException(
+        'your decision is recorded but could not be delivered to the settlement; send the same request again to retry',
+      );
+    }
+
+    if (!alreadyRecorded) {
+      await this.audit.logEvent({
+        type: `approval.${dto.decision}`,
+        requestId: approvalId,
+        customerId,
+        message: `${claims.email} decided ${dto.decision} (${stepUp}); now ${request.approvals}/${request.requiredApprovals}, ${request.status}`,
+        status: request.status,
+      });
+    }
+    return request;
+  }
+
+  // Runs a transfer again after its execution failed (the signer was down, a
+  // node refused it). The approval stands; nothing new is approved. Admins
+  // only: it moves money, and the person who asked for it may be the one who
+  // is not allowed to approve it.
+  @Post('approvals/:approvalId/execute')
+  @HttpCode(HttpStatus.OK)
+  @RequireTenantRole(...CAN_MANAGE)
+  async retryExecution(@Param('customerId') customerId: string, @Param('approvalId') approvalId: string, @CurrentUser() claims: JwtClaims) {
+    const handler = this.native.registered;
+    if (!handler) throw new BadGatewayException('transfer execution is not available');
+    const execution = await handler.retry(customerId, approvalId);
+    await this.audit.logEvent({
+      type: 'approval.execution_retried',
+      requestId: approvalId,
+      customerId,
+      message: `${claims.email} retried the execution; now ${execution.status}`,
+      status: execution.status,
+    });
+    return execution;
+  }
+
+  // Password accounts prove presence with a fresh one-time code on each
+  // decision. SSO accounts rely on the identity provider, which is where
+  // an enterprise enforces its own MFA; the decision records which.
+  private async stepUp(userId: string, totpCode?: string, claims?: JwtClaims & { iat?: number }): Promise<'totp' | 'sso'> {
+    const user = await this.users.findById(userId);
+    if (!user || user.status !== 'active') throw new UnauthorizedException();
+    if (user.auth_provider === 'workos_sso' || user.auth_provider === 'oidc') {
+      // The identity provider vouched for this person when the session
+      // began, so a session hours old is not proof they are at the keyboard
+      // now. Deciding on a transfer needs a recent sign-in.
+      const maxAge = Number(process.env.SSO_STEP_UP_MAX_AGE_SECONDS ?? 900);
+      const age = claims?.iat ? Math.floor(Date.now() / 1000) - claims.iat : Number.POSITIVE_INFINITY;
+      if (!(age <= maxAge)) throw new UnauthorizedException('sign in again with your identity provider to decide on a transfer (your session is too old)');
+      return 'sso';
+    }
+    if (!user.mfa_enabled || !user.mfa_secret) {
+      throw new ForbiddenException('turn on two-factor authentication before approving or rejecting transfers');
+    }
+    if (!totpCode || !verifyTotpCode(user.mfa_secret, totpCode)) {
+      throw new UnauthorizedException('a current one-time code (totpCode) is required to decide on a transfer');
+    }
+    return 'totp';
+  }
+
+  // --------------------------------------------------------------- policy
+
+  @Get('approval-policy')
+  @RequireTenantRole(...CAN_READ_APPROVALS)
+  getPolicy(@Param('customerId') customerId: string) {
+    return this.approvals.getPolicy(customerId);
+  }
+
+  @Put('approval-policy')
+  @RequireTenantRole(...CAN_MANAGE)
+  async setPolicy(@Param('customerId') customerId: string, @CurrentUser() claims: JwtClaims, @Body() dto: PolicyDto) {
+    const before = await this.approvals.getPolicy(customerId);
+    const after = await this.approvals.setPolicy(customerId, claims.sub, dto.requiredApprovals, dto.windowMinutes);
+    await this.audit.logEvent({
+      type: 'approval.policy_changed',
+      requestId: uuid(),
+      customerId,
+      message: `${claims.email} changed the approval policy from ${before.requiredApprovals} approvals/${before.windowMinutes}min to ${after.requiredApprovals}/${after.windowMinutes}min`,
+      status: 'changed',
+    });
+    return after;
+  }
+
+  // -------------------------------------------------------------- members
+
+  @Get('members')
+  @RequireTenantRole(...CAN_READ_APPROVALS)
+  members(@Param('customerId') customerId: string) {
+    return this.approvals.listMembers(customerId);
+  }
+
+  @Put('members')
+  @RequireTenantRole(...CAN_MANAGE)
+  async setMember(@Param('customerId') customerId: string, @CurrentUser() claims: JwtClaims, @Body() dto: MemberDto) {
+    const member = await this.approvals.setMember(customerId, dto.email, dto.role);
+    await this.audit.logEvent({
+      type: 'membership.changed',
+      requestId: uuid(),
+      customerId,
+      message: `${claims.email} set ${member.email} to ${member.role}`,
+      status: 'changed',
+    });
+    return member;
+  }
+
+  @Delete('members/:userId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @RequireTenantRole(...CAN_MANAGE)
+  async removeMember(@Param('customerId') customerId: string, @Param('userId') userId: string, @CurrentUser() claims: JwtClaims) {
+    await this.approvals.removeMember(customerId, userId);
+    await this.audit.logEvent({
+      type: 'membership.removed',
+      requestId: uuid(),
+      customerId,
+      message: `${claims.email} removed user ${userId}`,
+      status: 'changed',
+    });
+  }
+
+  // ---------------------------------------------------------- settlements
+
+  // Starting a transfer as a named person, so the approval step knows
+  // whom to exclude.
+  @Post('settlements')
+  @HttpCode(HttpStatus.ACCEPTED)
+  @RequireTenantRole(...CAN_INITIATE)
+  async startSettlement(@Param('customerId') customerId: string, @CurrentUser() claims: JwtClaims, @Body() req: SignRequestDto) {
+    const customer = await this.customers.getByCustomerId(customerId);
+    return this.temporal.start(customerId, customer.tier, req, { userId: claims.sub, label: claims.email });
+  }
+}

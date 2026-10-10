@@ -9,6 +9,19 @@ import { BillingModule } from './billing/billing.module';
 import { SettlementsModule } from './settlements/settlements.module';
 import { MetricsModule } from './monitoring/metrics.module';
 import { MetricsInterceptor } from './monitoring/metrics.interceptor';
+import { IdentityModule } from './identity/identity.module';
+import { KeysModule } from './keys/keys.module';
+import { WebhooksModule } from './webhooks/webhooks.module';
+import { TokensModule } from './tokens/tokens.module';
+import { DashboardModule } from './dashboard/dashboard.module';
+import { ApprovalsModule } from './approvals/approvals.module';
+import { AgentsModule } from './agents/agents.module';
+import { ReconciliationModule } from './reconciliation/reconciliation.module';
+import { TransfersModule } from './transfers/transfers.module';
+import { ControlsModule } from './controls/controls.module';
+import { SweepsModule } from './sweeps/sweeps.module';
+import { CustodyModule } from './custody/custody.module';
+import { TokenisationModule } from './tokenisation/tokenisation.module';
 
 // Root module. Phase 1 wires multi-tenancy (CustomersModule), Prometheus
 // metrics (MetricsModule + global interceptor), the tenant-facing SignModule and
@@ -24,10 +37,23 @@ import { MetricsInterceptor } from './monitoring/metrics.interceptor';
     ]),
     DatabaseModule,
     MetricsModule,
+    IdentityModule,
     CustomersModule,
     BillingModule,
     SignModule,
     SettlementsModule,
+    KeysModule,
+    WebhooksModule,
+    TokensModule,
+    DashboardModule,
+    ApprovalsModule,
+    AgentsModule,
+    ReconciliationModule,
+    TransfersModule,
+    ControlsModule,
+    SweepsModule,
+    CustodyModule,
+    TokenisationModule,
   ],
   controllers: [AppController],
   providers: [

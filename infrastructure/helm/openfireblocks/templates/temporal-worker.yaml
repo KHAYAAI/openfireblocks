@@ -20,6 +20,32 @@ spec:
       serviceAccountName: {{ include "ofb.fullname" . }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- if and .Values.temporalWorker.mtls.enabled .Values.temporalWorker.mtls.autoIssue.enabled }}
+      initContainers:
+        - name: vault-pki-init
+          image: {{ include "ofb.image" (dict "root" . "image" .Values.temporalWorker.mtls.autoIssue.image "tag" .Values.temporalWorker.mtls.autoIssue.tag) }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          env:
+            - name: VAULT_ADDR
+              value: {{ .Values.temporalWorker.mtls.autoIssue.vaultAddr | quote }}
+            - name: VAULT_K8S_ROLE
+              value: {{ .Values.temporalWorker.mtls.autoIssue.k8sRole | quote }}
+            - name: COMMON_NAME
+              value: {{ .Values.temporalWorker.mtls.autoIssue.commonName | quote }}
+            - name: VAULT_PKI_MOUNT
+              value: {{ .Values.temporalWorker.mtls.autoIssue.pkiMount | quote }}
+            - name: VAULT_PKI_ROLE
+              value: {{ .Values.temporalWorker.mtls.autoIssue.pkiRole | quote }}
+            - name: CERT_TTL
+              value: {{ .Values.temporalWorker.mtls.autoIssue.certTTL | quote }}
+            - name: CERT_OUT_DIR
+              value: /etc/openfireblocks/mtls
+          volumeMounts:
+            - name: mtls-certs
+              mountPath: /etc/openfireblocks/mtls
+      {{- end }}
       containers:
         - name: temporal-worker
           image: {{ include "ofb.image" (dict "root" . "image" .Values.temporalWorker.image "tag" .Values.temporalWorker.tag) }}
@@ -27,6 +53,11 @@ spec:
           securityContext:
             {{- toYaml .Values.containerSecurityContext | nindent 12 }}
           env:
+            # Makes each service refuse to fall back to local development
+            # credentials if its DSN/config env var is missing, instead of
+            # silently attempting a localhost connection (gosec G101).
+            - name: APP_ENV
+              value: production
             - name: TEMPORAL_HOSTPORT
               value: {{ .Values.external.temporalHostPort | quote }}
             - name: TEMPORAL_NAMESPACE
@@ -39,6 +70,131 @@ spec:
               value: {{ .Values.external.ethereumRpcSepolia | quote }}
             - name: REQUIRED_CONFIRMATIONS
               value: {{ .Values.external.requiredConfirmations | quote }}
+            # app_admin (BYPASSRLS): this worker orchestrates ceremonies for
+            # whichever customer's workflow Temporal dispatched, not one
+            # tenant session — see the dsn comment in
+            # services/temporal-worker/main.go. Without this, round
+            # persistence silently disables itself (a nil *sql.DB is a
+            # tolerated startup condition, not a crash — see main.go).
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.external.databaseAdminUrlSecret }}
+                  key: database-admin-url
+            {{- if .Values.temporalWorker.mtls.enabled }}
+            # Client-side mTLS to services/mpc-party's DKG/signing
+            # endpoints -- see services/temporal-worker/activities/mtls.go
+            # and DKGRoundCoordinator/ExecuteRealDKG's httpClient wiring.
+            - name: MTLS_CERT_FILE
+              value: /etc/openfireblocks/mtls/tls.crt
+            - name: MTLS_KEY_FILE
+              value: /etc/openfireblocks/mtls/tls.key
+            - name: MTLS_CA_FILE
+              value: /etc/openfireblocks/mtls/ca.crt
+            {{- end }}
+            {{- if .Values.ceremonyAuthorizer.enabled }}
+            # The signing half. Without it, every party configured above
+            # refuses every ceremony -- which is why the chart requires one
+            # of these two to be set rather than letting the deployment
+            # come up half-wired and fail at the first keygen.
+            {{- if .Values.ceremonyAuthorizer.signerUrl }}
+            - name: CEREMONY_AUTHORIZER_SIGNER_URL
+              value: {{ .Values.ceremonyAuthorizer.signerUrl | quote }}
+            {{- if .Values.ceremonyAuthorizer.signerTokenSecret }}
+            - name: CEREMONY_AUTHORIZER_SIGNER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.ceremonyAuthorizer.signerTokenSecret }}
+                  key: signer-token
+            {{- end }}
+            {{- else if .Values.ceremonyAuthorizer.keySecret }}
+            # The weaker path: the authorising key is in this namespace, so
+            # root on this node holds it. values.yaml says why that is still
+            # worth having and what it does not buy.
+            - name: CEREMONY_AUTHORIZER_KEY_FILE
+              value: /etc/openfireblocks/ceremony-authorizer/authorizer-key
+            {{- else }}
+            {{- fail "ceremonyAuthorizer.enabled requires either signerUrl or keySecret; without one the worker cannot sign and every party will refuse every ceremony" }}
+            {{- end }}
+            {{- end }}
+          {{- if or .Values.temporalWorker.mtls.enabled (and .Values.ceremonyAuthorizer.enabled .Values.ceremonyAuthorizer.keySecret (not .Values.ceremonyAuthorizer.signerUrl)) }}
+          volumeMounts:
+            {{- if .Values.temporalWorker.mtls.enabled }}
+            - name: mtls-certs
+              mountPath: /etc/openfireblocks/mtls
+              readOnly: true
+            {{- end }}
+            {{- if and .Values.ceremonyAuthorizer.enabled .Values.ceremonyAuthorizer.keySecret (not .Values.ceremonyAuthorizer.signerUrl) }}
+            - name: ceremony-authorizer
+              mountPath: /etc/openfireblocks/ceremony-authorizer
+              readOnly: true
+            {{- end }}
+          {{- end }}
           resources:
             {{- toYaml .Values.temporalWorker.resources | nindent 12 }}
+      {{- if .Values.temporalWorker.mtls.enabled }}
+      {{- if and .Values.temporalWorker.mtls.enabled .Values.temporalWorker.mtls.autoIssue.enabled }}
+        # Replaces the certificate at two thirds of its life. Without it the
+        # certificate's expiry silently becomes the pod's lifetime -- see
+        # templates/mpc-party.yaml and services/mpc-party/certreload.go.
+        - name: vault-pki-renew
+          image: {{ include "ofb.image" (dict "root" . "image" .Values.temporalWorker.mtls.autoIssue.image "tag" .Values.temporalWorker.mtls.autoIssue.tag) }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          env:
+            - name: VAULT_ADDR
+              value: {{ .Values.temporalWorker.mtls.autoIssue.vaultAddr | quote }}
+            - name: VAULT_K8S_ROLE
+              value: {{ .Values.temporalWorker.mtls.autoIssue.k8sRole | quote }}
+            - name: COMMON_NAME
+              value: {{ .Values.temporalWorker.mtls.autoIssue.commonName | quote }}
+            - name: VAULT_PKI_MOUNT
+              value: {{ .Values.temporalWorker.mtls.autoIssue.pkiMount | quote }}
+            - name: VAULT_PKI_ROLE
+              value: {{ .Values.temporalWorker.mtls.autoIssue.pkiRole | quote }}
+            - name: CERT_TTL
+              value: {{ .Values.temporalWorker.mtls.autoIssue.certTTL | quote }}
+            - name: CERT_OUT_DIR
+              value: /etc/openfireblocks/mtls
+            - name: RENEW
+              value: "true"
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+          volumeMounts:
+            - name: mtls-certs
+              mountPath: /etc/openfireblocks/mtls
+      {{- end }}
+      volumes:
+        - name: mtls-certs
+          {{- if .Values.temporalWorker.mtls.autoIssue.enabled }}
+          emptyDir: {}
+          {{- else }}
+          secret:
+            secretName: {{ .Values.temporalWorker.mtls.certSecret }}
+          {{- end }}
+      {{- end }}
+      {{- if and .Values.ceremonyAuthorizer.enabled .Values.ceremonyAuthorizer.keySecret (not .Values.ceremonyAuthorizer.signerUrl) }}
+      {{- if not .Values.temporalWorker.mtls.enabled }}
+      volumes:
+      {{- end }}
+        # 0440, not 0400, and the difference is whether this works at all.
+        #
+        # A Secret volume's files are owned root:fsGroup, and the chart's
+        # podSecurityContext sets fsGroup 1000 and runAsUser 1000. Mode
+        # 0400 is owner-read-only, so the owner is root and the container
+        # -- uid 1000 -- cannot read its own authorising key. It would
+        # start, fail to load the key, and log.Fatal, on every deployment
+        # that turned the feature on.
+        #
+        # 0440 gives the group read, which is the fsGroup the container
+        # runs as, and still leaves it unreadable to everything else.
+        - name: ceremony-authorizer
+          secret:
+            secretName: {{ .Values.ceremonyAuthorizer.keySecret }}
+            defaultMode: 0440
+            items:
+              - key: authorizer-key
+                path: authorizer-key
+      {{- end }}
 {{- end }}

@@ -10,7 +10,12 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version }}
 {{- end -}}
 
-{{/* Image reference for a component: registry/image:tag */}}
+{{/* Image reference for a component: registry/image:tag.
+     A chart-wide imageTag, when set, overrides every component's own tag, so a
+     release deploys one commit's images with a single --set instead of one per
+     component. */}}
 {{- define "ofb.image" -}}
-{{- printf "%s/%s:%s" .root.Values.imageRegistry .image .tag -}}
+{{- $tag := .tag -}}
+{{- if .root.Values.imageTag -}}{{- $tag = .root.Values.imageTag -}}{{- end -}}
+{{- printf "%s/%s:%s" .root.Values.imageRegistry .image $tag -}}
 {{- end -}}

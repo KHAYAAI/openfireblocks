@@ -9,6 +9,7 @@ import (
 	"os"
 	"time"
 
+	"forge-crypto/mpc-signer/chains"
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 	"github.com/prometheus/client_golang/prometheus"
@@ -18,17 +19,25 @@ import (
 // main.go wires the MPC signer's HTTP API.
 //
 // Endpoints:
-//   POST /sign    -> sign an Ethereum transaction, audit-log the lifecycle
-//   GET  /address -> return the shared signer address (useful for funding on testnet)
-//   GET  /health  -> liveness/readiness probe
+//   POST /sign            -> sign an Ethereum transaction (Phase 0)
+//   POST /sign-multi-chain -> sign on any supported blockchain (Phase 2)
+//   POST /broadcast       -> broadcast a signed transaction (Phase 2)
+//   GET  /address         -> return the shared signer address (useful for funding on testnet)
+//   GET  /health          -> liveness/readiness probe
 //
 // The audit logger is best-effort: if immudb is unreachable at startup the
 // service still boots and serves /sign, recording a warning per request. This
 // keeps the Phase 0 happy path working even when immudb is slow to come up.
 
 type server struct {
-	signer *MPCSigner
-	audit  *AuditLogger // may be nil if immudb was unavailable at startup
+	signer       *MPCSigner
+	audit        *AuditLogger // may be nil if immudb was unavailable at startup
+	signerRouter *chains.SignerRouter
+	// privKeyHex is the software key, and empty in HSM mode -- where there
+	// is no key in this process to hold. Its emptiness is what routes
+	// multi-chain signing through the KeySigner instead.
+	privKeyHex string
+	hardware   bool
 }
 
 func (s *server) log(ctx context.Context, event AuditEvent) uint64 {
@@ -97,11 +106,118 @@ func (s *server) handleSign(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleAddress(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"address": s.signer.Address()})
+	writeJSON(w, http.StatusOK, map[string]string{
+		"address": s.signer.Address(),
+		// Where the key is, so an operator can confirm from outside the
+		// pod that a hardware deployment is actually signing in hardware.
+		"keySource": s.signer.Key().Describe(),
+	})
+}
+
+func (s *server) handleSignMultiChain(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	requestID := uuid.NewString()
+
+	var req MultiChainSignRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{
+			"error":     "invalid request body",
+			"requestId": requestID,
+		})
+		return
+	}
+
+	if !s.signerRouter.IsValidChainID(req.ChainID) {
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{
+			"error":     fmt.Sprintf("unsupported chain: %s", req.ChainID),
+			"requestId": requestID,
+		})
+		return
+	}
+
+	signReq := &chains.ChainSignRequest{
+		ChainID: req.ChainID,
+		Message: []byte(req.Message),
+	}
+
+	var resp *chains.ChainSignResponse
+	var err error
+	if s.hardware {
+		// Solana is refused here by name: its key is Ed25519, and there
+		// is no hardware key for it.
+		resp, err = s.signerRouter.SignMultiChainWithKey(ctx, signReq, s.signer.Key())
+	} else {
+		resp, err = s.signerRouter.SignMultiChain(ctx, signReq, s.privKeyHex)
+	}
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]interface{}{
+			"error":     err.Error(),
+			"requestId": requestID,
+			"chainId":   req.ChainID,
+			"status":    "failed",
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"requestId":   requestID,
+		"chainId":     resp.ChainID,
+		"signature":   resp.Signature.SignatureBytes,
+		"signedTx":    resp.SignedTx,
+		"from":        resp.From,
+		"status":      resp.Status,
+		"broadcasted": resp.Broadcasted,
+	})
+}
+
+func (s *server) handleBroadcast(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	var req BroadcastRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{
+			"error": "invalid request body",
+		})
+		return
+	}
+
+	if !s.signerRouter.IsValidChainID(req.ChainID) {
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{
+			"error": fmt.Sprintf("unsupported chain: %s", req.ChainID),
+		})
+		return
+	}
+
+	txHash, err := s.signerRouter.BroadcastTransaction(ctx, req.ChainID, []byte(req.SignedTx))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]interface{}{
+			"error":   err.Error(),
+			"chainId": req.ChainID,
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"txHash": txHash,
+		"status": "broadcasted",
+	})
 }
 
 func handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// MultiChainSignRequest is the request body for /sign-multi-chain.
+type MultiChainSignRequest struct {
+	ChainID  string                 `json:"chainId"`
+	Message  string                 `json:"message"`
+	Metadata map[string]interface{} `json:"metadata,omitempty"`
+}
+
+// BroadcastRequest is the request body for /broadcast.
+type BroadcastRequest struct {
+	ChainID  string `json:"chainId"`
+	SignedTx string `json:"signedTx"`
 }
 
 func writeJSON(w http.ResponseWriter, status int, body interface{}) {
@@ -118,17 +234,11 @@ func getenv(key, fallback string) string {
 }
 
 func main() {
-	// Resolve the signing key from Vault (preferred), env, or generate ephemeral.
-	keyHex, err := ResolveSigningKey(context.Background(), os.Getenv)
-	if err != nil {
-		log.Fatalf("failed to resolve signing key: %v", err)
-	}
-
-	signer, err := NewMPCSigner(keyHex)
+	signer, keyHex, hardware, err := resolveSigner(context.Background(), os.Getenv)
 	if err != nil {
 		log.Fatalf("failed to init MPC signer: %v", err)
 	}
-	log.Printf("MPC signer address: %s", signer.Address())
+	log.Printf("MPC signer address: %s (%s)", signer.Address(), signer.Key().Describe())
 
 	// immudb is best-effort at startup so a slow ledger doesn't block signing.
 	var audit *AuditLogger
@@ -142,11 +252,42 @@ func main() {
 		log.Printf("connected to immudb at %s", immudbURL)
 	}
 
-	s := &server{signer: signer, audit: audit}
+	// Initialize multi-chain signer router
+	signerRouter := chains.NewSignerRouter()
+	log.Printf("Initialized signer router with chains: %v", signerRouter.SupportedChains())
+
+	s := &server{
+		signer:       signer,
+		audit:        audit,
+		signerRouter: signerRouter,
+		privKeyHex:   keyHex,
+		hardware:     hardware,
+	}
 
 	router := mux.NewRouter()
 	router.HandleFunc("/sign", s.handleSign).Methods(http.MethodPost)
 	router.HandleFunc("/address", s.handleAddress).Methods(http.MethodGet)
+	router.HandleFunc("/sign-multi-chain", s.handleSignMultiChain).Methods(http.MethodPost)
+	router.HandleFunc("/broadcast", s.handleBroadcast).Methods(http.MethodPost)
+	// Bitcoin needs two calls rather than one because a threshold ceremony
+	// happens between them -- see bitcoin_http.go.
+	router.HandleFunc("/bitcoin/addresses", s.handleBitcoinAddresses).Methods(http.MethodGet)
+	router.HandleFunc("/bitcoin/prepare", s.handleBitcoinPrepare).Methods(http.MethodPost)
+	router.HandleFunc("/bitcoin/finalize", s.handleBitcoinFinalize).Methods(http.MethodPost)
+	// Solana: the same prepare / threshold-sign / finalize shape -- see
+	// solana_http.go.
+	router.HandleFunc("/solana/addresses", s.handleSolanaAddresses).Methods(http.MethodGet)
+	router.HandleFunc("/solana/balance", s.handleSolanaBalance).Methods(http.MethodGet)
+	router.HandleFunc("/solana/prepare", s.handleSolanaPrepare).Methods(http.MethodPost)
+	router.HandleFunc("/solana/finalize", s.handleSolanaFinalize).Methods(http.MethodPost)
+	router.HandleFunc("/solana/status", s.handleSolanaStatus).Methods(http.MethodGet)
+	// Cosmos SDK chains: bank sends in SIGN_MODE_DIRECT -- see cosmos_http.go.
+	router.HandleFunc("/cosmos/addresses", s.handleCosmosAddresses).Methods(http.MethodGet)
+	router.HandleFunc("/cosmos/balance", s.handleCosmosBalance).Methods(http.MethodGet)
+	router.HandleFunc("/cosmos/prepare", s.handleCosmosPrepare).Methods(http.MethodPost)
+	router.HandleFunc("/cosmos/finalize", s.handleCosmosFinalize).Methods(http.MethodPost)
+	router.HandleFunc("/cosmos/status", s.handleCosmosStatus).Methods(http.MethodGet)
+	router.HandleFunc("/cosmos/account", s.handleCosmosAccount).Methods(http.MethodGet)
 	router.HandleFunc("/health", handleHealth).Methods(http.MethodGet)
 	router.Handle("/metrics", promhttp.Handler()).Methods(http.MethodGet)
 
@@ -157,6 +298,20 @@ func main() {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
-	log.Printf("MPC signer listening on %s", addr)
+	// mTLS, matching services/policy-service/main.go's identical block: a
+	// misconfiguration is fatal rather than a silent fallback to plaintext,
+	// since this endpoint hands out signatures.
+	tlsConfig, mtlsEnabled, err := serverTLSConfigFromEnv()
+	if err != nil {
+		log.Fatalf("mTLS configuration error: %v", err)
+	}
+	if mtlsEnabled {
+		srv.TLSConfig = tlsConfig
+		log.Printf("MPC signer listening on %s (mTLS: client certs required)", addr)
+		log.Fatal(srv.ListenAndServeTLS("", "")) // certs already loaded into TLSConfig
+	}
+
+	log.Printf("MPC signer listening on %s (mTLS disabled: %s/%s/%s not all set)",
+		addr, envMTLSCertFile, envMTLSKeyFile, envMTLSCAFile)
 	log.Fatal(srv.ListenAndServe())
 }

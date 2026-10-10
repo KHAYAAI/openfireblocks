@@ -1,0 +1,8 @@
+# State for ONE party, in that party's own account. Never share a state
+# bucket between parties: the state names every resource, and the bucket's
+# administrator could then reach every party.
+bucket         = "ofb-party-2-tfstate-444455556666"
+key            = "mpc-party/terraform.tfstate"
+region         = "af-south-1"
+encrypt        = true
+dynamodb_table = "ofb-party-2-tflock"

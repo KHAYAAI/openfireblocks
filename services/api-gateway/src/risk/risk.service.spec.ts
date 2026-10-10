@@ -19,7 +19,22 @@ class FakeRedis implements RiskRedis {
 }
 
 describe('RiskService', () => {
-  it('is a no-op (always allowed) without a Redis client', async () => {
+  const originalAllowDisabled = process.env.RISK_ALLOW_DISABLED;
+  afterEach(() => {
+    if (originalAllowDisabled === undefined) delete process.env.RISK_ALLOW_DISABLED;
+    else process.env.RISK_ALLOW_DISABLED = originalAllowDisabled;
+  });
+
+  it('fails closed (denies) without a Redis client by default', async () => {
+    delete process.env.RISK_ALLOW_DISABLED;
+    const svc = new RiskService(null);
+    const d = await svc.checkAndRecord('demo', 'free');
+    expect(d.allowed).toBe(false);
+    expect(d.reason).toMatch(/velocity limiting is not configured/);
+  });
+
+  it('is a no-op (always allowed) without a Redis client when explicitly opted out', async () => {
+    process.env.RISK_ALLOW_DISABLED = 'true';
     const svc = new RiskService(null);
     const d = await svc.checkAndRecord('demo', 'free');
     expect(d.allowed).toBe(true);

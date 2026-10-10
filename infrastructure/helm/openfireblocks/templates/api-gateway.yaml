@@ -40,7 +40,16 @@ spec:
           ports:
             - name: http
               containerPort: {{ .Values.apiGateway.port }}
+            {{- if .Values.trisa.enabled }}
+            - name: trisa
+              containerPort: {{ .Values.trisa.port }}
+            {{- end }}
           env:
+            # Makes each service refuse to fall back to local development
+            # credentials if its DSN/config env var is missing, instead of
+            # silently attempting a localhost connection (gosec G101).
+            - name: APP_ENV
+              value: production
             - name: PORT
               value: {{ .Values.apiGateway.port | quote }}
             - name: NODE_ENV
@@ -50,19 +59,220 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.external.databaseUrlSecret }}
                   key: database-url
+            - name: DATABASE_ADMIN_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.external.databaseAdminUrlSecret }}
+                  key: database-admin-url
             - name: ADMIN_API_KEY
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.adminApiKeySecret }}
                   key: admin-api-key
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.jwtSecretSecret }}
+                  key: jwt-secret
             - name: MPC_SIGNER_URL
               value: http://{{ include "ofb.fullname" . }}-mpc-signer:{{ .Values.mpcSigner.port }}
+            # Which Bitcoin network this deployment's keys live on. It
+            # decides how a public key is turned into an address, so a
+            # wrong value here does not fail -- it derives addresses on
+            # the wrong network and reports a balance of zero.
+            - name: BITCOIN_NETWORK
+              value: {{ .Values.external.bitcoinNetwork | quote }}
+            {{- if and .Values.billing.enabled .Values.billing.consolePublicUrl }}
+            # The console's Billing screen: card status and "Add card" go to the
+            # billing service with the shared token; Stripe sends people back
+            # to consolePublicUrl (which must also be in billing.returnHosts).
+            - name: BILLING_URL
+              value: http://{{ include "ofb.fullname" . }}-billing:{{ .Values.billing.port }}
+            - name: BILLING_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.billing.apiTokenSecret }}
+                  key: billing-api-token
+            - name: CONSOLE_PUBLIC_URL
+              value: {{ .Values.billing.consolePublicUrl | quote }}
+            {{- end }}
             - name: POLICY_SERVICE_URL
               value: http://{{ include "ofb.fullname" . }}-policy-service:{{ .Values.policyService.port }}
+            # Where to announce that something happened. Unset means the
+            # platform still signs and still broadcasts; it just cannot tell
+            # anybody, which is what a deployment without the webhooks
+            # service should do rather than failing every request.
+            - name: WEBHOOKS_URL
+              value: http://{{ include "ofb.fullname" . }}-webhooks:{{ .Values.webhooks.port }}
             - name: ETHEREUM_RPC_SEPOLIA
               value: {{ .Values.external.ethereumRpcSepolia | quote }}
+            # One endpoint per chain, keyed by chain id.
+            #
+            # A token is a different contract on every chain it exists on,
+            # and a balance read against the wrong chain returns zero
+            # rather than an error -- which reads, to a customer, exactly
+            # like their money not being there. So there is no default
+            # here: a chain with no configured endpoint is one the
+            # platform says it cannot read, rather than one it guesses at.
+            {{- range $chainId, $url := .Values.external.evmRpc }}
+            - name: EVM_RPC_{{ $chainId }}
+              value: {{ $url | quote }}
+            {{- end }}
+            # The dashboard signs its session cookies with this. Unset, a
+            # random secret is generated at boot, which works and means
+            # everyone is signed out by a rolling update.
+            {{- if .Values.external.dashboardSessionSecret }}
+            - name: DASHBOARD_SESSION_SECRET
+              value: {{ .Values.external.dashboardSessionSecret | quote }}
+            {{- end }}
+            # Which chain the dashboard reads balances on when a page does
+            # not say. No default: a deployment on Polygon whose dashboard
+            # quietly read mainnet would report zero, which is
+            # indistinguishable from the customer's money not being there.
+            {{- if .Values.external.dashboardDefaultChainId }}
+            - name: DASHBOARD_DEFAULT_CHAIN_ID
+              value: {{ .Values.external.dashboardDefaultChainId | quote }}
+            {{- end }}
+            # Surfaced on the dashboard's first page. See
+            # infrastructure/kind/party-isolation-check.sh.
+            - name: PARTY_ISOLATION_LEVEL
+              value: {{ .Values.external.partyIsolationLevel | default "unknown" | quote }}
+            - name: COMPLIANCE_SERVICE_URL
+              value: http://{{ include "ofb.fullname" . }}-compliance:{{ .Values.compliance.port }}
+            # Number of reverse proxies in front of the gateway; see main.ts.
+            - name: TRUST_PROXY_HOPS
+              value: {{ .Values.apiGateway.trustProxyHops | default 0 | quote }}
             - name: REDIS_URL
               value: {{ .Values.external.redisUrl | quote }}
+            # See the comment on external.redisUrl: an empty REDIS_URL now
+            # fails velocity limiting closed unless this is explicitly true.
+            - name: RISK_ALLOW_DISABLED
+              value: {{ .Values.external.riskAllowDisabledVelocityLimiting | default false | quote }}
+            # Durable settlements (SettlementsController) and real DKG key
+            # provisioning (KeysService.createKey -> ProvisionKeyWorkflow)
+            # both need a real Temporal connection -- previously unset
+            # here even though SettlementsController's TemporalService
+            # already required it, so durable settlements silently 503'd
+            # in this chart's own deployment. Empty is a valid, explicit
+            # "not configured" state both services handle by rejecting
+            # with 503 rather than hanging or crash-looping.
+            - name: TEMPORAL_HOSTPORT
+              value: {{ .Values.external.temporalHostPort | quote }}
+            - name: TEMPORAL_NAMESPACE
+              value: {{ .Values.external.temporalNamespace | quote }}
+            # Where KeysService derives each DKG party's endpoint from --
+            # {id} is replaced 1..total_parties. Matches
+            # templates/mpc-party.yaml's per-party Service naming
+            # (party-<N>) and .Values.mpcParty.port.
+            #
+            # With mTLS on this must be https, and must use the fully
+            # qualified Service name: the parties present certificates whose
+            # SANs are party-<N>.<namespace>.svc.cluster.local, and TLS
+            # verifies the name the client dialled. A plain http:// template
+            # against an mTLS party fails with "Client sent an HTTP request
+            # to an HTTPS server"; the short name fails hostname
+            # verification. Both are silent until a ceremony is attempted.
+            # Where the gateway asks each party whether it is up, so a
+            # signing committee is chosen from parties that actually
+            # answer. Plaintext and liveness-only: the gateway holds no
+            # client certificate and could not use the mTLS port even if
+            # it wanted to.
+            - name: MPC_PARTY_HEALTH_TEMPLATE
+              {{- if .Values.mpcParty.external.enabled }}
+              value: {{ .Values.mpcParty.external.healthTemplate | quote }}
+              {{- else if .Values.mpcParty.mtls.enabled }}
+              value: {{ printf "http://party-{id}.%s.svc.cluster.local:%d/health" .Release.Namespace (int .Values.mpcParty.healthPort) | quote }}
+              {{- else }}
+              value: {{ printf "http://party-{id}:%d/health" (int .Values.mpcParty.port) | quote }}
+              {{- end }}
+            - name: MPC_PARTY_ENDPOINT_TEMPLATE
+              {{- if .Values.mpcParty.external.enabled }}
+              value: {{ .Values.mpcParty.external.endpointTemplate | quote }}
+              {{- else if .Values.mpcParty.mtls.enabled }}
+              value: {{ printf "https://party-{id}.%s.svc.cluster.local:%d" .Release.Namespace (int .Values.mpcParty.port) | quote }}
+              {{- else }}
+              value: {{ printf "http://party-{id}:%d" (int .Values.mpcParty.port) | quote }}
+              {{- end }}
+            {{- if .Values.oidc.enabled }}
+            # Sign-in through the customer's own OpenID Connect provider
+            # (services/api-gateway/src/identity/oidc-sso.service.ts).
+            - name: OIDC_ISSUER
+              value: {{ required "oidc.issuer is required when oidc.enabled" .Values.oidc.issuer | quote }}
+            - name: OIDC_CLIENT_ID
+              value: {{ required "oidc.clientId is required when oidc.enabled" .Values.oidc.clientId | quote }}
+            - name: OIDC_REDIRECT_URI
+              value: {{ required "oidc.redirectUri is required when oidc.enabled" .Values.oidc.redirectUri | quote }}
+            - name: OIDC_SCOPES
+              value: {{ .Values.oidc.scopes | quote }}
+            {{- if .Values.oidc.allowedEmailDomains }}
+            - name: OIDC_ALLOWED_EMAIL_DOMAINS
+              value: {{ .Values.oidc.allowedEmailDomains | quote }}
+            {{- end }}
+            {{- if .Values.oidc.clientSecretSecret }}
+            - name: OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.oidc.clientSecretSecret }}
+                  key: oidc-client-secret
+            {{- end }}
+            {{- end }}
+            {{- if .Values.workos.enabled }}
+            # Enterprise SSO via WorkOS AuthKit
+            # (services/api-gateway/src/identity/workos-sso.service.ts).
+            # Entirely optional: with these unset the /auth/sso routes
+            # report enabled:false and fail closed with 503, and the local
+            # password + TOTP login path is unaffected.
+            - name: WORKOS_CLIENT_ID
+              value: {{ .Values.workos.clientId | quote }}
+            - name: WORKOS_REDIRECT_URI
+              value: {{ .Values.workos.redirectUri | quote }}
+            - name: WORKOS_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.workos.apiKeySecret }}
+                  key: workos-api-key
+            {{- end }}
+            {{- if .Values.metrics.tokenSecret }}
+            # /metrics needs this bearer token (the ServiceMonitor presents it).
+            - name: METRICS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.metrics.tokenSecret | quote }}
+                  key: metrics-token
+            {{- end }}
+            {{- range .Values.custody.tokens }}
+            # A custodian connector's bearer token (docs/deployment/MULTI-CUSTODIAN.md).
+            # Only variables named CUSTODY_TOKEN_* are ever read for a connector.
+            - name: {{ required "custody.tokens[].env is required" .env | quote }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "custody.tokens[].secretName is required" .secretName | quote }}
+                  key: {{ .key | default "token" | quote }}
+            {{- end }}
+            {{- if .Values.trisa.enabled }}
+            # Direct Travel Rule exchange with other providers (TRISA): mutual TLS,
+            # envelopes only the recipient can open. The certificate must come
+            # from the TRISA certificate authority
+            # (services/api-gateway/src/travel-rule/trisa, docs/deployment/TRISA.md).
+            - name: TRISA_CERT_FILE
+              value: /etc/trisa/tls.crt
+            - name: TRISA_KEY_FILE
+              value: /etc/trisa/tls.key
+            - name: TRISA_CA_FILE
+              value: /etc/trisa/ca.crt
+            {{- if .Values.trisa.sealingKeyInSecret }}
+            - name: TRISA_SEALING_KEY_FILE
+              value: /etc/trisa/sealing.key
+            {{- end }}
+            - name: TRISA_LISTEN
+              value: {{ printf "0.0.0.0:%v" .Values.trisa.port | quote }}
+            {{- end }}
+          {{- if .Values.trisa.enabled }}
+          volumeMounts:
+            - name: trisa
+              mountPath: /etc/trisa
+              readOnly: true
+          {{- end }}
           livenessProbe:
             httpGet: { path: /health, port: http }
             initialDelaySeconds: 10
@@ -73,6 +283,13 @@ spec:
             periodSeconds: 5
           resources:
             {{- toYaml .Values.apiGateway.resources | nindent 12 }}
+      {{- if .Values.trisa.enabled }}
+      volumes:
+        - name: trisa
+          secret:
+            secretName: {{ required "trisa.secretName is required when trisa.enabled: a secret with tls.crt, tls.key and ca.crt" .Values.trisa.secretName | quote }}
+            defaultMode: 0440
+      {{- end }}
       affinity:
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
@@ -97,6 +314,31 @@ spec:
     - name: http
       port: {{ .Values.apiGateway.port }}
       targetPort: http
+{{- if .Values.trisa.enabled }}
+---
+# Where other providers reach this node. A separate Service from the API's, so
+# the public Travel Rule endpoint can be exposed (a load balancer) without
+# exposing the API itself.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ofb.fullname" . }}-trisa
+  labels:
+    {{- include "ofb.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api-gateway
+  {{- with .Values.trisa.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.trisa.service.type }}
+  selector:
+    app.kubernetes.io/component: api-gateway
+  ports:
+    - name: trisa
+      port: {{ .Values.trisa.port }}
+      targetPort: trisa
+{{- end }}
 {{- if .Values.apiGateway.autoscaling.enabled }}
 ---
 apiVersion: autoscaling/v2

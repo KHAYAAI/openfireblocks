@@ -13,9 +13,23 @@ coverage/
 /services/policy-service/policy-service
 /services/temporal-worker/temporal-worker
 /services/temporal-worker/worker
+# trisa-interop.spec.ts builds its own copy into a temp dir at test time
+# (go build -o <tmp>/tool .) and never reads this one; a prior commit
+# tracked the build output of `go build .` run from inside this directory
+# by accident.
+/services/api-gateway/test/trisa-interop/trisa-interop
 *.test
 
 # Editor / OS
 .DS_Store
 .idea/
 .vscode/
+
+# SOC 2 evidence packs: dated operational snapshots, produced by
+# scripts/collect-soc2-evidence.sh into ./evidence/ at the repo root. They
+# contain live configuration and row counts and belong in access-controlled
+# storage, not in the repository -- but the collector is checked in so the
+# process is reviewable. Anchored to the root so it doesn't also swallow
+# docs/evidence/, which holds curated, written-up proof (smoke test runs,
+# etc.) that belongs in the repo.
+/evidence/

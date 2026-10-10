@@ -1,6 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { Pool } from 'pg';
-import { PG_POOL } from '../database/database.module';
+import { PG_POOL } from '../database/pg-pool.token';
 
 // Meters per-tenant usage (signed + broadcast transaction counts) per calendar
 // month. This is the data layer a billing engine (Kill Bill) consumes to drive

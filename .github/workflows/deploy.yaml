@@ -1,0 +1,301 @@
+name: Deploy Production
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  security-scan:
+    name: Security Scanning
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Run Snyk Vulnerability Scan
+        uses: snyk/actions/golang@master
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+      
+      - name: Run SAST (Semgrep)
+        uses: returntocorp/semgrep-action@v1
+        with:
+          config: >-
+            p/owasp-top-ten
+            p/security-audit
+      
+      - name: Check secrets
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: openfireblocks_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      
+      redis:
+        image: redis:7
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.21'
+      
+      - name: Run unit tests
+        run: go test -v -race -coverage ./...
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost/openfireblocks_test
+          REDIS_URL: redis://localhost:6379
+      
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          files: ./coverage.out
+
+  # The image list comes from scripts/build-images.sh --list, the same list
+  # the chart and the kind cluster use. This job used to hand-write three
+  # images (gateway, compliance, settlement), which left the whole signing
+  # path -- mpc-signer, mpc-party, temporal-worker -- unbuilt and unpushed by
+  # the pipeline that claims to deploy the platform.
+  services:
+    name: List services
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.list.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: list
+        run: |
+          echo "matrix=$(./scripts/build-images.sh --list | jq -R . | jq -cs .)" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build ${{ matrix.service }}
+    needs: [security-scan, test, services]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Keyless signing: the workflow's own identity, not a key we keep.
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJson(needs.services.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Login to ECR
+        uses: aws-actions/amazon-ecr-login@v1
+        with:
+          registry-type: public
+
+      - name: Build and push ${{ matrix.service }}
+        id: push
+        uses: docker/build-push-action@v4
+        with:
+          context: ./services/${{ matrix.service }}
+          file: ./services/${{ matrix.service }}/Dockerfile
+          push: true
+          # One repository per service, tagged with the commit: the layout the
+          # chart and scripts/build-images.sh use (registry/<service>:<tag>).
+          # The repositories must exist before the first push.
+          tags: |
+            ${{ secrets.ECR_REGISTRY }}/${{ matrix.service }}:${{ github.sha }}
+            ${{ secrets.ECR_REGISTRY }}/${{ matrix.service }}:latest
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+
+      # Supply chain: sign what was built, and attach what is inside it. A
+      # customer (or the deploy job below) can then check that an image came
+      # from this repository's workflow and read its bill of materials. See
+      # docs/security/SUPPLY-CHAIN.md. Never run against a real registry yet.
+      - uses: sigstore/cosign-installer@v3
+
+      - name: Sign ${{ matrix.service }} by digest (keyless)
+        run: cosign sign --yes "${{ secrets.ECR_REGISTRY }}/${{ matrix.service }}@${{ steps.push.outputs.digest }}"
+
+      - name: Software bill of materials for ${{ matrix.service }}
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ secrets.ECR_REGISTRY }}/${{ matrix.service }}@${{ steps.push.outputs.digest }}
+          format: spdx-json
+          output-file: sbom-${{ matrix.service }}.spdx.json
+          artifact-name: sbom-${{ matrix.service }}.spdx.json
+
+      - name: Attach the bill of materials to the image (signed)
+        run: |
+          cosign attest --yes --type spdxjson \
+            --predicate sbom-${{ matrix.service }}.spdx.json \
+            "${{ secrets.ECR_REGISTRY }}/${{ matrix.service }}@${{ steps.push.outputs.digest }}"
+
+  # Deploys with the Helm chart, because the chart is the documented runtime
+  # (docs/deployment). This pipeline used to update a single ECS service and
+  # then "shift traffic" with sleeps, which deployed one of thirteen services
+  # and did not shift anything. NEITHER the old path nor this one has run
+  # against a real cluster or AWS account: expect to fix the first run.
+  #
+  # Needs: a kubeconfig for each environment as a base64 secret
+  # (KUBE_CONFIG_STAGING, KUBE_CONFIG_PRODUCTION), ECR_REGISTRY, and the
+  # secrets the chart references already present in the cluster.
+  #
+  # --atomic rolls the release back if the upgrade does not become ready in
+  # time, which is the rollback this job has: Kubernetes' own rolling update
+  # replaces pods only as the new ones pass their readiness probes.
+  deploy-staging:
+    name: Deploy to Staging
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: staging
+      url: https://staging.openfireblocks.io
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-helm@v4
+
+      - uses: sigstore/cosign-installer@v3
+
+      # Deploy only images this repository's deploy workflow signed. A tag
+      # someone pushed by hand, or an image from another pipeline, fails here.
+      - name: Verify every image is signed by this workflow
+        run: |
+          for svc in $(./scripts/build-images.sh --list); do
+            cosign verify "${{ secrets.ECR_REGISTRY }}/${svc}:${{ github.sha }}" \
+              --certificate-identity-regexp "^https://github.com/${{ github.repository }}/\.github/workflows/deploy\.yaml@" \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com > /dev/null
+          done
+
+      - name: Render the chart before touching the cluster
+        run: |
+          helm lint infrastructure/helm/openfireblocks
+          helm template ci infrastructure/helm/openfireblocks \
+            --set imageRegistry=${{ secrets.ECR_REGISTRY }} --set imageTag=${{ github.sha }} > /dev/null
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN_STAGING }}
+          aws-region: us-east-1
+
+      - name: Run database migrations
+        run: |
+          AWS_REGION=us-east-1 make db-migrate-staging
+
+      - name: Deploy the chart
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBE_CONFIG_STAGING }}" | base64 -d > ~/.kube/config
+          chmod 600 ~/.kube/config
+          helm upgrade --install openfireblocks infrastructure/helm/openfireblocks \
+            --namespace openfireblocks --create-namespace \
+            --set imageRegistry=${{ secrets.ECR_REGISTRY }} \
+            --set imageTag=${{ github.sha }} \
+            --atomic --wait --timeout 15m
+
+      - name: Run smoke tests
+        run: make test-staging
+        env:
+          STAGING_URL: https://staging.openfireblocks.io
+
+  deploy-production:
+    name: Deploy to Production
+    needs: deploy-staging
+    runs-on: ubuntu-latest
+    # The environment's required reviewers are the production approval gate.
+    environment:
+      name: production
+      url: https://api.openfireblocks.io
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-helm@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN_PRODUCTION }}
+          aws-region: us-east-1
+
+      - name: Record what is running now
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBE_CONFIG_PRODUCTION }}" | base64 -d > ~/.kube/config
+          chmod 600 ~/.kube/config
+          helm status openfireblocks --namespace openfireblocks || echo "no existing release"
+          helm history openfireblocks --namespace openfireblocks --max 5 || true
+
+      - name: Deploy the chart
+        run: |
+          helm upgrade --install openfireblocks infrastructure/helm/openfireblocks \
+            --namespace openfireblocks --create-namespace \
+            --set imageRegistry=${{ secrets.ECR_REGISTRY }} \
+            --set imageTag=${{ github.sha }} \
+            --atomic --wait --timeout 20m
+
+      - name: Send deployment notification
+        if: success()
+        uses: slackapi/slack-github-action@v1.24.0
+        with:
+          webhook-url: ${{ secrets.SLACK_WEBHOOK }}
+          payload: |
+            {
+              "text": "Production deployed: ${{ github.sha }}"
+            }
+
+  post-deployment:
+    name: Post-Deployment Validation
+    needs: deploy-production
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Run integration tests
+        run: make test-production
+        env:
+          PROD_URL: https://api.openfireblocks.io
+      
+      - name: Check security headers
+        run: |
+          curl -I https://api.openfireblocks.io | grep -E "Strict-Transport-Security|X-Content-Type-Options|X-Frame-Options"
+      
+      - name: Verify database backups
+        run: aws rds describe-db-snapshots --db-instance-identifier openfireblocks-prod
+      
+      - name: Create incident for rollback readiness
+        if: failure()
+        uses: actions/github-script@v6
+        with:
+          script: |
+            github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: '🚨 Deployment validation failed',
+              body: 'Post-deployment checks failed. Rollback may be needed.',
+              labels: ['deployment', 'urgent']
+            })
+
