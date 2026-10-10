@@ -14,7 +14,7 @@ Dear [Head of Partnerships],
 
 FORGE CUSTODY is self-hosted custody software. Keys are created by threshold signing, so no single party or machine holds the whole key. Every transfer passes a policy engine that fails closed, then a dual-control approval step in which the requester can never approve their own transfer. It runs in your own cloud account, and the recovery procedure never contacts us.
 
-It is pilot-ready on testnet and not yet cleared for material funds, so I'm proposing a pilot, not a production deployment. Assurance so far: an AI-driven penetration test is complete and every finding is fixed; an independent human-led penetration test and an independent cryptographic review are being arranged; and a SOC 2 programme is planned to begin within one to two months. A first call takes about fifteen minutes: a 2-of-3 key, a stablecoin send, and the policy engine refusing a transfer over the limit. Source access is available under NDA.
+It is pilot-ready on testnet and not yet cleared for material funds, so I'm proposing a pilot, not a production deployment. Assurance so far: a three-round automated penetration test is complete (every finding was fixed, and the last round found nothing critical, high or medium); an independent human-led penetration test and an independent cryptographic review are being arranged; and a SOC 2 programme is planned to begin within one to two months. A first call takes about fifteen minutes: a 2-of-3 key, a stablecoin send, and the policy engine refusing a transfer over the limit. Source access is available under NDA.
 
 Could you point me to the right person in [digital assets / innovation / transaction banking], or tell me how you prefer vendors to approach you?
 
@@ -35,7 +35,7 @@ Dear [Name],
 
 FORGE CUSTODY is self-hosted custody software. Keys are created by threshold signing, so no single party or machine holds the whole key. Every transfer passes a policy engine that fails closed, then a dual-control approval step in which the requester can never approve their own transfer.
 
-It is pilot-ready on testnet and not yet cleared for material funds, so I'm proposing a pilot, not a production deployment. Assurance so far: an AI-driven penetration test is complete and every finding is fixed; an independent human-led penetration test and an independent cryptographic review are being arranged; and a SOC 2 programme is planned to begin within one to two months. A first call takes about fifteen minutes: a 2-of-3 key, a stablecoin send, and the policy engine refusing a transfer over the limit. Source access is available under NDA. It would suit [issuer reserves / client custody / settlement] where you would rather hold the keys yourselves.
+It is pilot-ready on testnet and not yet cleared for material funds, so I'm proposing a pilot, not a production deployment. Assurance so far: a three-round automated penetration test is complete (every finding was fixed, and the last round found nothing critical, high or medium); an independent human-led penetration test and an independent cryptographic review are being arranged; and a SOC 2 programme is planned to begin within one to two months. A first call takes about fifteen minutes: a 2-of-3 key, a stablecoin send, and the policy engine refusing a transfer over the limit. Source access is available under NDA. It would suit [issuer reserves / client custody / settlement] where you would rather hold the keys yourselves.
 
 Would you be open to a fifteen-minute call in the next two weeks? If someone else owns this, I would be grateful for an introduction.
 
@@ -56,7 +56,7 @@ I'd like to reach [Name, Title] about self-hosted digital-asset custody for [pro
 
 FORGE CUSTODY is self-hosted custody software. Keys are created by threshold signing, so no single party or machine holds the whole key. Every transfer passes a policy engine that fails closed, then a dual-control approval step in which the requester can never approve their own transfer.
 
-It is pilot-ready on testnet and not yet cleared for material funds, so I'm proposing a pilot, not a production deployment. Assurance so far: an AI-driven penetration test is complete and every finding is fixed; an independent human-led penetration test and an independent cryptographic review are being arranged; and a SOC 2 programme is planned to begin within one to two months.
+It is pilot-ready on testnet and not yet cleared for material funds, so I'm proposing a pilot, not a production deployment. Assurance so far: a three-round automated penetration test is complete (every finding was fixed, and the last round found nothing critical, high or medium); an independent human-led penetration test and an independent cryptographic review are being arranged; and a SOC 2 programme is planned to begin within one to two months.
 
 Could you forward this, or tell me the right person or route?
 
@@ -94,7 +94,7 @@ Dear [Head of Partnerships],
 
 FORGE CUSTODY is self-hosted custody software. Keys are created by threshold signing, so no single party or machine holds the whole key. Every transfer passes a policy engine that fails closed, then a dual-control approval step in which the requester can never approve their own transfer. Roles are named (operator, approver, auditor), wallets can be segregated by portfolio, and reconciliation compares what the system signed with what the chain recorded.
 
-It is pilot-ready on testnet and not yet cleared for material funds, so I'm proposing a pilot, not a production deployment. Assurance so far: an AI-driven penetration test is complete and every finding is fixed; an independent human-led penetration test and an independent cryptographic review are being arranged; and a SOC 2 programme is planned to begin within one to two months. A first call takes about fifteen minutes: a 2-of-3 key, a stablecoin send, and the policy engine refusing a transfer over the limit. Source access is available under NDA.
+It is pilot-ready on testnet and not yet cleared for material funds, so I'm proposing a pilot, not a production deployment. Assurance so far: a three-round automated penetration test is complete (every finding was fixed, and the last round found nothing critical, high or medium); an independent human-led penetration test and an independent cryptographic review are being arranged; and a SOC 2 programme is planned to begin within one to two months. A first call takes about fifteen minutes: a 2-of-3 key, a stablecoin send, and the policy engine refusing a transfer over the limit. Source access is available under NDA.
 
 Could you tell me who owns this on your side, or how you prefer vendors to approach you?
 
@@ -115,7 +115,7 @@ Dear [Name],
 
 FORGE CUSTODY is self-hosted custody software. Keys are created by threshold signing, so no single party or machine holds the whole key. Every transfer passes a policy engine that fails closed, then a dual-control approval step in which the requester can never approve their own transfer. It runs in your own environment, so keys and data stay with you.
 
-It is pilot-ready on testnet and not yet cleared for material funds, so I'm proposing a pilot, not a production deployment. Assurance so far: an AI-driven penetration test is complete and every finding is fixed; an independent human-led penetration test and an independent cryptographic review are being arranged; and a SOC 2 programme is planned to begin within one to two months. A first call takes about fifteen minutes: a 2-of-3 key, a stablecoin send, and the policy engine refusing a transfer over the limit. Source access is available under NDA.
+It is pilot-ready on testnet and not yet cleared for material funds, so I'm proposing a pilot, not a production deployment. Assurance so far: a three-round automated penetration test is complete (every finding was fixed, and the last round found nothing critical, high or medium); an independent human-led penetration test and an independent cryptographic review are being arranged; and a SOC 2 programme is planned to begin within one to two months. A first call takes about fifteen minutes: a 2-of-3 key, a stablecoin send, and the policy engine refusing a transfer over the limit. Source access is available under NDA.
 
 Would fifteen minutes in the next two weeks be useful? If this belongs with a colleague, an introduction would be appreciated.
 
@@ -136,7 +136,7 @@ I'd like to reach [Name, Title] about key control for tokenised funds and digita
 
 FORGE CUSTODY is self-hosted custody software. Keys are created by threshold signing, so no single party or machine holds the whole key. Every transfer passes a policy engine that fails closed, then a dual-control approval step in which the requester can never approve their own transfer.
 
-It is pilot-ready on testnet and not yet cleared for material funds, so I'm proposing a pilot, not a production deployment. Assurance so far: an AI-driven penetration test is complete and every finding is fixed; an independent human-led penetration test and an independent cryptographic review are being arranged; and a SOC 2 programme is planned to begin within one to two months.
+It is pilot-ready on testnet and not yet cleared for material funds, so I'm proposing a pilot, not a production deployment. Assurance so far: a three-round automated penetration test is complete (every finding was fixed, and the last round found nothing critical, high or medium); an independent human-led penetration test and an independent cryptographic review are being arranged; and a SOC 2 programme is planned to begin within one to two months.
 
 Could you forward this or tell me who should see it?
 
@@ -174,7 +174,7 @@ Hi [Head of Partnerships],
 
 FORGE CUSTODY is self-hosted custody software. Keys are created by threshold signing, so no single party or machine holds the whole key. Every transfer passes a policy engine that fails closed, then a dual-control approval step in which the requester can never approve their own transfer. It is API-first and runs in your own cloud, so you keep the customer experience in your product and signing and control in a separate, auditable layer.
 
-It is pilot-ready on testnet and not yet cleared for material funds, so I'm proposing a pilot, not a production deployment. Assurance so far: an AI-driven penetration test is complete and every finding is fixed; an independent human-led penetration test and an independent cryptographic review are being arranged; and a SOC 2 programme is planned to begin within one to two months. A first call takes about fifteen minutes: a 2-of-3 key, a stablecoin send, and the policy engine refusing a transfer over the limit. Source access is available under NDA.
+It is pilot-ready on testnet and not yet cleared for material funds, so I'm proposing a pilot, not a production deployment. Assurance so far: a three-round automated penetration test is complete (every finding was fixed, and the last round found nothing critical, high or medium); an independent human-led penetration test and an independent cryptographic review are being arranged; and a SOC 2 programme is planned to begin within one to two months. A first call takes about fifteen minutes: a 2-of-3 key, a stablecoin send, and the policy engine refusing a transfer over the limit. Source access is available under NDA.
 
 Who is the right person for infrastructure partners, and what is the best way to reach them?
 
@@ -195,7 +195,7 @@ Hi [Name],
 
 FORGE CUSTODY is self-hosted custody software. Keys are created by threshold signing, so no single party or machine holds the whole key. Every transfer passes a policy engine that fails closed, then a dual-control approval step in which the requester can never approve their own transfer. Rules cover amount ceilings, allow-lists, blocked countries, sanctions and token controls, and your engineers can review the source under NDA.
 
-It is pilot-ready on testnet and not yet cleared for material funds, so I'm proposing a pilot, not a production deployment. Assurance so far: an AI-driven penetration test is complete and every finding is fixed; an independent human-led penetration test and an independent cryptographic review are being arranged; and a SOC 2 programme is planned to begin within one to two months. A first call takes about fifteen minutes: a 2-of-3 key, a stablecoin send, and the policy engine refusing a transfer over the limit. Source access is available under NDA.
+It is pilot-ready on testnet and not yet cleared for material funds, so I'm proposing a pilot, not a production deployment. Assurance so far: a three-round automated penetration test is complete (every finding was fixed, and the last round found nothing critical, high or medium); an independent human-led penetration test and an independent cryptographic review are being arranged; and a SOC 2 programme is planned to begin within one to two months. A first call takes about fifteen minutes: a 2-of-3 key, a stablecoin send, and the policy engine refusing a transfer over the limit. Source access is available under NDA.
 
 Worth a short call in the next two weeks? If someone else owns treasury or wallet infrastructure, please point me to them.
 
@@ -216,7 +216,7 @@ I'd like to reach [Name, Title] about signing and approval control for stablecoi
 
 FORGE CUSTODY is self-hosted custody software. Keys are created by threshold signing, so no single party or machine holds the whole key. Every transfer passes a policy engine that fails closed, then a dual-control approval step in which the requester can never approve their own transfer.
 
-It is pilot-ready on testnet and not yet cleared for material funds, so I'm proposing a pilot, not a production deployment. Assurance so far: an AI-driven penetration test is complete and every finding is fixed; an independent human-led penetration test and an independent cryptographic review are being arranged; and a SOC 2 programme is planned to begin within one to two months.
+It is pilot-ready on testnet and not yet cleared for material funds, so I'm proposing a pilot, not a production deployment. Assurance so far: a three-round automated penetration test is complete (every finding was fixed, and the last round found nothing critical, high or medium); an independent human-led penetration test and an independent cryptographic review are being arranged; and a SOC 2 programme is planned to begin within one to two months.
 
 Could you forward this or point me to the right person?
 
@@ -254,7 +254,7 @@ I am writing about [the specific programme: reserve, sandbox, licensing regime o
 
 FORGE CUSTODY is custody software that runs entirely inside your own jurisdiction and infrastructure. Keys are created by threshold signing, so no single party or machine holds the whole key. Every transfer passes a policy gate and a human approval gate, and the written recovery procedure never contacts us. The source is available under NDA so your technical team can verify the claims.
 
-It is pilot-ready on testnet and not yet cleared for material funds, so I'm proposing a pilot, not a production deployment. Assurance so far: an AI-driven penetration test is complete and every finding is fixed; an independent human-led penetration test and an independent cryptographic review are being arranged; and a SOC 2 programme is planned to begin within one to two months. I would welcome a sandbox application, a reference pilot or a technical briefing, whichever your process prefers.
+It is pilot-ready on testnet and not yet cleared for material funds, so I'm proposing a pilot, not a production deployment. Assurance so far: a three-round automated penetration test is complete (every finding was fixed, and the last round found nothing critical, high or medium); an independent human-led penetration test and an independent cryptographic review are being arranged; and a SOC 2 programme is planned to begin within one to two months. I would welcome a sandbox application, a reference pilot or a technical briefing, whichever your process prefers.
 
 Could you tell me the correct route for vendor or innovation submissions?
 
@@ -273,7 +273,7 @@ Dear [Title and Name],
 
 FORGE CUSTODY runs inside your own infrastructure. Keys are created by threshold signing, so no single party or machine holds the whole key. Every transfer passes a policy engine that fails closed, then a dual-control approval step in which the requester can never approve their own transfer. The recovery procedure never contacts the vendor.
 
-It is pilot-ready on testnet and not yet cleared for material funds, so I'm proposing a pilot, not a production deployment. Assurance so far: an AI-driven penetration test is complete and every finding is fixed; an independent human-led penetration test and an independent cryptographic review are being arranged; and a SOC 2 programme is planned to begin within one to two months.
+It is pilot-ready on testnet and not yet cleared for material funds, so I'm proposing a pilot, not a production deployment. Assurance so far: a three-round automated penetration test is complete (every finding was fixed, and the last round found nothing critical, high or medium); an independent human-led penetration test and an independent cryptographic review are being arranged; and a SOC 2 programme is planned to begin within one to two months.
 
 May I offer a short technical briefing for your team, or send a two-page summary first?
 
@@ -290,7 +290,7 @@ Dear [Private Office / Secretariat],
 
 I would be grateful if you could direct the enclosed summary to [the office or officer responsible for digital-asset custody, payments or innovation] at [Organisation].
 
-Summary: FORGE CUSTODY is self-hosted custody software that runs inside the institution's own jurisdiction, with threshold signing, policy and human approval gates, and a recovery procedure that does not depend on the vendor. It is pilot-ready on testnet and not yet cleared for material funds, so I'm proposing a pilot, not a production deployment. Assurance so far: an AI-driven penetration test is complete and every finding is fixed; an independent human-led penetration test and an independent cryptographic review are being arranged; and a SOC 2 programme is planned to begin within one to two months.
+Summary: FORGE CUSTODY is self-hosted custody software that runs inside the institution's own jurisdiction, with threshold signing, policy and human approval gates, and a recovery procedure that does not depend on the vendor. It is pilot-ready on testnet and not yet cleared for material funds, so I'm proposing a pilot, not a production deployment. Assurance so far: a three-round automated penetration test is complete (every finding was fixed, and the last round found nothing critical, high or medium); an independent human-led penetration test and an independent cryptographic review are being arranged; and a SOC 2 programme is planned to begin within one to two months.
 
 If another office is the right addressee, please let me know and I will redirect.
 

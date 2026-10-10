@@ -20,7 +20,7 @@ In brief:
 - Every transfer is evaluated against written policy before signing, and the system fails closed. Transfers above set thresholds additionally require approval by named officials, and the requester cannot approve their own transfer.
 - Recovery does not depend on the vendor. The source is available for independent inspection under a non-disclosure agreement.
 
-I wish to be accurate about our status. The platform is suitable for testnet pilots and supervised evaluation; it is not yet cleared to hold material funds. An automated adversarial penetration test has been completed and all findings have been remediated. An independent human-led penetration test and an independent cryptographic review are being arranged, and a SOC 2 programme is planned to begin within the next one to two months.
+I wish to be accurate about our status. The platform is suitable for testnet pilots and supervised evaluation; it is not yet cleared to hold material funds. A three-round automated adversarial penetration test has been completed: every finding was remediated, and the final round found no critical, high or medium issues. An independent human-led penetration test and an independent cryptographic review are being arranged, and a SOC 2 programme is planned to begin within the next one to two months.
 
 I would be grateful if you could advise:
 1. The appropriate route for submissions of this kind (for example, an application to the IFWG Innovation Hub regulatory sandbox, or another process); and
@@ -51,7 +51,7 @@ In brief:
 - Reconciliation compares what the system signed with what the blockchain recorded, and an append-only audit trail is retained.
 - The source is available for independent inspection under a non-disclosure agreement.
 
-I wish to be accurate about our status. The platform is suitable for testnet pilots and supervised evaluation; it is not yet cleared to hold material funds. An automated adversarial penetration test has been completed and all findings have been remediated. An independent human-led penetration test and an independent cryptographic review are being arranged, and a SOC 2 programme is planned to begin within the next one to two months.
+I wish to be accurate about our status. The platform is suitable for testnet pilots and supervised evaluation; it is not yet cleared to hold material funds. A three-round automated adversarial penetration test has been completed: every finding was remediated, and the final round found no critical, high or medium issues. An independent human-led penetration test and an independent cryptographic review are being arranged, and a SOC 2 programme is planned to begin within the next one to two months.
 
 I would be grateful if you could advise:
 1. Whether the Commission's regulatory sandbox, or another route, is appropriate for a technology provider of this kind, and what the application requires; and
@@ -81,7 +81,7 @@ In brief:
 - Every transfer is evaluated against written policy before signing, and the system fails closed. Named approvers are required above set thresholds, and the requester cannot approve their own transfer.
 - Recovery does not depend on the vendor. The source is available for independent inspection under a non-disclosure agreement.
 
-I wish to be accurate about our status. The platform is suitable for testnet pilots and supervised evaluation; it is not yet cleared to hold material funds. An automated adversarial penetration test has been completed and all findings have been remediated. An independent human-led penetration test and an independent cryptographic review are being arranged, and a SOC 2 programme is planned to begin within the next one to two months.
+I wish to be accurate about our status. The platform is suitable for testnet pilots and supervised evaluation; it is not yet cleared to hold material funds. A three-round automated adversarial penetration test has been completed: every finding was remediated, and the final round found no critical, high or medium issues. An independent human-led penetration test and an independent cryptographic review are being arranged, and a SOC 2 programme is planned to begin within the next one to two months.
 
 I would be grateful if you could advise:
 1. The appropriate route for a technology provider to engage with the Commission, including any regulatory incubation or sandbox process, and the opportunity to comment on the proposed rules if applicable; and

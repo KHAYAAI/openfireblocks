@@ -16,7 +16,7 @@ I noticed VALR powers the USDC wallet that Mukuru offers its customers over What
 
 FORGE CUSTODY is self-hosted, API-first custody software. Keys are created by threshold signing (no single party or machine holds a whole key). Every transfer passes a fail-closed policy engine (amount ceilings, allow-lists, blocked countries, sanctions, token controls), then dual-control approval where the requester can never approve their own transfer. Source is reviewable under NDA.
 
-Status, plainly: suitable for testnet pilots, not yet for material funds. An automated pentest is complete and its findings are fixed; an independent human pentest and cryptographic review are being arranged; SOC 2 is planned to start within 1-2 months.
+Status, plainly: suitable for testnet pilots, not yet for material funds. A three-round automated pentest is complete (all findings fixed; the last round found nothing critical, high or medium); an independent human pentest and cryptographic review are being arranged; SOC 2 is planned to start within 1-2 months.
 
 Could you route this to the right person, or tell me how you prefer vendors to approach you? I can send a one-page summary first.
 
@@ -39,7 +39,7 @@ I noticed OVEX's growing stablecoin settlement business for fintechs, payment pr
 
 FORGE CUSTODY is self-hosted, API-first custody software. Keys are created by threshold signing (no single party or machine holds a whole key). Every transfer passes a fail-closed policy engine (amount ceilings, allow-lists, blocked countries, sanctions, token controls), then dual-control approval where the requester can never approve their own transfer. Source is reviewable under NDA.
 
-Status, plainly: suitable for testnet pilots, not yet for material funds. An automated pentest is complete and its findings are fixed; an independent human pentest and cryptographic review are being arranged; SOC 2 is planned to start within 1-2 months.
+Status, plainly: suitable for testnet pilots, not yet for material funds. A three-round automated pentest is complete (all findings fixed; the last round found nothing critical, high or medium); an independent human pentest and cryptographic review are being arranged; SOC 2 is planned to start within 1-2 months.
 
 Could you route this to the right person, or tell me how you prefer vendors to approach you? I can send a one-page summary first.
 
@@ -62,7 +62,7 @@ I noticed Luno's July pivot toward B2B, including wallet infrastructure that let
 
 FORGE CUSTODY is self-hosted, API-first custody software. Keys are created by threshold signing (no single party or machine holds a whole key). Every transfer passes a fail-closed policy engine (amount ceilings, allow-lists, blocked countries, sanctions, token controls), then dual-control approval where the requester can never approve their own transfer. Source is reviewable under NDA.
 
-Status, plainly: suitable for testnet pilots, not yet for material funds. An automated pentest is complete and its findings are fixed; an independent human pentest and cryptographic review are being arranged; SOC 2 is planned to start within 1-2 months.
+Status, plainly: suitable for testnet pilots, not yet for material funds. A three-round automated pentest is complete (all findings fixed; the last round found nothing critical, high or medium); an independent human pentest and cryptographic review are being arranged; SOC 2 is planned to start within 1-2 months.
 
 Could you route this to the right person, or tell me how you prefer vendors to approach you? I can send a one-page summary first.
 
@@ -85,7 +85,7 @@ I noticed Yellow Card's $40m raise in August to scale Global USD Accounts across
 
 FORGE CUSTODY is self-hosted, API-first custody software. Keys are created by threshold signing (no single party or machine holds a whole key). Every transfer passes a fail-closed policy engine (amount ceilings, allow-lists, blocked countries, sanctions, token controls), then dual-control approval where the requester can never approve their own transfer. Source is reviewable under NDA.
 
-Status, plainly: suitable for testnet pilots, not yet for material funds. An automated pentest is complete and its findings are fixed; an independent human pentest and cryptographic review are being arranged; SOC 2 is planned to start within 1-2 months.
+Status, plainly: suitable for testnet pilots, not yet for material funds. A three-round automated pentest is complete (all findings fixed; the last round found nothing critical, high or medium); an independent human pentest and cryptographic review are being arranged; SOC 2 is planned to start within 1-2 months.
 
 Could you route this to the right person, or tell me how you prefer vendors to approach you? I can send a one-page summary first.
 
@@ -108,7 +108,7 @@ I noticed Cross River launched stablecoin payments for approved partners in Nove
 
 FORGE CUSTODY is self-hosted, API-first custody software. Keys are created by threshold signing (no single party or machine holds a whole key). Every transfer passes a fail-closed policy engine (amount ceilings, allow-lists, blocked countries, sanctions, token controls), then dual-control approval where the requester can never approve their own transfer. Source is reviewable under NDA.
 
-Status, plainly: suitable for testnet pilots, not yet for material funds. An automated pentest is complete and its findings are fixed; an independent human pentest and cryptographic review are being arranged; SOC 2 is planned to start within 1-2 months.
+Status, plainly: suitable for testnet pilots, not yet for material funds. A three-round automated pentest is complete (all findings fixed; the last round found nothing critical, high or medium); an independent human pentest and cryptographic review are being arranged; SOC 2 is planned to start within 1-2 months.
 
 Could you route this to the right person, or tell me how you prefer vendors to approach you? I can send a one-page summary first.
 

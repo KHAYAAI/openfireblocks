@@ -77,8 +77,8 @@ Scope, objectives and rules of engagement are documented. Test accounts across r
 approver, operator, auditor, viewer) and a second cross-tenant organisation will be
 provisioned. Test chains only (Sepolia, Solana devnet, Cosmos testnet), never mainnet.
 
-For context: an AI-driven pentest has already run against this deployment and found 11
-issues, all now fixed. We want an independent, human-led test and treat that run as a
+For context: an automated pentest has already been run against this deployment in three rounds.
+The first found 11 issues and the last found nothing critical, high or medium; all findings are fixed. We want an independent, human-led test and treat that run as a
 baseline only.
 
 Could you send: (1) a quote based on our scope, (2) estimated duration and earliest start,
@@ -125,7 +125,8 @@ sanctions tooling. You run it in your own infrastructure; we never hold your key
 
 Where it stands, plainly (the attached sales brief has the detail):
 - Real key generation and signing have run on a real cloud cluster with public HTTPS.
-- An AI-driven penetration test found 11 issues; all are fixed.
+- A three-round automated penetration test is complete: round 1 found 11 issues, and the final
+  round found nothing critical, high or medium; every finding is fixed.
 - Not yet done: an independent cryptographic audit, an independent human-led pentest, SOC 2,
   hardware-isolated shares, and a live public-chain run for every chain family.
 - Cleared for demos, testnet pilots and paid design partnerships. Not cleared to hold
@@ -178,3 +179,12 @@ government bodies.
 | 2026-10-09 | Chipper Cash | Fintech | getintouch@chipperbusiness.com | Sent, msg 1a120d8007e3fb72. Follow up 2026-10-16 |
 | 2026-10-09 | Trail of Bits | Crypto audit (screening) | info@trailofbits.com | Sent, msg 1a120d9d8a892a98. Follow up 2026-10-16 |
 | 2026-10-09 | Bank of England DSS | Government (UK) | DSSEnquiries@bankofengland.co.uk | Sent, msg 1a120d9e3deed15f. Follow up 2026-10-16 |
+
+## Wording update (2026-10-10)
+
+After three Shannon rounds (round 1: 11 findings; round 2: 1 critical, 2 medium, 1 low; round 3: 2 low), all
+fixed, the pitch uses: "a three-round automated penetration test is complete; every finding was fixed and the
+last round found nothing critical, high or medium." Use it only once the round-3 fixes (8735cd4) are redeployed to
+staging. Emails already sent on 2026-10-09 say "an AI-driven penetration test is complete and every finding is
+fixed", which remains true; the 16 Oct follow-ups can add the stronger line. Always keep the next clause: a human-led
+test and a cryptographic review are only being arranged, and the test is one AI tool, not an independent review.
