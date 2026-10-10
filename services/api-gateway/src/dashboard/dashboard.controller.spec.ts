@@ -122,4 +122,13 @@ describe('DashboardController session revocation (AUTH-04)', () => {
     await controller.signOut(req, res);
     expect(revocation.revoke).toHaveBeenCalled();
   });
+
+  // AUTH-01 (round 3): this exchange of an API key for a session cookie had
+  // only the global 100/min limit, ten times the JSON login's.
+  it('rate-limits the API-key sign-in to the same budget as the JSON login', () => {
+    const limit = Reflect.getMetadata('THROTTLER:LIMITdefault', DashboardController.prototype.signIn);
+    const ttl = Reflect.getMetadata('THROTTLER:TTLdefault', DashboardController.prototype.signIn);
+    expect(limit).toBe(10);
+    expect(ttl).toBe(60_000);
+  });
 });

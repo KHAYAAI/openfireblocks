@@ -1,5 +1,5 @@
 import { ConflictException, UnauthorizedException } from '@nestjs/common';
-import { AuthService } from './auth.service';
+import { AuthService, MFA_VERIFY_FAILURE } from './auth.service';
 import { UsersService } from './users.service';
 import { MfaChallengesService } from './mfa-challenges.service';
 import { JwtService } from '@nestjs/jwt';
@@ -407,5 +407,30 @@ describe('AuthService.login per-address lockout (AUTH-02)', () => {
     const err: any = await auth.login('alice@example.com', 'right', '203.0.113.9').catch((e) => e);
     expect(err).toBeInstanceOf(UnauthorizedException);
     expect(err.message).toBe('invalid credentials');
+  });
+});
+
+// AUTH-02 (round 3): the unauthenticated MFA verify endpoint answered
+// differently for an unknown account, a non-MFA account and an MFA account,
+// so a bogus challenge token enumerated which emails have a second factor.
+describe('AuthService.verifyMfaAndLogin gives one answer to every failure', () => {
+  const mfaUser = { ...activeUser, mfa_enabled: true, mfa_secret: 'JBSWY3DPEHPK3PXP' };
+
+  async function messageFor(users: ReturnType<typeof mockUsers>, challenges = mockMfaChallenges()) {
+    const auth = new AuthService(users, challenges, jwt);
+    const err: any = await auth.verifyMfaAndLogin('x@example.com', 'AAAA', '123456').catch((e) => e);
+    expect(err).toBeInstanceOf(UnauthorizedException);
+    return err.message;
+  }
+
+  it('is identical for an unknown account, a non-MFA account, a spent challenge and a wrong code', async () => {
+    const unknown = await messageFor(mockUsers({ findByEmail: jest.fn().mockResolvedValue(null) }));
+    const nonMfa = await messageFor(mockUsers({ findByEmail: jest.fn().mockResolvedValue(activeUser) }));
+    const spent = await messageFor(
+      mockUsers({ findByEmail: jest.fn().mockResolvedValue(mfaUser) }),
+      mockMfaChallenges({ consume: jest.fn().mockResolvedValue(false) }),
+    );
+    const wrongCode = await messageFor(mockUsers({ findByEmail: jest.fn().mockResolvedValue(mfaUser) }));
+    expect(new Set([unknown, nonMfa, spent, wrongCode])).toEqual(new Set([MFA_VERIFY_FAILURE]));
   });
 });

@@ -65,8 +65,10 @@ Run against the redeployed, fixed staging (see `docs/evidence/2026-10-10-aws-red
 Result: 4 findings (1 critical, 2 medium, 1 low), and none of the 11 round-1 findings reproduced. The
 critical one was real and new: `POST /sign` did not honour the organisation freeze, address whitelist or
 approval gate. All four are fixed in code and unit-tested; they are not yet re-verified on the live
-deployment. Detail: `docs/security/PENTEST-ROUND-2-2026-10-10.md`. A round 3 after redeploy, and an
-independent human-led test, remain open.
+deployment. Detail: `docs/security/PENTEST-ROUND-2-2026-10-10.md`. Round 3 (same day, after the fixes were deployed) found only 2 low
+issues (a loose rate limit on the API-key sign-in, and different MFA-verify error messages that revealed
+which emails have MFA); both are fixed in code and unit-tested, not yet redeployed. Still open: a round 4
+to confirm, and an independent human-led test.
 
 ## CI state
 

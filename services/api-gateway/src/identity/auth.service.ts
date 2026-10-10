@@ -1,6 +1,7 @@
 import {
   ConflictException,
   Injectable,
+  Logger,
   UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
@@ -69,12 +70,17 @@ function toPublicUser(user: User): PublicUser {
   };
 }
 
+// The single answer to every failed MFA verification; see verifyMfaAndLogin.
+export const MFA_VERIFY_FAILURE = 'MFA verification failed';
+
 // Orchestrates the register -> login -> (optional MFA) -> JWT flow. Kept
 // framework-light (constructor takes its collaborators directly) so it is
 // unit-testable without bootstrapping the Nest DI container, matching
 // BillingService/CustomerService elsewhere in this codebase.
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private readonly users: UsersService,
     private readonly mfaChallenges: MfaChallengesService,
@@ -172,19 +178,31 @@ export class AuthService {
     challengeToken: string,
     code: string,
   ): Promise<{ accessToken: string; expiresIn: number; user: PublicUser }> {
+    // One message for every failure (AUTH-02, round 3). This endpoint is
+    // unauthenticated, and its answers used to differ: "invalid MFA session"
+    // for an unknown or non-MFA account, "MFA challenge expired or already
+    // used" for an account that has MFA, and "invalid MFA code" past that --
+    // so a bogus challenge token was enough to learn, for any email, whether
+    // the account exists and has a second factor, which is exactly the list a
+    // phisher wants. The real reason is logged server-side only.
+    const fail = (reason: string): never => {
+      this.logger.debug(`MFA verification failed: ${reason}`);
+      throw new UnauthorizedException(MFA_VERIFY_FAILURE);
+    };
+
     const user = await this.users.findByEmail(email);
     if (!user || !user.mfa_enabled || !user.mfa_secret) {
-      throw new UnauthorizedException('invalid MFA session');
+      return fail('no such account, or MFA not enabled');
     }
 
     const consumed = await this.mfaChallenges.consume(user.id, challengeToken);
     if (!consumed) {
-      throw new UnauthorizedException('MFA challenge expired or already used');
+      return fail('challenge expired or already used');
     }
 
     if (!verifyTotpCode(user.mfa_secret, code)) {
       await this.users.recordFailedLogin(user.id);
-      throw new UnauthorizedException('invalid MFA code');
+      return fail('wrong code');
     }
 
     await this.users.recordSuccessfulLogin(user.id);

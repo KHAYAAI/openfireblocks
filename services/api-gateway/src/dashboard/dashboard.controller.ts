@@ -9,6 +9,7 @@ import {
   Res,
   Logger,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
 import { CustomerService, Customer } from '../customers/customer.service';
 import { PostgresService } from '../database/postgres.service';
@@ -106,7 +107,13 @@ export class DashboardController {
     return this.html(res, loginPage());
   }
 
+  // The same budget as the JSON login (10 a minute per address), not the
+  // global 100 (AUTH-01, round 3): this exchanges an API key for a session
+  // cookie, so it is a credential-guessing surface and was ten times looser
+  // than the endpoint that guards passwords. Keys are 192-bit random, so this
+  // limits stuffing of weak or leaked keys rather than blind brute force.
   @Post('sign-in')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   async signIn(@Body() body: { apiKey?: string }, @Res() res: Response) {
     const apiKey = (body?.apiKey ?? '').trim();
     if (!apiKey) {
