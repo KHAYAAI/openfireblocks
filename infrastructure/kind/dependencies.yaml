@@ -580,3 +580,50 @@ spec:
   selector: { app: temporal-frontend }
   ports:
     - { name: grpc, port: 7233, targetPort: grpc }
+---
+# Redis, for the gateway's token/session revocation (logout) and per-address
+# login tracking, and for the per-tenant velocity limit. Without it those three
+# controls are a no-op (revocation, login tracking) or fail closed (velocity),
+# so a kind or staging deployment that left it out silently ran without them
+# and a penetration test would rediscover the gaps.
+#
+# No password, no persistence, not exposed outside the cluster: this is a
+# throwaway like everything else in this file. A real deployment points
+# external.redisUrl at managed Redis with auth and TLS.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: openfireblocks
+  labels:
+    app: redis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          ports:
+            - containerPort: 6379
+          args: ["--save", "", "--appendonly", "no"]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: openfireblocks
+  labels:
+    app: redis
+spec:
+  selector:
+    app: redis
+  ports:
+    - port: 6379
+      targetPort: 6379

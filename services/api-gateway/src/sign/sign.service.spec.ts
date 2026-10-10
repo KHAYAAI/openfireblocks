@@ -14,6 +14,7 @@ import { Customer } from '../customers/customer.service';
 import { SignRequestDto } from './dto/sign-request.dto';
 import { TokenRegistryService } from '../tokens/token-registry.service';
 import { encodeTransfer } from '../keys/erc20';
+import { ControlsService } from '../controls/controls.service';
 
 // Unit tests for the Phase 1 sign orchestration. External collaborators (MPC
 // signer, PostgreSQL, Ethereum RPC, policy service) are mocked, so this runs
@@ -25,6 +26,7 @@ describe('SignService', () => {
   let risk: { checkAndRecord: jest.Mock };
   let billing: { recordSigned: jest.Mock; recordBroadcast: jest.Mock };
   let tokens: { byContract: jest.Mock };
+  let controls: { assertCanSign: jest.Mock; assertDestinationAllowed: jest.Mock };
 
   const mpcResponse = {
     data: {
@@ -81,6 +83,10 @@ describe('SignService', () => {
       recordBroadcast: jest.fn().mockResolvedValue(undefined),
     };
     tokens = { byContract: jest.fn().mockResolvedValue(null) };
+    controls = {
+      assertCanSign: jest.fn().mockResolvedValue(undefined),
+      assertDestinationAllowed: jest.fn().mockResolvedValue(undefined),
+    };
 
     const moduleRef = await Test.createTestingModule({
       providers: [
@@ -94,6 +100,7 @@ describe('SignService', () => {
         { provide: RiskService, useValue: risk },
         { provide: BillingService, useValue: billing },
         { provide: TokenRegistryService, useValue: tokens },
+        { provide: ControlsService, useValue: controls },
       ],
     }).compile();
 
@@ -241,6 +248,60 @@ describe('SignService', () => {
 
       await expect(service.sign(customer, req)).rejects.toBeInstanceOf(BadRequestException);
       expect(policy.evaluate).not.toHaveBeenCalled();
+    });
+  });
+
+  // AUTHZ-01 (round 2): POST /sign used to skip the organisation's freeze, its
+  // address whitelist and the approval gate, so a tenant API key alone could
+  // sign a 20 ETH transfer while frozen and to a non-whitelisted address.
+  describe('organisation controls and approvals (AUTHZ-01)', () => {
+    it('refuses and does not sign while the organisation is frozen', async () => {
+      const service = await build({ canBroadcast: false });
+      controls.assertCanSign.mockRejectedValueOnce(new ForbiddenException('frozen'));
+      await expect(service.sign(customer, validReq)).rejects.toBeInstanceOf(ForbiddenException);
+      expect(postgres.recordTransfer).not.toHaveBeenCalled();
+      expect(policy.evaluate).not.toHaveBeenCalled();
+      expect(audit.logEvent.mock.calls.map((c) => c[0].type)).toContain('CONTROLS_DENIED');
+    });
+
+    it('refuses a destination that is not on the enforced whitelist', async () => {
+      const service = await build({ canBroadcast: false });
+      controls.assertDestinationAllowed.mockRejectedValueOnce(new ForbiddenException('not whitelisted'));
+      await expect(service.sign(customer, validReq)).rejects.toBeInstanceOf(ForbiddenException);
+      expect(postgres.recordTransfer).not.toHaveBeenCalled();
+    });
+
+    it('checks the whitelist against the decoded token recipient, not the contract', async () => {
+      const service = await build({ canBroadcast: false });
+      const recipient = '0x00000000000000000000000000000000000000aa';
+      const contract = '0x00000000000000000000000000000000000000bb';
+      tokens.byContract.mockResolvedValueOnce({
+        symbol: 'USDC',
+        decimals: 6,
+        pegCurrency: 'USD',
+        contractAddress: contract,
+        status: 'verified',
+      });
+      await service.sign(customer, { ...validReq, to: contract, data: encodeTransfer(recipient, '1000000') });
+      const [, , checked] = controls.assertDestinationAllowed.mock.calls[0];
+      expect(String(checked).toLowerCase()).toBe(recipient);
+      expect(String(checked).toLowerCase()).not.toBe(contract);
+    });
+
+    it('refuses instead of signing when policy requires approval', async () => {
+      const service = await build({ canBroadcast: false });
+      policy.evaluate.mockResolvedValueOnce({
+        approved: true,
+        denials: [],
+        requiresApproval: true,
+        approvalReasons: ['amount above the high-value threshold'],
+        reason: 'ok',
+      });
+      await expect(service.sign(customer, validReq)).rejects.toMatchObject({
+        response: expect.objectContaining({ error: 'approval required' }),
+      });
+      expect(postgres.recordTransfer).not.toHaveBeenCalled();
+      expect(audit.logEvent.mock.calls.map((c) => c[0].type)).toContain('APPROVAL_REQUIRED');
     });
   });
 });

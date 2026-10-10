@@ -24,6 +24,10 @@ export interface User {
 
 const BCRYPT_COST = 12;
 const MAX_FAILED_LOGINS = 5;
+// With per-address tracking on (Redis), one address is cut off after a handful
+// of failures and its refused attempts are not counted here, so this
+// account-wide lock only trips on failures spread across several addresses.
+export const DISTRIBUTED_MAX_FAILED_LOGINS = 25;
 const LOCKOUT_MINUTES = 15;
 
 // Human dashboard users, distinct from the API-key tenants in CustomerService.
@@ -160,14 +164,14 @@ export class UsersService {
   // Locks the account for LOCKOUT_MINUTES after MAX_FAILED_LOGINS consecutive
   // failures, then resets the counter, so a lockout always requires a fresh
   // run of failures rather than accumulating forever.
-  async recordFailedLogin(userId: string): Promise<void> {
+  async recordFailedLogin(userId: string, threshold: number = MAX_FAILED_LOGINS): Promise<void> {
     const result = await this.pool.query(
       `UPDATE users SET failed_login_count = failed_login_count + 1
        WHERE id = $1 RETURNING failed_login_count`,
       [userId],
     );
     const count = result.rows[0]?.failed_login_count ?? 0;
-    if (count >= MAX_FAILED_LOGINS) {
+    if (count >= threshold) {
       await this.pool.query(
         `UPDATE users
          SET locked_until = NOW() + make_interval(mins => $2), failed_login_count = 0

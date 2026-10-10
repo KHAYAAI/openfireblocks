@@ -139,6 +139,9 @@ spec:
               value: {{ .Values.external.partyIsolationLevel | default "unknown" | quote }}
             - name: COMPLIANCE_SERVICE_URL
               value: http://{{ include "ofb.fullname" . }}-compliance:{{ .Values.compliance.port }}
+            # Number of reverse proxies in front of the gateway; see main.ts.
+            - name: TRUST_PROXY_HOPS
+              value: {{ .Values.apiGateway.trustProxyHops | default 0 | quote }}
             - name: REDIS_URL
               value: {{ .Values.external.redisUrl | quote }}
             # See the comment on external.redisUrl: an empty REDIS_URL now

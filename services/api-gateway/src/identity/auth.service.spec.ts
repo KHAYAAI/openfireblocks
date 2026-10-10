@@ -4,6 +4,7 @@ import { UsersService } from './users.service';
 import { MfaChallengesService } from './mfa-challenges.service';
 import { JwtService } from '@nestjs/jwt';
 import { authenticator } from 'otplib';
+import { LoginAttemptsService, PAIR_MAX_FAILURES } from './login-attempts.service';
 
 function mockUsers(overrides: Partial<jest.Mocked<UsersService>> = {}) {
   return {
@@ -339,5 +340,72 @@ describe('AuthService token issuance and logout (AUTH-03)', () => {
     const auth = new AuthService(mockUsers(), mockMfaChallenges(), jwt, revocation);
     await auth.logout({ sub: 'u1', email: 'alice@example.com', role: 'user' });
     expect(revoke).not.toHaveBeenCalled();
+  });
+});
+
+// AUTH-02 (round 2): the account-wide lockout could be tripped by any caller
+// for any known email with five unauthenticated requests, and re-armed every
+// window -- a silent denial of service against the real owner. Failures are
+// now also counted per (account, source address): one address is cut off
+// without locking the owner out from anywhere else.
+describe('AuthService.login per-address lockout (AUTH-02)', () => {
+  function fakeRedis() {
+    const store = new Map<string, number>();
+    return {
+      get: jest.fn(async (k: string) => (store.has(k) ? String(store.get(k)) : null)),
+      incr: jest.fn(async (k: string) => {
+        store.set(k, (store.get(k) ?? 0) + 1);
+        return store.get(k)!;
+      }),
+      expire: jest.fn(async () => 1),
+      del: jest.fn(async (k: string) => store.delete(k)),
+      quit: jest.fn(async () => 'OK'),
+    };
+  }
+
+  function build() {
+    const users = mockUsers({
+      findByEmail: jest.fn().mockResolvedValue(activeUser),
+      verifyPassword: jest.fn().mockImplementation(async (_u: unknown, pw: string) => pw === 'right'),
+    });
+    const attempts = new LoginAttemptsService(fakeRedis());
+    const auth = new AuthService(users, mockMfaChallenges(), jwt, undefined, attempts);
+    return { users, auth };
+  }
+
+  it('cuts off an address after repeated failures but lets the owner in from another address', async () => {
+    const { users, auth } = build();
+    for (let i = 0; i < PAIR_MAX_FAILURES; i++) {
+      await expect(auth.login('alice@example.com', 'wrong', '203.0.113.9')).rejects.toBeInstanceOf(
+        UnauthorizedException,
+      );
+    }
+    // The attacking address is now refused even with the correct password.
+    await expect(auth.login('alice@example.com', 'right', '203.0.113.9')).rejects.toBeInstanceOf(
+      UnauthorizedException,
+    );
+    // The owner, from elsewhere, is not locked out.
+    const ok = await auth.login('alice@example.com', 'right', '198.51.100.7');
+    expect(ok.status).toBe('ok');
+    // Refused attempts did not push the account-wide counter any further.
+    expect(users.recordFailedLogin).toHaveBeenCalledTimes(PAIR_MAX_FAILURES);
+  });
+
+  it('uses the high account-wide threshold when per-address tracking is on', async () => {
+    const { users, auth } = build();
+    await expect(auth.login('alice@example.com', 'wrong', '203.0.113.9')).rejects.toBeInstanceOf(
+      UnauthorizedException,
+    );
+    expect(users.recordFailedLogin).toHaveBeenCalledWith('u1', 25);
+  });
+
+  it('a blocked address gets the same error as a wrong password', async () => {
+    const { auth } = build();
+    for (let i = 0; i < PAIR_MAX_FAILURES; i++) {
+      await auth.login('alice@example.com', 'wrong', '203.0.113.9').catch(() => undefined);
+    }
+    const err: any = await auth.login('alice@example.com', 'right', '203.0.113.9').catch((e) => e);
+    expect(err).toBeInstanceOf(UnauthorizedException);
+    expect(err.message).toBe('invalid credentials');
   });
 });

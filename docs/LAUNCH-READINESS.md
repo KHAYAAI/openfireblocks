@@ -59,6 +59,15 @@ it has not been re-run against the fixed deployment yet to confirm the fixes
 hold under the same tool. Full report: available on request (not committed --
 contains exploitation detail against the then-current deployment).
 
+## External pentest, round 2 (Shannon, 2026-10-10)
+
+Run against the redeployed, fixed staging (see `docs/evidence/2026-10-10-aws-redeploy-fixed-branch.md`).
+Result: 4 findings (1 critical, 2 medium, 1 low), and none of the 11 round-1 findings reproduced. The
+critical one was real and new: `POST /sign` did not honour the organisation freeze, address whitelist or
+approval gate. All four are fixed in code and unit-tested; they are not yet re-verified on the live
+deployment. Detail: `docs/security/PENTEST-ROUND-2-2026-10-10.md`. A round 3 after redeploy, and an
+independent human-led test, remain open.
+
 ## CI state
 
 **Green on `5ab7a4f` (run 441) and `56e6662` (run 443), 2026-10-09.** How it got there, in order:

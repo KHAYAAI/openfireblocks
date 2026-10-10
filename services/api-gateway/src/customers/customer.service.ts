@@ -24,6 +24,14 @@ export interface Customer {
   api_key?: string;
 }
 
+// Deployment-wide default lifetime for a newly issued or rotated API key, in
+// days. Unset (the default) means keys do not expire, which is what every
+// existing deployment relied on; a positive integer opts in.
+function defaultKeyTtlDays(): number | null {
+  const n = parseInt(process.env.API_KEY_TTL_DAYS ?? '', 10);
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
+
 // Manages tenants: creation, API-key lookup (used by the auth guard), and
 // per-tenant policy overrides.
 //
@@ -68,11 +76,13 @@ export class CustomerService {
     const plaintextKey = generateApiKey();
     const hashHex = hashApiKey(plaintextKey);
 
+    const ttlDays = defaultKeyTtlDays();
     const result = await this.pool.query(
-      `INSERT INTO customers (customer_id, name, email, api_key_hash, status, tier)
-       VALUES ($1::uuid, $2, $3, decode($4, 'hex'), 'active', $5)
-       RETURNING customer_id, name, email, status, tier, policies`,
-      [customerId, input.name ?? input.email, input.email, hashHex, input.tier ?? 'free'],
+      `INSERT INTO customers (customer_id, name, email, api_key_hash, status, tier, api_key_expires_at)
+       VALUES ($1::uuid, $2, $3, decode($4, 'hex'), 'active', $5,
+               CASE WHEN $6::int IS NULL THEN NULL ELSE NOW() + make_interval(days => $6::int) END)
+       RETURNING customer_id, name, email, status, tier, policies, api_key_expires_at`,
+      [customerId, input.name ?? input.email, input.email, hashHex, input.tier ?? 'free', ttlDays],
     );
     return { ...result.rows[0], api_key: plaintextKey };
   }
@@ -83,7 +93,8 @@ export class CustomerService {
     const result = await this.pool.query(
       `SELECT customer_id, name, email, status, tier, policies,
               raw_digest_signing_enabled, arbitrary_contract_calls_enabled
-       FROM customers WHERE api_key_hash = decode($1, 'hex') AND status = 'active'`,
+       FROM customers WHERE api_key_hash = decode($1, 'hex') AND status = 'active'
+         AND (api_key_expires_at IS NULL OR api_key_expires_at > NOW())`,
       [hashApiKey(apiKey)],
     );
     return result.rows[0] ?? null;
@@ -133,6 +144,28 @@ export class CustomerService {
       `UPDATE customers SET policies = $1, updated_at = NOW() WHERE customer_id = $2::uuid`,
       [JSON.stringify(policies), customerId],
     );
+  }
+
+  // Replaces the tenant's API key. The old key stops working at once (there is
+  // one hash per tenant, and this overwrites it), so a captured key can be
+  // killed by its owner without suspending the whole tenant. The new key is
+  // returned exactly once. `ttlDays` makes the new key expire; absent, the
+  // deployment default (API_KEY_TTL_DAYS) applies, and absent that, no expiry.
+  async rotateApiKey(customerId: string, ttlDays?: number): Promise<{ api_key: string; expires_at: string | null }> {
+    await this.getByCustomerId(customerId); // 404 if missing
+    const plaintextKey = generateApiKey();
+    const days = ttlDays ?? defaultKeyTtlDays();
+    const result = await this.pool.query(
+      `UPDATE customers
+          SET api_key_hash = decode($2, 'hex'),
+              api_key_rotated_at = NOW(),
+              api_key_expires_at = CASE WHEN $3::int IS NULL THEN NULL ELSE NOW() + make_interval(days => $3::int) END,
+              updated_at = NOW()
+        WHERE customer_id = $1::uuid
+        RETURNING api_key_expires_at`,
+      [customerId, hashApiKey(plaintextKey), days ?? null],
+    );
+    return { api_key: plaintextKey, expires_at: result.rows[0]?.api_key_expires_at ?? null };
   }
 
   async setStatus(customerId: string, status: string) {

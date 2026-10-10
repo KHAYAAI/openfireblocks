@@ -131,6 +131,16 @@ for the real options (a proxying CDN in front, a Caddy build with the rate-limit
 or moving behind a real ALB) -- none are set up by default, and this stays a known,
 accepted gap for a single-VM staging box until one is.
 
+### Tell the gateway about Caddy (client IP for rate limits and login tracking)
+
+Behind Caddy every request reaches the gateway from the proxy, so per-client rate limits and
+per-address login tracking would otherwise treat all clients as one. After the install:
+```
+helm upgrade ofb infrastructure/helm/openfireblocks -n openfireblocks --reuse-values \
+  --set apiGateway.trustProxyHops=1 --wait
+```
+`up.sh` resets chart values, so re-run this after any `up.sh`.
+
 ## Part H: Verify (10 minutes)
 
 From your laptop (your IP is allowed):

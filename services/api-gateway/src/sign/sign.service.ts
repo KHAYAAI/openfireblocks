@@ -22,6 +22,8 @@ import { SignRequestDto } from './dto/sign-request.dto';
 import { resolveTransferIntent } from '../keys/transfer-intent';
 import { TokenRegistryService } from '../tokens/token-registry.service';
 import { GovernedContracts } from '../keys/governed-contracts';
+import { ControlsService } from '../controls/controls.service';
+import { ApprovalRequiredException } from '../keys/approval-required.exception';
 
 // Shape of the MPC signer's /sign response.
 interface MpcSignResponse {
@@ -66,6 +68,10 @@ export class SignService {
     private readonly risk: RiskService,
     private readonly billing: BillingService,
     private readonly metrics: MetricsService,
+    // Required, not optional: the freeze and whitelist are the organisation's
+    // own stop, and POST /sign once signed straight past them (AUTHZ-01). A
+    // build of this service without it must fail to start, not silently skip.
+    private readonly controls: ControlsService,
     // Optional like elsewhere in this codebase: a deployment or test that
     // builds this service directly without a token registry or governed-
     // contracts recogniser gets no token transfers and no governed calls,
@@ -109,6 +115,29 @@ export class SignService {
         req.data,
       );
 
+      // 0. The organisation's own stops, asked before anything else and
+      // against what the transaction really moves: a freeze stops everything,
+      // and an enforced whitelist limits where it may go. KeysService asks
+      // these first on every route that signs; this route did not, so a
+      // tenant API key alone could sign a 20 ETH transfer while the
+      // organisation was frozen and to an address off its whitelist.
+      try {
+        await this.controls.assertCanSign(customerId);
+        await this.controls.assertDestinationAllowed(customerId, 'ethereum', intent.policyTo);
+      } catch (err) {
+        if (err instanceof ForbiddenException) {
+          await this.audit.logEvent({
+            type: 'CONTROLS_DENIED',
+            requestId,
+            customerId,
+            message: (err as Error).message,
+            status: 'denied',
+          });
+          this.metrics.signRequests.inc({ status: 'denied', chain: 'ethereum' });
+        }
+        throw err;
+      }
+
       // 1. Policy evaluation (fail-closed), against what the transaction
       // decodes to, not its envelope.
       const overrides = (customer.policies ?? {}) as Record<string, unknown>;
@@ -146,6 +175,23 @@ export class SignService {
           requiresApproval: decision.requiresApproval,
           requestId,
         });
+      }
+
+      // Approved on condition that people sign off. This route has no way to
+      // open an approval request, so it refuses rather than signing at once:
+      // a transfer above the approval threshold goes through the console or a
+      // settlement, where approvers are asked. (It used to look only at
+      // `approved`, so a high-value transfer was signed with no approval.)
+      if (decision.requiresApproval) {
+        await this.audit.logEvent({
+          type: 'APPROVAL_REQUIRED',
+          requestId,
+          customerId,
+          message: (decision.approvalReasons ?? []).join('; ') || 'policy requires approval',
+          status: 'denied',
+        });
+        this.metrics.signRequests.inc({ status: 'denied', chain: 'ethereum' });
+        throw new ApprovalRequiredException(decision.approvalReasons ?? [], requestId);
       }
 
       // 1b. Velocity / risk control (per-tenant hourly transaction limit).

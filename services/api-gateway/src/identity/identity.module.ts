@@ -11,6 +11,7 @@ import { WorkosSsoController } from './workos-sso.controller';
 import { WorkosSsoService } from './workos-sso.service';
 import { OidcSsoService } from './oidc-sso.service';
 import { TokenRevocationService } from './token-revocation.service';
+import { LoginAttemptsService } from './login-attempts.service';
 import { AUTH_REDIS_CLIENT } from './auth-redis-client.token';
 
 // Human dashboard identity: registration, password + TOTP MFA login,
@@ -34,6 +35,7 @@ import { AUTH_REDIS_CLIENT } from './auth-redis-client.token';
     WorkosSsoService,
     OidcSsoService,
     TokenRevocationService,
+    LoginAttemptsService,
     {
       provide: AUTH_REDIS_CLIENT,
       useFactory: () => {

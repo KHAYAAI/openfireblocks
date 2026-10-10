@@ -10,6 +10,7 @@ import { RiskModule } from '../risk/risk.module';
 import { BillingModule } from '../billing/billing.module';
 import { TokensModule } from '../tokens/tokens.module';
 import { KeysModule } from '../keys/keys.module';
+import { ControlsModule } from '../controls/controls.module';
 import { mtlsHttpOptions } from '../common/mtls';
 
 // Bundles the tenant-facing signing API with its MPC-signer HTTP client, the
@@ -35,6 +36,7 @@ import { mtlsHttpOptions } from '../common/mtls';
     BillingModule,
     TokensModule,
     KeysModule,
+    ControlsModule,
   ],
   controllers: [SignController],
   providers: [SignService, EthereumService, PrepareService],

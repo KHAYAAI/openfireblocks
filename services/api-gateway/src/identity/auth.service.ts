@@ -6,7 +6,8 @@ import {
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { v4 as uuid } from 'uuid';
-import { UsersService, User } from './users.service';
+import { UsersService, User, DISTRIBUTED_MAX_FAILED_LOGINS } from './users.service';
+import { LoginAttemptsService } from './login-attempts.service';
 import { MfaChallengesService } from './mfa-challenges.service';
 import { TokenRevocationService } from './token-revocation.service';
 import {
@@ -82,6 +83,9 @@ export class AuthService {
     // this service directly without TokenRevocationService gets logout
     // as a no-op (the token still expires normally, just not early).
     private readonly revocation?: TokenRevocationService,
+    // Optional for the same reason: without it (no Redis, or a test that builds
+    // this directly) the account-wide lockout alone applies, as before.
+    private readonly attempts?: LoginAttemptsService,
   ) {}
 
   // Registration used to answer "does this email already have an
@@ -113,7 +117,7 @@ export class AuthService {
     }
   }
 
-  async login(email: string, password: string): Promise<LoginResult> {
+  async login(email: string, password: string, ip?: string): Promise<LoginResult> {
     const user = await this.users.findByEmail(email);
     // Constant-shape failure: an unknown email, a locked account and a
     // wrong password all throw the exact same UnauthorizedException below
@@ -129,18 +133,30 @@ export class AuthService {
       throw new UnauthorizedException('invalid credentials');
     }
 
-    const locked = this.users.isLocked(user);
+    // Locked either account-wide, or because *this address* has already
+    // failed against *this account* too many times. The second case is what
+    // stops one address locking the real owner out (AUTH-02).
+    const pairBlocked = this.attempts ? await this.attempts.isBlocked(user.id, ip) : false;
+    const locked = this.users.isLocked(user) || pairBlocked;
     const valid = await this.users.verifyPassword(user, password);
     if (locked || !valid) {
       // Don't record a failed attempt while already locked: the window
       // is already running, and counting against it here would only let
       // an attacker probe whether a request landed during the lockout
-      // without changing anything about when it ends.
+      // without changing anything about when it ends. An address that is
+      // already blocked is not counted towards the account-wide lock
+      // either, so it can never reach it alone.
       if (!locked) {
-        await this.users.recordFailedLogin(user.id);
+        await this.attempts?.recordFailure(user.id, ip);
+        if (this.attempts?.enabled) {
+          await this.users.recordFailedLogin(user.id, DISTRIBUTED_MAX_FAILED_LOGINS);
+        } else {
+          await this.users.recordFailedLogin(user.id);
+        }
       }
       throw new UnauthorizedException('invalid credentials');
     }
+    await this.attempts?.clear(user.id, ip);
 
     if (user.mfa_enabled) {
       const challengeToken = await this.mfaChallenges.create(user.id);

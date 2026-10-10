@@ -125,8 +125,32 @@ export class DashboardController {
     return res.redirect(303, '/dashboard/overview');
   }
 
+  // Sign-out changes state (it denylists the session server-side), so it is a
+  // POST and never a GET (AUTHZ-02, round 2): as a GET, any link, prefetch or
+  // embedded request a third party could get a signed-in browser to make would
+  // sign that user out. The session cookie is SameSite=Strict, which already
+  // keeps a cross-site POST from carrying it; the Origin check below is the
+  // second layer for any same-site context. A GET here only sends the person
+  // back to the page, and changes nothing.
   @Get('sign-out')
+  signOutPage(@Res() res: Response) {
+    return res.redirect(303, '/dashboard/overview');
+  }
+
+  @Post('sign-out')
   async signOut(@Req() req: Request, @Res() res: Response) {
+    const origin = req.headers.origin;
+    if (origin && typeof origin === 'string') {
+      let originHost = '';
+      try {
+        originHost = new URL(origin).host;
+      } catch {
+        originHost = '';
+      }
+      if (originHost !== req.headers.host) {
+        return res.status(403).send('cross-origin sign-out refused');
+      }
+    }
     const session = readSession(req.headers.cookie);
     if (session) {
       const remainingSeconds = Math.ceil((session.expiresAt - Date.now()) / 1000);

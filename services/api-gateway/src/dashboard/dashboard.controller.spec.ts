@@ -32,6 +32,14 @@ describe('DashboardController session revocation (AUTH-04)', () => {
         this.redirectedTo = args[args.length - 1];
         return this;
       },
+      statusCode: undefined as number | undefined,
+      status(code: number) {
+        this.statusCode = code;
+        return this;
+      },
+      send() {
+        return this;
+      },
     };
     return res;
   }
@@ -84,5 +92,34 @@ describe('DashboardController session revocation (AUTH-04)', () => {
     const res = fakeRes();
     await controller.signOut(fakeReq(undefined), res);
     expect(revocation.revoke).not.toHaveBeenCalled();
+  });
+
+  // AUTHZ-02 (round 2): sign-out used to be a GET, so any request a third
+  // party could get a signed-in browser to make would revoke the session.
+  it('a GET to sign-out revokes nothing and only redirects', async () => {
+    const { controller, revocation } = build(false);
+    const res = fakeRes();
+    controller.signOutPage(res);
+    expect(revocation.revoke).not.toHaveBeenCalled();
+    expect(res.redirectedTo).toBe('/dashboard/overview');
+  });
+
+  it('refuses a sign-out POST that comes from another origin', async () => {
+    const { controller, revocation } = build(false);
+    const { cookie } = issueSession(customerId);
+    const res = fakeRes();
+    const req: any = { headers: { cookie: cookie.split(';')[0], origin: 'https://evil.example', host: 'staging.example' } };
+    await controller.signOut(req, res);
+    expect(res.statusCode).toBe(403);
+    expect(revocation.revoke).not.toHaveBeenCalled();
+  });
+
+  it('accepts a same-origin sign-out POST', async () => {
+    const { controller, revocation } = build(false);
+    const { cookie } = issueSession(customerId);
+    const res = fakeRes();
+    const req: any = { headers: { cookie: cookie.split(';')[0], origin: 'https://staging.example', host: 'staging.example' } };
+    await controller.signOut(req, res);
+    expect(revocation.revoke).toHaveBeenCalled();
   });
 });

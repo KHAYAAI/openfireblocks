@@ -148,7 +148,7 @@ export function layout(title: string, nav: Nav | null, body: string): string {
            )
            .join('')}</nav>
          <span class="who">${h(nav.customerName)} · ${h(nav.tier)} ·
-           <a href="/dashboard/sign-out">Sign out</a></span>
+           <form method="post" action="/dashboard/sign-out" style="display:inline"><button type="submit" style="background:none;border:0;padding:0;font:inherit;color:inherit;text-decoration:underline;cursor:pointer">Sign out</button></form></span>
        </div></header>`
     : '';
 
