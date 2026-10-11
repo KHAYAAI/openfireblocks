@@ -16,7 +16,9 @@ const ADMIN = process.env.E2E_ADMIN_KEY;
 const results = [];
 const check = (ok, name, detail = '') => { results.push(!!ok); console.log(`${ok ? 'ok  ' : 'FAIL'} ${name}${ok || !detail ? '' : ' :: ' + String(detail).slice(0, 400)}`); };
 const SUPPLIER = '0x70997970C51812dc3A010C7d01b50e0d17dc79C8';
-const STRANGER = '0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC';
+// An address that has never been used on the dev chain. (Not 0x3C44…93BC: that is the funding
+// account, derived from EVM_FUNDER_KEY, and it holds the test token's remaining supply.)
+const STRANGER = '0x8F3c4B2a9e1d7F06cB5A3D19E0f4B7a2C6d8E915';
 
 (async () => {
   if (!process.env.EVM_RPC) throw new Error('needs the EVM dev chain (E2E_EVM=1)');
