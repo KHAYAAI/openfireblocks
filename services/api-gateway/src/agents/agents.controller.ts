@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Body,
+  ConflictException,
   Controller,
   Get,
   HttpCode,
@@ -218,6 +219,27 @@ export class AgentController {
       );
     }
     const requestId = dto.idempotencyKey ?? uuid();
+    // A retry of a payment this agent already made returns that payment; it is never
+    // signed or paid a second time. One still in flight is reported as such. A refused or
+    // released attempt may be tried again under the same key: nothing was paid.
+    if (dto.idempotencyKey) {
+      const prior = await this.agents.spend(agent, requestId);
+      if (prior?.status === 'spent') {
+        return {
+          replayed: true,
+          broadcast: true,
+          request_id: requestId,
+          transaction_hash: prior.txHash,
+          token: { symbol: prior.token },
+          recipient: prior.recipient,
+          amount_base_units: prior.amountBaseUnits,
+          agent: { agentId: agent.agentId, valueZar: prior.valueZar, remaining24hZar: (await this.agents.record(agent.customerId, agent)).remaining24hZar },
+        };
+      }
+      if (prior?.status === 'reserved') {
+        throw new ConflictException(`payment ${requestId} is still being signed; check it with GET /agent/transfers/${requestId}`);
+      }
+    }
     const reservation = await this.agents.reserve(agent, {
       requestId,
       token: token.symbol,

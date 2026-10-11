@@ -48,6 +48,10 @@ for s in policy-service mpc-signer temporal-worker mpc-party; do
 done
 (cd "$ROOT/services/api-gateway" && npx --no-install nest build >/dev/null) || fail "the gateway did not build"
 
+# An operator credential for the registry routes (/admin/*), so scenarios run after the
+# main one (E2E_AFTER) can register a token as an operator would. Local and throwaway.
+export E2E_ADMIN_KEY="${E2E_ADMIN_KEY:-e2e-admin-$(head -c 12 /dev/urandom | od -An -tx1 | tr -d ' \n')}"
+
 echo "==> starting the stack"
 P_SOL=18899; P_SIGN=18080; P_POL=18081; P_TEMP=17233; P_GW=13999
 start temporal "$TEMPORAL_BIN" server start-dev --port $P_TEMP --ui-port 18233 --headless --log-level error
@@ -75,7 +79,7 @@ start worker env TEMPORAL_HOSTPORT=127.0.0.1:$P_TEMP DATABASE_URL="$DATABASE_ADM
   MPC_SIGNER_URL=http://127.0.0.1:$P_SIGN POLICY_SERVICE_URL=http://127.0.0.1:$P_POL "$WORK/temporal-worker"
 start gateway env PORT=$P_GW TEMPORAL_HOSTPORT=127.0.0.1:$P_TEMP POLICY_SERVICE_URL=http://127.0.0.1:$P_POL MPC_SIGNER_URL=http://127.0.0.1:$P_SIGN \
   ${EVM_RPC:+EVM_RPC_1337=$EVM_RPC} BILLING_URL=http://127.0.0.1:18085 BILLING_API_TOKEN=bill-tok CONSOLE_PUBLIC_URL=https://console.example MPC_PARTY_ENDPOINT_TEMPLATE='http://127.0.0.1:1770{id}' MPC_PARTY_HEALTH_TEMPLATE='http://127.0.0.1:1770{id}/health' \
-  JWT_SECRET=e2e-secret-e2e-secret-e2e-secret-e2e node "$ROOT/services/api-gateway/dist/main.js"
+  ADMIN_API_KEY="$E2E_ADMIN_KEY" JWT_SECRET=e2e-secret-e2e-secret-e2e-secret-e2e node "$ROOT/services/api-gateway/dist/main.js"
 for pp in 18085 $P_SOL $P_SIGN $P_POL 17701 17702 17703 $P_GW; do up service $pp; done
 sleep 2
 
@@ -100,5 +104,5 @@ fi
 if [ -n "${E2E_AFTER:-}" ]; then
   echo "==> E2E_AFTER: ${E2E_AFTER}"
   E2E_STATE="$WORK/state.json" SOLANA_MOCK=http://127.0.0.1:$P_SOL OTPLIB_PATH="$ROOT/services/api-gateway/node_modules/otplib" PLAYWRIGHT_PATH="${PW:-}" \
-    bash -c "$E2E_AFTER" || fail "E2E_AFTER failed"
+    GATEWAY=http://127.0.0.1:$P_GW E2E_WORK="$WORK" bash -c "$E2E_AFTER" || fail "E2E_AFTER failed"
 fi

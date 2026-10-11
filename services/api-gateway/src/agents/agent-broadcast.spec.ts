@@ -12,7 +12,7 @@ const AGENT = {
 const USDC = { symbol: 'USDC', decimals: 6, pegCurrency: 'USD', chainId: 11155111, contractAddress: '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238' };
 const SUPPLIER = '0x70997970C51812dc3A010C7d01b50e0d17dc79C8';
 
-function setup(opts: { configured?: boolean; eip1559?: boolean; broadcastFails?: boolean } = {}) {
+function setup(opts: { configured?: boolean; eip1559?: boolean; broadcastFails?: boolean; prior?: Record<string, unknown> } = {}) {
   const calls: Record<string, any[]> = { sendToken: [], broadcast: [], settle: [], reserve: [] };
   const provider = {
     getTransactionCount: jest.fn(async () => 7),
@@ -27,6 +27,8 @@ function setup(opts: { configured?: boolean; eip1559?: boolean; broadcastFails?:
   };
   const rpc = { configured: jest.fn(() => opts.configured !== false), provider: jest.fn(() => provider) };
   const agents = {
+    spend: jest.fn(async (_a: unknown, id: string) => (opts as any).prior?.[id] ?? null),
+    record: jest.fn(async () => ({ remaining24hZar: 7500 })),
     reserve: jest.fn(async (_a: unknown, t: unknown) => { calls.reserve.push(t); return { spendId: 's1', valueZar: 18.5, remaining24hZar: 9981.5 }; }),
     settle: jest.fn(async (_a: unknown, _id: string, o: unknown) => { calls.settle.push(o); }),
   };
@@ -84,5 +86,27 @@ describe('agent payments the platform prepares and broadcasts', () => {
     expect(calls.broadcast).toHaveLength(0);
     expect(out.broadcast).toBe(false);
     expect(calls.sendToken[0]).toMatchObject({ nonce: 3, gasPrice: '1' });
+  });
+
+  it('a retry of a payment already made returns it, and signs and pays nothing', async () => {
+    const { calls, pay } = setup({ prior: { 'inv-1': { status: 'spent', txHash: '0xfirst', token: 'USDC', recipient: SUPPLIER, amountBaseUnits: '1000000', valueZar: 18.5 } } });
+    const out: any = await pay({ idempotencyKey: 'inv-1' });
+    expect(out).toMatchObject({ replayed: true, transaction_hash: '0xfirst', agent: { remaining24hZar: 7500 } });
+    expect(calls.reserve).toHaveLength(0);
+    expect(calls.sendToken).toHaveLength(0);
+    expect(calls.broadcast).toHaveLength(0);
+  });
+
+  it('a retry while the first attempt is still being signed is refused, not doubled', async () => {
+    const { calls, pay } = setup({ prior: { 'inv-2': { status: 'reserved' } } });
+    await expect(pay({ idempotencyKey: 'inv-2' })).rejects.toThrow(/still being signed/);
+    expect(calls.reserve).toHaveLength(0);
+  });
+
+  it('a refused attempt can be tried again under the same key', async () => {
+    const { calls, pay } = setup({ prior: { 'inv-3': { status: 'refused' } } });
+    await pay({ idempotencyKey: 'inv-3' });
+    expect(calls.reserve).toHaveLength(1);
+    expect(calls.broadcast).toHaveLength(1);
   });
 });

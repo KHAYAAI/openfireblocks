@@ -158,7 +158,7 @@ export function createServer(gateway: GatewayClient): McpServer {
         const hash = out.transaction_hash as string | undefined;
         const explorer = hash && EXPLORERS[chain_id] ? `${EXPLORERS[chain_id]}${hash}` : null;
         const data = {
-          outcome: out.broadcast ? 'broadcast' : 'signed_not_broadcast',
+          outcome: out.replayed ? 'already_paid' : out.broadcast ? 'broadcast' : 'signed_not_broadcast',
           idempotency_key: key,
           transaction_hash: hash ?? null,
           explorer,
@@ -170,6 +170,12 @@ export function createServer(gateway: GatewayClient): McpServer {
           value_zar: out.agent?.valueZar ?? null,
           remaining_24h_zar: out.agent?.remaining24hZar ?? null,
         };
+        if (out.replayed) {
+          return ok(
+            `ALREADY PAID: a payment with idempotency_key "${key}" was made earlier (transaction ${hash}). Nothing was paid again.`,
+            data,
+          );
+        }
         return ok(
           `PAID: ${data.amount} ${data.token} to ${data.recipient} on chain ${chain_id}, signed by parties ${JSON.stringify(data.signed_by_parties)}. Transaction ${hash}. R${data.remaining_24h_zar} of today's limit remains. Use get_payment with idempotency_key "${key}" to confirm it on-chain.`,
           data,

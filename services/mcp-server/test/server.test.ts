@@ -92,6 +92,14 @@ test('a retry with the caller\'s idempotency key is sent with that key', async (
   await h.close();
 });
 
+test('a retry the gateway recognises is reported as already paid, not paid again', async () => {
+  const h = await harness(() => ({ status: 200, body: { replayed: true, broadcast: true, transaction_hash: '0xfirst', agent: { remainingZar: 1 } } }));
+  const r: any = await h.client.callTool({ name: 'send_payment', arguments: { token: 'USDC', recipient: '0x70997970C51812dc3A010C7d01b50e0d17dc79C8', amount: '1', chain_id: 1337, purpose: 'order 77', idempotency_key: 'order-77' } });
+  assert.equal(r.structuredContent.outcome, 'already_paid');
+  assert.match(text(r), /ALREADY PAID.*Nothing was paid again/s);
+  await h.close();
+});
+
 test('a refusal is reported as final, with the instruction not to work around it', async () => {
   const h = await harness(() => ({ status: 403, body: { statusCode: 403, message: 'recipient is not on this agent\'s list' } }));
   const r: any = await h.client.callTool({ name: 'send_payment', arguments: { token: 'USDC', recipient: '0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC', amount: '10', chain_id: 1337, purpose: 'test' } });
