@@ -37,6 +37,12 @@ CHAIN_ID=11155111
 STATE="${HOME}/.sepolia-test-state"
 EVIDENCE="${HOME}/sepolia-evidence.txt"
 GAS_LIMIT=21000
+# The platform treats a native-coin transfer as over the Travel Rule threshold because it has no
+# price source for it (a refusal that is correct, not a bug), so every send needs originator and
+# beneficiary details. These are clearly-labelled testnet values; override with TRAVEL_RULE='{...}'.
+if [[ -z "${TRAVEL_RULE:-}" ]]; then
+  TRAVEL_RULE='{"originator":{"legalPerson":{"name":"FORGE CUSTODY testnet treasury","customerIdentification":"forge-testnet-001"}},"beneficiary":{"legalPerson":{"name":"Testnet recipient"}},"beneficiaryUnhosted":true}'
+fi
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 api() { curl -sS --noproxy '*' "$@"; }
@@ -127,7 +133,7 @@ nonce=$(hex2int "$(rpc eth_getTransactionCount "[\"${ADDRESS}\", \"pending\"]")"
 echo "==> signing ${AMOUNT_WEI} wei to ${DEST} with two of the three parties"
 signed=$(api -X POST "${API}/keys/${KEY_ID}/transactions" -H 'Content-Type: application/json' \
   -H "x-api-key: ${API_KEY}" \
-  -d "{\"to\":\"${DEST}\",\"value\":\"${AMOUNT_WEI}\",\"gasLimit\":${GAS_LIMIT},\"nonce\":${nonce},\"chainId\":${CHAIN_ID},\"maxFeePerGas\":\"${max_fee}\",\"maxPriorityFeePerGas\":\"${tip}\"}")
+  -d "{\"to\":\"${DEST}\",\"value\":\"${AMOUNT_WEI}\",\"gasLimit\":${GAS_LIMIT},\"nonce\":${nonce},\"chainId\":${CHAIN_ID},\"maxFeePerGas\":\"${max_fee}\",\"maxPriorityFeePerGas\":\"${tip}\",\"travelRule\":${TRAVEL_RULE}}")
 raw=$(echo "${signed}" | jqp 'd["raw_transaction"]') || fail "signing failed: ${signed}"
 local_hash=$(echo "${signed}" | jqp 'd["transaction_hash"]')
 parties=$(echo "${signed}" | jqp 'd.get("parties")')

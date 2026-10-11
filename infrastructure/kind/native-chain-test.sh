@@ -35,6 +35,12 @@ API="${API:-http://127.0.0.1:3000}"
 : "${ADMIN_API_KEY:?export ADMIN_API_KEY first (source ~/ofb-secrets.txt with set -a)}"
 STATE="${HOME}/.${CHAIN}-test-state"
 EVIDENCE="${HOME}/${CHAIN}-evidence.txt"
+# The platform treats a native-coin transfer as over the Travel Rule threshold because it has no
+# price source for it (a refusal that is correct, not a bug), so every send needs originator and
+# beneficiary details. These are clearly-labelled testnet values; override with TRAVEL_RULE='{...}'.
+if [[ -z "${TRAVEL_RULE:-}" ]]; then
+  TRAVEL_RULE='{"originator":{"legalPerson":{"name":"FORGE CUSTODY testnet treasury","customerIdentification":"forge-testnet-001"}},"beneficiary":{"legalPerson":{"name":"Testnet recipient"}},"beneficiaryUnhosted":true}'
+fi
 
 if [[ "${CHAIN}" == "solana" ]]; then
   AMOUNT="${AMOUNT:-1000000}"          # lamports
@@ -131,7 +137,7 @@ echo "    funded: ${bal}"
 
 echo "==> signing ${AMOUNT} to ${DEST} with two of the three parties and broadcasting"
 sent=$(api -X POST "${API}/keys/${KEY_ID}/${CHAIN}-transactions" -H 'Content-Type: application/json' \
-  -H "x-api-key: ${API_KEY}" -d "{\"destination\":\"${DEST}\",\"amount\":\"${AMOUNT}\"${DENOM_JSON}}")
+  -H "x-api-key: ${API_KEY}" -d "{\"destination\":\"${DEST}\",\"amount\":\"${AMOUNT}\"${DENOM_JSON},\"travelRule\":${TRAVEL_RULE}}")
 if [[ "${CHAIN}" == "solana" ]]; then
   txid=$(echo "${sent}" | jqp 'd["signature"]') || fail "send failed: ${sent}"
 else
