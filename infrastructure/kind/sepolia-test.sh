@@ -24,7 +24,13 @@ set -euo pipefail
 
 API="${API:-http://127.0.0.1:3000}"
 : "${ADMIN_API_KEY:?export ADMIN_API_KEY first (source ~/ofb-secrets.txt with set -a)}"
-: "${SEPOLIA_RPC:?export SEPOLIA_RPC=<your Sepolia RPC URL> first}"
+: "${SEPOLIA_RPC:?export SEPOLIA_RPC='https://...' first (your Sepolia RPC URL, in quotes)}"
+# A pasted URL often carries a trailing newline or space, or is still the placeholder.
+SEPOLIA_RPC="$(printf '%s' "${SEPOLIA_RPC}" | tr -d '[:space:]')"
+case "${SEPOLIA_RPC}" in
+  https://*|http://*) ;;
+  *) echo "FAIL: SEPOLIA_RPC does not start with https:// -- it looks like a placeholder or a bad paste (it starts '${SEPOLIA_RPC:0:12}...'). Re-export it with your real URL in single quotes." >&2; exit 1 ;;
+esac
 DEST="${DEST:-0x000000000000000000000000000000000000dEaD}"
 AMOUNT_WEI="${AMOUNT_WEI:-100000000000000}"
 CHAIN_ID=11155111
