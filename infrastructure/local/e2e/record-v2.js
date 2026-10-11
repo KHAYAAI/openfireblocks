@@ -298,27 +298,41 @@ async function tool(p, mcp, name, args, expect = 'ok') {
 // ------------------------------------------------------------------ the console
 
 const lastCode = {};
+// A fresh one-time code: never one already used, and never one about to expire (a code typed
+// in the last seconds of its 30-second window can reach the server in the next one).
 async function code(name) {
+  const otp = require(process.env.OTPLIB_PATH || 'otplib').authenticator;
   const secret = st.people[name].secret;
-  let c = require(process.env.OTPLIB_PATH || 'otplib').authenticator.generate(secret);
-  while (lastCode[name] === c) { await sleep(1000); c = require(process.env.OTPLIB_PATH || 'otplib').authenticator.generate(secret); }
-  lastCode[name] = c; return c;
+  for (;;) {
+    const left = 30 - (Math.floor(Date.now() / 1000) % 30);
+    if (left < 8) { await sleep(left * 1000 + 300); continue; }
+    const c = otp.generate(secret);
+    if (lastCode[name] === c) { await sleep(1000); continue; }
+    lastCode[name] = c; return c;
+  }
 }
 async function move(p, sel) { const el = await p.waitForSelector(sel, { timeout: 30000 }); await el.scrollIntoViewIfNeeded(); const bb = await el.boundingBox(); await p.mouse.move(bb.x + bb.width / 2, bb.y + bb.height / 2, { steps: 18 }); return el; }
 async function click(p, sel) { await move(p, sel); await sleep(350); await p.click(sel); await sleep(500); }
 async function type(p, sel, text, d = 40) { await move(p, sel); await p.click(sel); await p.fill(sel, ''); await p.type(sel, text, { delay: d }); await sleep(250); }
 let lastLogin = 0;
 async function login(p, name, note) {
-  // The gateway allows five sign-ins a minute; space them out.
-  const gap = Date.now() - lastLogin; if (gap < 14000) await sleep(14000 - gap);
-  lastLogin = Date.now();
-  await p.goto(B); await p.waitForSelector('#email'); await prep(p);
-  if (note) await caption(p, 'Sign in', note);
-  await sleep(700);
-  await type(p, '#email', st.people[name].email, 25); await type(p, '#password', st.password, 25);
-  await click(p, 'button[type=submit]'); await p.waitForSelector('#code');
-  await caption(p, 'Second factor', 'A one-time code from the person’s authenticator app. Every sign-in and every approval needs a fresh one.');
-  await type(p, '#code', await code(name), 80); await click(p, 'button[type=submit]'); await p.waitForSelector('.sidebar'); await prep(p); await sleep(900);
+  for (let attempt = 1; ; attempt++) {
+    // The gateway allows five sign-ins a minute; space them out.
+    const gap = Date.now() - lastLogin; if (gap < 14000) await sleep(14000 - gap);
+    lastLogin = Date.now();
+    await p.goto(B); await p.waitForSelector('#email'); await prep(p);
+    if (note) await caption(p, 'Sign in', note);
+    await sleep(700);
+    await type(p, '#email', st.people[name].email, 25); await type(p, '#password', st.password, 25);
+    await click(p, 'button[type=submit]'); await p.waitForSelector('#code');
+    await caption(p, 'Second factor', 'A one-time code from the person\u2019s authenticator app. Every sign-in and every approval needs a fresh one.');
+    await type(p, '#code', await code(name), 80); await click(p, 'button[type=submit]');
+    const ok = await p.waitForSelector('.sidebar', { timeout: 15000 }).then(() => true).catch(() => false);
+    if (ok) break;
+    if (attempt >= 2) throw new Error(`${name} could not sign in: the one-time code was refused twice`);
+    console.log(`login: ${name}'s code was refused; starting the sign-in again with a fresh code`);
+  }
+  await prep(p); await sleep(900);
 }
 async function logout(p) { await click(p, '.signout'); await p.waitForSelector('#email'); await sleep(500); }
 async function nav(p, id, cap, ms = 3200) { await click(p, `[data-nav=${id}]`); await sleep(1300); await prep(p); if (cap) await caption(p, cap[0], cap[1]); await wait(ms); }
