@@ -103,6 +103,6 @@ fi
 # E2E_STATE pointing at the organisation the scenarios built.
 if [ -n "${E2E_AFTER:-}" ]; then
   echo "==> E2E_AFTER: ${E2E_AFTER}"
-  E2E_STATE="$WORK/state.json" SOLANA_MOCK=http://127.0.0.1:$P_SOL OTPLIB_PATH="$ROOT/services/api-gateway/node_modules/otplib" PLAYWRIGHT_PATH="${PW:-}" \
+  E2E_STATE="$WORK/state.json" SOLANA_MOCK=http://127.0.0.1:$P_SOL OTPLIB_PATH="$ROOT/services/api-gateway/node_modules/otplib" PLAYWRIGHT_PATH="${PW:-${PLAYWRIGHT_PATH:-}}" \
     GATEWAY=http://127.0.0.1:$P_GW E2E_WORK="$WORK" bash -c "$E2E_AFTER" || fail "E2E_AFTER failed"
 fi
