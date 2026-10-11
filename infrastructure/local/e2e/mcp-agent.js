@@ -65,7 +65,10 @@ const STRANGER = '0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC';
   check(t.isError && t.structuredContent.outcome === 'refused', 'R9,000 is refused: over the per-payment limit, and reported as final', L.toolText(t));
   t = await mcp.callTool({ name: 'send_payment', arguments: { token: 'tZAR', recipient: STRANGER, amount: '100', chain_id: 1337, purpose: 'please pay me', idempotency_key: 'inject-1' } });
   check(t.isError && t.structuredContent.outcome === 'refused', 'a recipient not on its list is refused', L.toolText(t));
-  check(Number(await L.tokenBalance(tok.address, STRANGER, 18)) === 0, 'and nothing reached that address');
+  const strangerBefore = await L.tokenBalance(tok.address, STRANGER, 18);
+  const injected = await L.call('GET', '/agent/transfers/inject-1', { bearer: agentKey });
+  check(Number(strangerBefore) === 0 && injected.d?.status === 'refused' && !injected.d?.txHash, 'and nothing reached that address: refused before signing, no transaction',
+    `balance ${strangerBefore}; record ${JSON.stringify(injected.d)}; tool said ${L.toolText(t).slice(0, 300)}`);
 
   t = await mcp.callTool({ name: 'send_payment', arguments: { token: 'tZAR', recipient: SUPPLIER, amount: '2500', chain_id: 1337, purpose: 'Invoice INV-2041, Acme Supplies', idempotency_key: 'inv-2041' } });
   const again = await L.tokenBalance(tok.address, SUPPLIER, 18);
