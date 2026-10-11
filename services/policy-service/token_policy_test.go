@@ -166,16 +166,16 @@ func TestARandTransferIsFlaggedForApprovalAtTheRandThreshold(t *testing.T) {
 // quietly create an unlimited payment rail.
 func TestATokenInAnUnconfiguredCurrencyIsDenied(t *testing.T) {
 	req := usdc("1")
-	req.Asset = "EURC"
-	req.PegCurrency = "EUR"
+	req.Asset = "GBPT"
+	req.PegCurrency = "GBP"
 
 	decision := evaluateOne(t, req)
 
 	if decision.Approved {
-		t.Fatal("a EUR-pegged token was transacted with no EUR limits configured; " +
+		t.Fatal("a GBP-pegged token was transacted with no GBP limits configured; " +
 			"registering a token in a new currency must not create an unlimited rail")
 	}
-	if !strings.Contains(strings.Join(decision.Denials, "; "), "EUR") {
+	if !strings.Contains(strings.Join(decision.Denials, "; "), "GBP") {
 		t.Errorf("the denial does not say which currency is unconfigured: %v", decision.Denials)
 	}
 }
@@ -325,5 +325,20 @@ func TestNativeTransfersAreUnaffected(t *testing.T) {
 	}
 	if decision.RequiresApproval {
 		t.Error("a 1 ETH native transfer was escalated; the token rules are firing on native transfers")
+	}
+}
+
+func TestEurcWithinItsLimitsIsApproved(t *testing.T) {
+	req := usdc("1000000")
+	req.Asset = "EURC"
+	req.PegCurrency = "EUR"
+
+	if d := evaluateOne(t, req); !d.Approved {
+		t.Fatalf("a small EURC transfer was refused: %v", d.Denials)
+	}
+
+	req.AssetAmount = "950000000000" // 950,000 EURC at 6 dp
+	if d := evaluateOne(t, req); d.Approved {
+		t.Fatal("EURC above the global EUR ceiling was approved")
 	}
 }

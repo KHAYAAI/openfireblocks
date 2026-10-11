@@ -28,6 +28,7 @@ package policies
 limits := {
 	"USD": {"global": 1000000, "free": 10000, "pro": 100000},
 	"ZAR": {"global": 18000000, "free": 180000, "pro": 1800000},
+	"EUR": {"global": 900000, "free": 9000, "pro": 90000},
 }
 
 # The global ceiling applies to every tenant on every tier.
@@ -77,7 +78,7 @@ require_approval[msg] {
 }
 
 # Large transfers go to an approver even when they are within the ceiling.
-high_value := {"USD": 100000, "ZAR": 1800000}
+high_value := {"USD": 100000, "ZAR": 1800000, "EUR": 90000}
 
 require_approval[msg] {
 	input.has_pegged_value

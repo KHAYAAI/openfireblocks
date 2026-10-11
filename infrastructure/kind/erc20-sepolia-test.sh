@@ -29,7 +29,12 @@ API="${API:-http://127.0.0.1:3000}"
 : "${ADMIN_API_KEY:?export ADMIN_API_KEY first (source ~/ofb-secrets.txt with set -a)}"
 : "${SEPOLIA_RPC:?export SEPOLIA_RPC first}"
 SEPOLIA_RPC="$(printf '%s' "${SEPOLIA_RPC}" | tr -d '[:space:]')"
-TOKEN_ADDRESS="${TOKEN_ADDRESS:-0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238}"
+SYMBOL="${SYMBOL:-USDC}"
+case "${SYMBOL}" in
+  EURC) DEFAULT_ADDR=0x08210F9170F89Ab7658F0B5E3fF39b0E03C594D4; TOKEN_NAME="Euro Coin"; PEG=EUR ;;
+  *)    DEFAULT_ADDR=0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238; TOKEN_NAME="USD Coin"; PEG=USD ;;
+esac
+TOKEN_ADDRESS="${TOKEN_ADDRESS:-${DEFAULT_ADDR}}"
 DEST="${DEST:-0x000000000000000000000000000000000000dEaD}"
 AMOUNT="${AMOUNT:-1.00}"
 DECIMALS=6
@@ -81,12 +86,12 @@ echo "==> checking the Sepolia RPC and the gateway"
 api "${API}/health/ready" | grep -q '"postgres":"ok"' || fail "gateway is not ready"
 ADDRESS=$(api -H "x-api-key: ${API_KEY}" "${API}/keys/${KEY_ID}/addresses" | jqp 'd["addresses"]["preferred"]')
 
-echo "==> registering USDC on Sepolia in the token registry (operator action) and verifying it on-chain"
+echo "==> registering ${SYMBOL} on Sepolia in the token registry (operator action) and verifying it on-chain"
 existing=$(api -H "x-admin-key: ${ADMIN_API_KEY}" "${API}/admin/tokens?chainId=${CHAIN_ID}")
-TOKEN_ID=$(echo "${existing}" | jqp '(lambda t: t[0]["tokenId"] if t else "")([x for x in d["tokens"] if x["symbol"]=="USDC" and (x.get("contractAddress") or "").lower()=="'"${TOKEN_ADDRESS}"'".lower()])')
+TOKEN_ID=$(echo "${existing}" | jqp '(lambda t: t[0]["tokenId"] if t else "")([x for x in d["tokens"] if x["symbol"]=="'"${SYMBOL}"'" and (x.get("contractAddress") or "").lower()=="'"${TOKEN_ADDRESS}"'".lower()])')
 if [[ -z "${TOKEN_ID}" ]]; then
   reg=$(api -X POST "${API}/admin/tokens" -H 'Content-Type: application/json' -H "x-admin-key: ${ADMIN_API_KEY}" \
-    -d "{\"chainId\":${CHAIN_ID},\"contractAddress\":\"${TOKEN_ADDRESS}\",\"symbol\":\"USDC\",\"name\":\"USD Coin\",\"decimals\":${DECIMALS},\"pegCurrency\":\"USD\",\"issuer\":\"Circle\"}")
+    -d "{\"chainId\":${CHAIN_ID},\"contractAddress\":\"${TOKEN_ADDRESS}\",\"symbol\":\"${SYMBOL}\",\"name\":\"${TOKEN_NAME}\",\"decimals\":${DECIMALS},\"pegCurrency\":\"${PEG}\",\"issuer\":\"Circle\"}")
   TOKEN_ID=$(echo "${reg}" | jqp 'd["token"]["tokenId"]') || fail "could not register the token: ${reg}"
 fi
 ver=$(api -X POST "${API}/admin/tokens/${TOKEN_ID}/verify" -H "x-admin-key: ${ADMIN_API_KEY}")
@@ -96,19 +101,19 @@ echo "    verified on-chain: symbol and decimals read from ${TOKEN_ADDRESS}"
 
 BASE_UNITS=$(python3 -c "from decimal import Decimal;print(int(Decimal('${AMOUNT}')*10**${DECIMALS}))")
 echo
-echo "    The key's Sepolia address (it needs test USDC, and ETH for gas, which it already has):"
+echo "    The key's Sepolia address (it needs test ${SYMBOL}, and ETH for gas, which it already has):"
 echo "        ${ADDRESS}"
-echo "    Request USDC for it at https://faucet.circle.com (Ethereum Sepolia)."
+echo "    Request ${SYMBOL} for it at https://faucet.circle.com (Ethereum Sepolia)."
 echo
-echo "==> waiting for at least ${BASE_UNITS} base units of USDC"
+echo "==> waiting for at least ${BASE_UNITS} base units of ${SYMBOL}"
 for i in $(seq 1 90); do
   bal=$(token_balance "${ADDRESS}")
   (( bal >= BASE_UNITS )) && break
-  (( i % 3 == 1 )) && echo "    USDC balance ${bal} ... still waiting"
+  (( i % 3 == 1 )) && echo "    ${SYMBOL} balance ${bal} ... still waiting"
   sleep 20
 done
-(( bal >= BASE_UNITS )) || fail "no USDC within 30 minutes; fund ${ADDRESS} and re-run"
-echo "    USDC balance: ${bal}"
+(( bal >= BASE_UNITS )) || fail "no ${SYMBOL} within 30 minutes; fund ${ADDRESS} and re-run"
+echo "    ${SYMBOL} balance: ${bal}"
 dest_before=$(token_balance "${DEST}")
 
 latest=$(rpc eth_getBlockByNumber '["latest", false]')
@@ -117,9 +122,9 @@ tip=2000000000
 max_fee=$(( base * 2 + tip ))
 nonce=$(hex2int "$(rpc eth_getTransactionCount "[\"${ADDRESS}\", \"pending\"]")")
 
-echo "==> sending ${AMOUNT} USDC to ${DEST}: the platform encodes the ERC-20 call, then two of three parties sign"
+echo "==> sending ${AMOUNT} ${SYMBOL} to ${DEST}: the platform encodes the ERC-20 call, then two of three parties sign"
 signed=$(api -X POST "${API}/keys/${KEY_ID}/token-transfers" -H 'Content-Type: application/json' -H "x-api-key: ${API_KEY}" \
-  -d "{\"token\":\"USDC\",\"recipient\":\"${DEST}\",\"amount\":\"${AMOUNT}\",\"chainId\":${CHAIN_ID},\"nonce\":${nonce},\"gasLimit\":${GAS_LIMIT},\"maxFeePerGas\":\"${max_fee}\",\"maxPriorityFeePerGas\":\"${tip}\",\"travelRule\":${TRAVEL_RULE}}")
+  -d "{\"token\":\"${SYMBOL}\",\"recipient\":\"${DEST}\",\"amount\":\"${AMOUNT}\",\"chainId\":${CHAIN_ID},\"nonce\":${nonce},\"gasLimit\":${GAS_LIMIT},\"maxFeePerGas\":\"${max_fee}\",\"maxPriorityFeePerGas\":\"${tip}\",\"travelRule\":${TRAVEL_RULE}}")
 raw=$(echo "${signed}" | jqp 'd["raw_transaction"]') || fail "signing failed: ${signed}"
 local_hash=$(echo "${signed}" | jqp 'd["transaction_hash"]')
 parties=$(echo "${signed}" | jqp 'd.get("parties")')
@@ -159,14 +164,14 @@ dest_after=$(token_balance "${DEST}")
   echo "ERC-20 stablecoin transfer accepted by a public chain"
   echo "date:        $(date -u +%Y-%m-%dT%H:%M:%SZ)"
   echo "network:     Ethereum Sepolia (${CHAIN_ID})"
-  echo "token:       USDC ${TOKEN_ADDRESS} (registered and verified on-chain by the platform)"
+  echo "token:       ${SYMBOL} ${TOKEN_ADDRESS} (registered and verified on-chain by the platform)"
   echo "from:        ${ADDRESS} (2-of-3 threshold key)"
   echo "to:          ${DEST}"
-  echo "amount:      ${AMOUNT} USDC (${BASE_UNITS} base units); the contract's Transfer event and the recipient balance both match"
+  echo "amount:      ${AMOUNT} ${SYMBOL} (${BASE_UNITS} base units); the contract's Transfer event and the recipient balance both match"
   echo "signed by:   parties ${parties}"
   echo "tx hash:     ${sent}"
   echo "block:       ${block}"
   echo "explorer:    https://sepolia.etherscan.io/tx/${sent}"
 } | tee "${EVIDENCE}"
 echo
-echo "PASS: Sepolia mined block ${block}; the USDC contract emitted the Transfer and the recipient's balance rose."
+echo "PASS: Sepolia mined block ${block}; the ${SYMBOL} contract emitted the Transfer and the recipient's balance rose."
