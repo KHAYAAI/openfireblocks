@@ -165,6 +165,7 @@ if [[ "${CHAIN}" == "solana" ]]; then
   link="https://explorer.solana.com/tx/${txid}?cluster=devnet"
 else
   link="${EXPLORER_BASE:+${EXPLORER_BASE}${txid}}"
+  if [[ -z "${link}" ]]; then link="(query the chain: <LCD URL>/cosmos/tx/v1beta1/txs/${txid})"; fi
 fi
 {
   echo "${CHAIN} acceptance of a threshold-signed transaction"
@@ -175,7 +176,7 @@ fi
   echo "signed by:   parties ${parties} (2-of-3 threshold)"
   echo "transaction: ${txid}"
   echo "status:      $(echo "${st}" | cut -c1-300)"
-  [[ -n "${link}" ]] && echo "explorer:    ${link}"
+  if [[ -n "${link}" ]]; then echo "explorer:    ${link}"; fi
 } | tee "${EVIDENCE}"
 echo
 echo "PASS: a public ${CHAIN} network confirmed a transaction signed by the platform's 2-of-3 key."
