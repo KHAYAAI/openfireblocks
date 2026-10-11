@@ -1,7 +1,7 @@
 # Bitcoin: a threshold-signed spend accepted by the public testnet4 network (2026-10-11)
 
-**Status: accepted by the public network, mining pending at the time of writing.** This file is updated with the
-block when it lands; until then the claim is "accepted into the public mempool", not "mined".
+**Status: mined.** Included in testnet4 block 156069. It was first accepted into the public mempool, then
+confirmed once testnet4 mined its next block (the chain had stalled at 156067 for hours).
 
 Before this, Bitcoin had only been driven against a private regtest node. Solana, Ethereum, Cosmos and ERC-20
 tokens already had public-network evidence; this is the same for Bitcoin.
@@ -16,14 +16,15 @@ tokens already had public-network evidence; this is the same for Bitcoin.
 | Fee | 282 sats at 2 sat/vB, 140 virtual bytes |
 | Signed by | parties 1 and 2 of 3 |
 | Transaction | `280f69b1cc8d0a208c43f61d171d6e5e149f43a465527dabe0d7d203f0703c1a` |
+| Block | 156069, hash `00000000000000002bb0351b1890578335f0c10d9925f1a4290f37738ed091e8`; the recipient's confirmed balance rose from 0 to 10,000 sats (read from the platform's own node) |
 | Explorer | https://mempool.space/testnet4/tx/280f69b1cc8d0a208c43f61d171d6e5e149f43a465527dabe0d7d203f0703c1a |
 
 Checked independently of the platform: the public explorer (mempool.space) returned the transaction with fee 282
-and size 140 vbytes and status unconfirmed, i.e. public nodes had accepted and relayed it. The platform's own node
-also accepted it into its mempool.
+and size 140 vbytes, unconfirmed while it waited, then confirmed in block 156069. The platform's own node also
+accepted it into its mempool and later saw the recipient's balance.
 
 Run with `infrastructure/kind/bitcoin-testnet4-test.sh` on the staging deployment (node set up by
-`bitcoin-testnet4-setup.sh`). The test requires the recipient's confirmed balance to rise before it prints PASS.
+`bitcoin-testnet4-setup.sh`). The test printed PASS only after the recipient's confirmed balance rose.
 
 Shows: the Bitcoin path (address derivation on testnet, UTXO discovery on a real node, coin selection, fee, BIP143
 sighash, two-of-three threshold signature, broadcast) produces a transaction the real network accepts. Does not
