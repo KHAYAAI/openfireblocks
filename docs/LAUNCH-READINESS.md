@@ -1,6 +1,6 @@
 # Launch readiness
 
-As of 2026-10-10, branch `claude/platform-explanation-h0st5y`. This is a
+As of 2026-10-11, branch `claude/platform-explanation-h0st5y`. This is a
 summary; `LAUNCH-CHECKLIST.md` is the evidence-based source and wins if they
 disagree.
 
@@ -8,7 +8,7 @@ disagree.
 
 | Audience | Verdict |
 |---|---|
-| Fintech, supervised pilot on testnet or capped balances | **Ready to start.** A real key generation and signature pass on a real cluster (lite profile and AWS full profile), with public HTTPS. An external pentest has run against the AWS deployment and every finding is fixed on this branch. Solana devnet and Stripe runs are still to do |
+| Fintech, supervised pilot on testnet or capped balances | **Ready to start.** A real key generation and signature pass on a real cluster (lite profile and AWS full profile), with public HTTPS. An external pentest has run against the AWS deployment and every finding is fixed on this branch (the last fixes are not yet redeployed to staging). Threshold-signed transactions have been accepted by public test networks on four chains (see below); a Stripe run is still to do |
 | Banks, governments, uncapped mainnet funds | **Not ready. Bounded pilots only** |
 | Production | **Not ready.** Blocked by external work (audit, SOC 2, isolated hosts, legal), not by known engineering gaps |
 
@@ -25,6 +25,35 @@ disagree.
 | Helm chart, NetworkPolicy, backups | Installed and run on a real AWS cluster (full profile) and locally (lite profile) | Full profile verified on AWS with real generated secrets, public HTTPS via Caddy/Let's Encrypt; NetworkPolicy confirmed to isolate `mpc-signer` to `api-gateway`/`temporal-worker` only |
 | Policy enforcement reads the whole transaction, not just its envelope | Built | `POST /sign` now decodes ERC-20 calldata and evaluates the whitelist/amount limit against the real recipient and amount, matching `POST /keys/:id/sign-transaction` -- see pentest remediation below |
 | Vulnerability gate | Passing | Go toolchain `go1.26.9` and `golang.org/x/net v0.60.0` clear the GO-2026-66xx advisories; CI green on `5ab7a4f` and `56e6662` |
+
+## Status update, 2026-10-11
+
+**Verdict unchanged:** supervised testnet pilots are ready to start; banks, governments and uncapped mainnet funds
+are not; production is blocked by external work, not known engineering gaps.
+
+What changed today, with the evidence for each (all in `docs/evidence/`):
+
+| Area | Result |
+|---|---|
+| Ethereum Sepolia | A 2-of-3 threshold-signed transfer was accepted and mined (`2026-10-11-sepolia.md`) |
+| Solana devnet | Accepted and confirmed (`2026-10-11-solana-devnet.md`) |
+| Cosmos (Osmosis testnet) | Accepted and confirmed after the per-chain fee price was set (`2026-10-11-cosmos-osmosis-testnet.md`) |
+| Bitcoin testnet4 | Mined in block 156069 (txid `280f69b1…3c1a`); the platform ran its own Bitcoin Core node (`2026-10-11-bitcoin-testnet4.md`) |
+| USDC (Sepolia) | Registered, verified on-chain and moved from a threshold key (`2026-10-11-erc20-usdc-sepolia.md`) |
+| EURC (Sepolia) | Same path, after EUR ceilings were added to the policy; receipt and contract Transfer event confirmed, the exact recipient-balance check was not (shared burn address, lagging RPC) (`2026-10-11-erc20-eurc-sepolia.md`) |
+| OUSD (Ethereum and Base mainnets) | Registered and verified against the live contracts, **read-only; no transfer** (`2026-10-11-ousd-ethereum-verified.md`) |
+| Rand tokens (ZARP/ZARC) | Supported in code with rand-denominated ceilings and tests; no public-chain run yet |
+
+Wording to use externally: "accepted by public test networks" for Bitcoin, Ethereum, Solana, Cosmos and test
+stablecoins; "registered and verified on-chain" for OUSD. Do **not** say mainnet, production-ready, independently
+audited, or that OUSD / ZARP / ZARC transfers are proven.
+
+Known limits and open items: EUR ceilings (900,000 global, 90,000 pro, 9,000 free) were chosen by engineering and
+need the founder's sign-off; the Stripe path has never charged a real card; the staging cluster resets its
+Helm settings on every `up.sh` (trust-proxy hops, EVM/Solana/Cosmos RPC, Cosmos gas price) and they must be
+reapplied; Solana SPL tokens are not supported (native SOL only); the independent human pentest, cryptographic
+audit, SOC 2 Type II, isolated hosts with HSM, live TRISA, a real custodian, legal/licensing and a capped mainnet
+run all remain.
 
 ## External pentest (Shannon, 2026-10-08) and remediation
 
@@ -115,8 +144,8 @@ re-run the job three times and bisect only if it fails identically each time.
 | Item | Needs | Owner |
 |---|---|---|
 | Watch for mpc-party ceremony timeouts recurring | Passed on the last two runs; re-run and bisect only if one recurs | Engineering, low priority |
-| Re-run the Shannon pentest against the fixed deployment | Redeploy this branch to the AWS staging VM, re-run Shannon | You (or delegate back) |
-| Solana devnet run | An RPC endpoint (and a funded devnet key); paused on faucet rate limits | You |
+| Redeploy `8735cd4` (round-3 fixes) to staging, optional round 4 | Rebuild with `up.sh`, reapply the Helm settings that `up.sh` resets, re-run Shannon | You (or delegate back) |
+| Solana devnet run | **Done 2026-10-11** (`docs/evidence/2026-10-11-solana-devnet.md`) | Done |
 | Stripe test run | A test key as repo secret `STRIPE_TEST_API_KEY` (CI then runs it) | You |
 | Cryptographic audit (tss-lib layer, `PermissionedToken.sol`) | Auditor contract; brief and plan in `docs/assurance/`; outreach emails drafted in `docs/pilot/OUTREACH-EMAILS.md`, not yet sent | You; longest lead time |
 | Independent human-led penetration test | Vendor, plus the deployed staging environment (exists) | You |
