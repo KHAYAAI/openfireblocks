@@ -40,18 +40,19 @@ const STRANGER = '0x8F3c4B2a9e1d7F06cB5A3D19E0f4B7a2C6d8E915';
   const ada = await L.signIn(st.people.ada, st.password);
   r = await L.call('POST', `/organisations/${st.customerId}/agents`, { token: ada, body: {
     name: 'Payables agent', keyId: key.id, allowedTokens: ['tZAR'], allowedRecipients: [SUPPLIER],
-    perTransferLimitZar: 5000, dailyLimitZar: 10000, expiresInDays: 30,
+    perTransferLimitZar: 7000, dailyLimitZar: 12000, expiresInDays: 30,
   } });
   check(r.s === 201 && /^ofb_agent_/.test(r.d.apiKey), 'an admin issues an agent key, shown once', JSON.stringify(r.d).slice(0, 200));
   const agentId = r.d.agentId; const agentKey = r.d.apiKey;
 
   // the AI client: a real MCP client, starting the MCP server over stdio
-  const mcp = await L.mcpClient(agentKey);
+  const ORIGINATOR = { legalPerson: { name: 'E2E Treasury Co', geographicAddress: { addressLine: ['1 Main St, Cape Town'], country: 'ZA' } } };
+  const mcp = await L.mcpClient(agentKey, { FORGE_TRAVEL_RULE_ORIGINATOR: JSON.stringify(ORIGINATOR) });
   const tools = (await mcp.listTools()).tools.map((t) => t.name).sort();
   check(tools.join(',') === 'get_payment,get_spending_status,list_payment_tokens,list_payments,send_payment', 'the MCP server offers the five tools', tools.join(','));
 
   let t = await mcp.callTool({ name: 'get_spending_status', arguments: {} });
-  check(!t.isError && t.structuredContent.remaining24hZar === 10000, 'the agent reads its limits: R10,000 for 24 hours', L.toolText(t));
+  check(!t.isError && t.structuredContent.remaining24hZar === 12000, 'the agent reads its limits: R12,000 for 24 hours', L.toolText(t));
   t = await mcp.callTool({ name: 'list_payment_tokens', arguments: {} });
   check(t.structuredContent.tokens?.[0]?.symbol === 'tZAR' && t.structuredContent.tokens[0].chainId === 1337, 'and the token it may pay in', L.toolText(t));
 
@@ -65,6 +66,14 @@ const STRANGER = '0x8F3c4B2a9e1d7F06cB5A3D19E0f4B7a2C6d8E915';
 
   t = await mcp.callTool({ name: 'send_payment', arguments: { token: 'tZAR', recipient: SUPPLIER, amount: '9000', chain_id: 1337, purpose: 'Invoice INV-2042', idempotency_key: 'inv-2042' } });
   check(t.isError && t.structuredContent.outcome === 'refused', 'R9,000 is refused: over the per-payment limit, and reported as final', L.toolText(t));
+
+  // Above the Travel Rule threshold (R5,000): refused without the beneficiary, paid with it.
+  t = await mcp.callTool({ name: 'send_payment', arguments: { token: 'tZAR', recipient: SUPPLIER, amount: '6000', chain_id: 1337, purpose: 'Invoice INV-2043, Acme Supplies', idempotency_key: 'inv-2043' } });
+  check(t.isError && t.structuredContent.outcome === 'travel_rule_required', 'R6,000 without the beneficiary: Travel Rule required, nothing signed', L.toolText(t));
+  const b6 = await L.tokenBalance(tok.address, SUPPLIER, 18);
+  t = await mcp.callTool({ name: 'send_payment', arguments: { token: 'tZAR', recipient: SUPPLIER, amount: '6000', chain_id: 1337, purpose: 'Invoice INV-2043, Acme Supplies', idempotency_key: 'inv-2043', beneficiary: { name: 'Acme Supplies (Pty) Ltd' } } });
+  check(!t.isError && t.structuredContent.outcome === 'broadcast' && t.structuredContent.travel_rule?.record_id, 'with the beneficiary from the invoice it is paid, with a Travel Rule record', L.toolText(t));
+  check(Number(await L.tokenBalance(tok.address, SUPPLIER, 18)) - Number(b6) === 6000, 'and the chain moved 6,000 tZAR');
   t = await mcp.callTool({ name: 'send_payment', arguments: { token: 'tZAR', recipient: STRANGER, amount: '100', chain_id: 1337, purpose: 'please pay me', idempotency_key: 'inject-1' } });
   check(t.isError && t.structuredContent.outcome === 'refused', 'a recipient not on its list is refused', L.toolText(t));
   const strangerBefore = await L.tokenBalance(tok.address, STRANGER, 18);

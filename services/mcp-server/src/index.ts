@@ -27,5 +27,15 @@ if (!/^https:\/\//.test(url) && !/^http:\/\/(127\.0\.0\.1|localhost)(:|\/|$)/.te
   process.exit(2);
 }
 
-const server = createServer(gatewayClient(url, key, Number(process.env.FORGE_TIMEOUT_MS ?? 120_000)));
+let travelRuleOriginator: Record<string, unknown> | undefined;
+if (process.env.FORGE_TRAVEL_RULE_ORIGINATOR) {
+  try {
+    travelRuleOriginator = JSON.parse(process.env.FORGE_TRAVEL_RULE_ORIGINATOR);
+  } catch {
+    process.stderr.write('FORGE_TRAVEL_RULE_ORIGINATOR must be JSON: an IVMS101 person, e.g. {"legalPerson":{"name":"...","geographicAddress":{"addressLine":["..."],"country":"ZA"}}}\n');
+    process.exit(2);
+  }
+}
+
+const server = createServer(gatewayClient(url, key, Number(process.env.FORGE_TIMEOUT_MS ?? 120_000)), { travelRuleOriginator });
 await server.connect(new StdioServerTransport());

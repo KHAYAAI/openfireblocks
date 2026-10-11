@@ -14,7 +14,7 @@ import { gatewayClient } from '../src/gateway.js';
 // agent-broadcast.spec.ts); these test the translation between them and an AI client.
 type Handler = (req: { method: string; url: string; body: any; auth: string }) => { status: number; body: unknown };
 
-async function harness(handler: Handler) {
+async function harness(handler: Handler, opts: Parameters<typeof createServer>[1] = {}) {
   const seen: Array<{ method: string; url: string; body: any; auth: string }> = [];
   const srv = httpServer(async (req: IncomingMessage, res: ServerResponse) => {
     let raw = '';
@@ -27,7 +27,7 @@ async function harness(handler: Handler) {
   });
   await new Promise<void>((ok) => srv.listen(0, '127.0.0.1', ok));
   const url = `http://127.0.0.1:${(srv.address() as AddressInfo).port}`;
-  const mcp = createServer(gatewayClient(url, 'ofb_agent_test'));
+  const mcp = createServer(gatewayClient(url, 'ofb_agent_test'), opts);
   const [a, b] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 'test', version: '0' });
   await Promise.all([mcp.connect(a), client.connect(b)]);
@@ -97,6 +97,53 @@ test('a retry the gateway recognises is reported as already paid, not paid again
   const r: any = await h.client.callTool({ name: 'send_payment', arguments: { token: 'USDC', recipient: '0x70997970C51812dc3A010C7d01b50e0d17dc79C8', amount: '1', chain_id: 1337, purpose: 'order 77', idempotency_key: 'order-77' } });
   assert.equal(r.structuredContent.outcome, 'already_paid');
   assert.match(text(r), /ALREADY PAID.*Nothing was paid again/s);
+  await h.close();
+});
+
+const ORIGINATOR = { legalPerson: { name: 'Kestrel Fund I', geographicAddress: { addressLine: ['5 Dock Rd, Cape Town'], country: 'ZA' } } };
+
+test('above the threshold, a missing Travel Rule is reported with what is missing and how to proceed', async () => {
+  const h = await harness(() => ({ status: 422, body: { statusCode: 422, message: 'Travel Rule information is required for this transfer', reason: 'R8200 against R5000', missing: ['beneficiary: a naturalPerson or legalPerson is required'] } }), { travelRuleOriginator: ORIGINATOR });
+  const r: any = await h.client.callTool({ name: 'send_payment', arguments: { token: 'tZAR', recipient: '0x70997970C51812dc3A010C7d01b50e0d17dc79C8', amount: '8200', chain_id: 1337, purpose: 'fee', idempotency_key: 'fa-1' } });
+  assert.equal(r.structuredContent.outcome, 'travel_rule_required');
+  assert.deepEqual(r.structuredContent.missing, ['beneficiary: a naturalPerson or legalPerson is required']);
+  assert.match(text(r), /Never invent beneficiary details/);
+  await h.close();
+});
+
+test('with a beneficiary, it sends the organisation\'s configured originator and the beneficiary in IVMS101 form', async () => {
+  const h = await harness(() => ({ status: 200, body: { broadcast: true, transaction_hash: '0xabc', travel_rule: { record_id: 'tr-1', status: 'not_applicable_unhosted' } } }), { travelRuleOriginator: ORIGINATOR });
+  const r: any = await h.client.callTool({ name: 'send_payment', arguments: {
+    token: 'tZAR', recipient: '0x70997970C51812dc3A010C7d01b50e0d17dc79C8', amount: '8200', chain_id: 1337, purpose: 'fee', idempotency_key: 'fa-1',
+    beneficiary: { name: 'Apex Fund Services (Pty) Ltd', provider: 'Example Exchange' },
+  } });
+  assert.deepEqual(h.seen[0].body.travelRule, {
+    originator: ORIGINATOR,
+    beneficiary: { legalPerson: { name: 'Apex Fund Services (Pty) Ltd' } },
+    beneficiaryVasp: { name: 'Example Exchange' },
+  });
+  assert.equal(r.structuredContent.travel_rule.record_id, 'tr-1');
+  await h.close();
+});
+
+test('a person beneficiary holding their own wallet is sent as a natural person, unhosted', async () => {
+  const h = await harness(() => ({ status: 200, body: { broadcast: true, transaction_hash: '0xabc' } }), { travelRuleOriginator: ORIGINATOR });
+  await h.client.callTool({ name: 'send_payment', arguments: {
+    token: 'tZAR', recipient: '0x70997970C51812dc3A010C7d01b50e0d17dc79C8', amount: '6000', chain_id: 1337, purpose: 'refund', idempotency_key: 'rf-1',
+    beneficiary: { name: 'Dlamini', type: 'person', given_names: 'Thandi' },
+  } });
+  assert.deepEqual(h.seen[0].body.travelRule.beneficiary, { naturalPerson: { name: { primaryIdentifier: 'Dlamini', secondaryIdentifier: 'Thandi' } } });
+  assert.equal(h.seen[0].body.travelRule.beneficiaryUnhosted, true);
+  await h.close();
+});
+
+test('without configured originator details, a Travel Rule payment is refused before reaching the gateway', async () => {
+  const h = await harness(() => ({ status: 200, body: {} }));
+  const r: any = await h.client.callTool({ name: 'send_payment', arguments: {
+    token: 'tZAR', recipient: '0x70997970C51812dc3A010C7d01b50e0d17dc79C8', amount: '8200', chain_id: 1337, purpose: 'fee', beneficiary: { name: 'Apex' },
+  } });
+  assert.equal(r.structuredContent.outcome, 'not_configured');
+  assert.equal(h.seen.length, 0);
   await h.close();
 });
 

@@ -80,14 +80,14 @@ async function tokenBalance(tokenAddress, holder, decimals) {
 }
 
 // The MCP SDK is ESM; the scenarios are CommonJS.
-async function mcpClient(agentKey) {
+async function mcpClient(agentKey, extraEnv = {}) {
   const sdk = path.join(ROOT, 'services/mcp-server/node_modules/@modelcontextprotocol/sdk/dist/esm');
   const { Client } = await import(path.join(sdk, 'client/index.js'));
   const { StdioClientTransport } = await import(path.join(sdk, 'client/stdio.js'));
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [path.join(ROOT, 'services/mcp-server/dist/src/index.js')],
-    env: { PATH: process.env.PATH, FORGE_API_URL: G, FORGE_AGENT_KEY: agentKey },
+    env: { PATH: process.env.PATH, FORGE_API_URL: G, FORGE_AGENT_KEY: agentKey, ...extraEnv },
   });
   const client = new Client({ name: 'forge-demo-agent', version: '1.0.0' });
   await client.connect(transport);

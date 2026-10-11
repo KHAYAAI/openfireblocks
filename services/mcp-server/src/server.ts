@@ -35,7 +35,7 @@ function refused(summary: string, data: Record<string, unknown>): ToolResult {
 
 // Turns a gateway failure into something an agent can act on correctly: which failures
 // are final, which mean a person has to act, and which are worth one retry.
-function failure(err: unknown, context: Record<string, unknown> = {}): ToolResult {
+function failure(err: unknown, context: Record<string, unknown> = {}, originatorConfigured = true): ToolResult {
   if (err instanceof GatewayError) {
     const body = (err.body && typeof err.body === 'object' ? err.body : {}) as Record<string, unknown>;
     if (body.requiresApproval) {
@@ -53,7 +53,16 @@ function failure(err: unknown, context: Record<string, unknown> = {}): ToolResul
         { outcome: 'refused', reason: err.message, ...context },
       );
     }
-    if (err.status === 400 || err.status === 404 || err.status === 409) {
+    if (err.status === 422 && /Travel Rule/i.test(err.message)) {
+      const missing = Array.isArray(body.missing) ? (body.missing as string[]) : [];
+      return refused(
+        'TRAVEL RULE REQUIRED: this payment is above the Travel Rule threshold, so the recipient must be identified before it can be signed. Nothing was paid. ' +
+          'Retry with the same idempotency_key and a `beneficiary` taken from the invoice or instruction you were given. Never invent beneficiary details: if you do not have them, ask the user.' +
+          (originatorConfigured ? '' : ' (The organisation has not configured its own originator details for this agent; a person must add FORGE_TRAVEL_RULE_ORIGINATOR.)'),
+        { outcome: 'travel_rule_required', reason: body.reason ?? err.message, missing, ...context },
+      );
+    }
+    if (err.status === 400 || err.status === 404 || err.status === 409 || err.status === 422) {
       return refused(`REJECTED: ${err.message}`, { outcome: 'rejected', status: err.status, reason: err.message, ...context });
     }
     return refused(
@@ -71,7 +80,15 @@ function failure(err: unknown, context: Record<string, unknown> = {}): ToolResul
 const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 const AMOUNT = /^[0-9]+(\.[0-9]+)?$/;
 
-export function createServer(gateway: GatewayClient): McpServer {
+export interface ServerOptions {
+  // IVMS101 originator details for the organisation itself (legalPerson or naturalPerson),
+  // configured by the organisation in the MCP client's settings. Needed only for payments
+  // above the Travel Rule threshold. The agent supplies the beneficiary; it never supplies
+  // the originator.
+  travelRuleOriginator?: Record<string, unknown>;
+}
+
+export function createServer(gateway: GatewayClient, opts: ServerOptions = {}): McpServer {
   const server = new McpServer({ name: 'forge-custody', version: '0.1.0' }, { instructions: INSTRUCTIONS });
 
   server.registerTool(
@@ -140,12 +157,37 @@ export function createServer(gateway: GatewayClient): McpServer {
           .max(120)
           .optional()
           .describe('Optional. The same key on a retry guarantees the payment is made at most once. Generated if omitted, and returned.'),
+        beneficiary: z
+          .object({
+            name: z.string().min(1).max(200).describe('Company name, or the person\'s surname'),
+            type: z.enum(['company', 'person']).optional().describe('Default company'),
+            given_names: z.string().max(200).optional().describe('For a person'),
+            provider: z.string().max(200).optional().describe('The provider (exchange, custodian) holding the recipient\'s wallet; omit if the recipient holds it themselves'),
+          })
+          .optional()
+          .describe('Who is being paid, for the Travel Rule. Required above the threshold (R5,000). Take it from the invoice or instruction; never invent it.'),
       },
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
     },
-    async ({ token, recipient, amount, chain_id, purpose, idempotency_key }) => {
+    async ({ token, recipient, amount, chain_id, purpose, idempotency_key, beneficiary }) => {
       const key = idempotency_key ?? `mcp-${randomUUID()}`;
       const context = { idempotency_key: key, token, recipient, amount, chain_id };
+      let travelRule: Record<string, unknown> | undefined;
+      if (beneficiary) {
+        if (!opts.travelRuleOriginator) {
+          return refused(
+            'NOT CONFIGURED: the organisation has not set its own originator details (FORGE_TRAVEL_RULE_ORIGINATOR), so a Travel Rule payment cannot be made by this agent. Nothing was paid; a person must configure it.',
+            { outcome: 'not_configured', ...context },
+          );
+        }
+        travelRule = {
+          originator: opts.travelRuleOriginator,
+          beneficiary: beneficiary.type === 'person'
+            ? { naturalPerson: { name: { primaryIdentifier: beneficiary.name, ...(beneficiary.given_names ? { secondaryIdentifier: beneficiary.given_names } : {}) } } }
+            : { legalPerson: { name: beneficiary.name } },
+          ...(beneficiary.provider ? { beneficiaryVasp: { name: beneficiary.provider } } : { beneficiaryUnhosted: true }),
+        };
+      }
       try {
         const out = await gateway.post('/agent/transfers', {
           token,
@@ -154,6 +196,7 @@ export function createServer(gateway: GatewayClient): McpServer {
           chainId: chain_id,
           purpose,
           idempotencyKey: key,
+          ...(travelRule ? { travelRule } : {}),
         });
         const hash = out.transaction_hash as string | undefined;
         const explorer = hash && EXPLORERS[chain_id] ? `${EXPLORERS[chain_id]}${hash}` : null;
@@ -168,6 +211,7 @@ export function createServer(gateway: GatewayClient): McpServer {
           chain_id,
           signed_by_parties: out.parties ?? null,
           value_zar: out.agent?.valueZar ?? null,
+          travel_rule: out.travel_rule ? { record_id: out.travel_rule.record_id, status: out.travel_rule.status } : null,
           remaining_24h_zar: out.agent?.remaining24hZar ?? null,
         };
         if (out.replayed) {
@@ -181,7 +225,7 @@ export function createServer(gateway: GatewayClient): McpServer {
           data,
         );
       } catch (err) {
-        return failure(err, context);
+        return failure(err, context, !!opts.travelRuleOriginator);
       }
     },
   );

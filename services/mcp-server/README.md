@@ -21,7 +21,7 @@ independent signing parties. The platform reads the nonce and fees and broadcast
 |---|---|---|
 | `get_spending_status` | Limits, allowed tokens and recipients, what remains of the 24-hour budget | No |
 | `list_payment_tokens` | Tokens the agent may pay in, with chain id and contract | No |
-| `send_payment` | Pay `amount` of `token` to `recipient` on `chain_id`, with a `purpose` for the record | **Yes** |
+| `send_payment` | Pay `amount` of `token` to `recipient` on `chain_id`, with a `purpose` for the record, and a `beneficiary` above the Travel Rule threshold | **Yes** |
 | `get_payment` | One payment by idempotency key; with `chain_id`, on-chain confirmation | No |
 | `list_payments` | The agent's own recent payments and refusals | No |
 
@@ -54,6 +54,18 @@ The key is shown once. Then, in the MCP client's configuration (Claude Desktop s
   }
 }
 ```
+
+For payments above the Travel Rule threshold (R5,000), the organisation also sets its own
+originator details, once, in the same place. The agent supplies only the beneficiary, from the
+invoice or instruction it was given; it never supplies the originator:
+
+```json
+"FORGE_TRAVEL_RULE_ORIGINATOR": "{\"legalPerson\":{\"name\":\"Kestrel Fund I\",\"geographicAddress\":{\"addressLine\":[\"5 Dock Rd, Cape Town\"],\"country\":\"ZA\"}}}"
+```
+
+Without it, a payment above the threshold is reported as `not_configured` and nothing is sent.
+With it but without a `beneficiary`, the platform answers `travel_rule_required`, listing what is
+missing; the agent retries with the same idempotency key once it has the payee's details.
 
 Claude Code: `claude mcp add forge-custody --env FORGE_API_URL=... --env FORGE_AGENT_KEY=... -- node /path/to/dist/src/index.js`
 

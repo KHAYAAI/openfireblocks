@@ -439,7 +439,7 @@ async function architecture(p, eyebrow, title, systems, foot) {
   await dropDiagram(p);
 }
 
-const AGENT_CODE = (key) => `// claude_desktop_config.json (or any MCP client)
+const AGENT_CODE = (key, originator) => `// claude_desktop_config.json (or any MCP client)
 {
   "mcpServers": {
     "forge-custody": {
@@ -447,7 +447,8 @@ const AGENT_CODE = (key) => `// claude_desktop_config.json (or any MCP client)
       "args": ["services/mcp-server/dist/src/index.js"],
       "env": {
         "FORGE_API_URL": "${G}",
-        "FORGE_AGENT_KEY": "${key.slice(0, 14)}••••••••"
+        "FORGE_AGENT_KEY": "${key.slice(0, 14)}••••••••"${originator ? `,
+        "FORGE_TRAVEL_RULE_ORIGINATOR": "{ legalPerson: { name: '${originator.legalPerson.name}', … } }"` : ''}
       }
     }
   }
@@ -464,10 +465,10 @@ const AGENT_CODE = (key) => `// claude_desktop_config.json (or any MCP client)
 // limit, add a recipient, approve anything, or read
 // another agent's record.`;
 
-async function showAgentConfig(p, key) {
-  await stage(p, 'Connecting an AI client', 'The MCP server is a small process the AI client starts. It holds only the agent key and calls the same gateway.', AGENT_CODE(key));
+async function showAgentConfig(p, key, originator) {
+  await stage(p, 'Connecting an AI client', 'The MCP server is a small process the AI client starts. It holds only the agent key (and, for Travel Rule payments, the organisation\u2019s own details) and calls the same gateway.', AGENT_CODE(key, originator));
   await caption(p, 'Model Context Protocol', 'MCP is how AI assistants discover and call tools. The server exposes five; only one can move money, and only within the agent’s terms.');
-  const mcp = await L.mcpClient(key);
+  const mcp = await L.mcpClient(key, originator ? { FORGE_TRAVEL_RULE_ORIGINATOR: JSON.stringify(originator) } : {});
   const tools = (await mcp.listTools()).tools;
   await logEntry(p, 'req', '→ tools/list   (MCP, over stdio)', '');
   await wait(1200);
@@ -712,12 +713,13 @@ await forge(\`/keys/\${keyId}/transfers\`, {
     const CORP = addr();
     await login(p, 'ada', 'The administrator issues the settlements agent.');
     const key2 = await createAgentInConsole(p, { name: 'Settlements agent', recipients: [CORP], per: 20000, daily: 50000, days: 7, why: 'One counterparty, R20,000 a payment, R50,000 a day, seven days. Short expiry is a control in itself.' });
-    const { mcp, tools } = await showAgentConfig(p, key2);
+    const { mcp, tools } = await showAgentConfig(p, key2, { legalPerson: { name: 'Meridian Bank Ltd', geographicAddress: { addressLine: ['2 Bree St, Cape Town'], country: 'ZA' } } });
     await chat(p, 'AI client', 'Settlements agent · Meridian Bank', tools);
-    await user(p, 'Settle today’s obligation to Harbour Trading: R15,000, reference SET-0931.');
+    await user(p, 'Settle today’s obligation to Harbour Trading Ltd (their wallet is held at Example Exchange): R15,000, reference SET-0931.');
     await tool(p, mcp, 'get_spending_status', {});
-    await tool(p, mcp, 'send_payment', { token: 'tZAR', recipient: CORP, amount: '15000', chain_id: 1337, purpose: 'Settlement SET-0931, Harbour Trading', idempotency_key: 'set-0931' }, 'broadcast');
-    await agentSays(p, 'Settled R15,000 to Harbour Trading, reference SET-0931. Confirmed by the platform.', 3500);
+    await agentSays(p, 'R15,000 is above the R5,000 Travel Rule threshold, so I’ll include the beneficiary exactly as given: Harbour Trading Ltd, held at Example Exchange.', 4200);
+    await tool(p, mcp, 'send_payment', { token: 'tZAR', recipient: CORP, amount: '15000', chain_id: 1337, purpose: 'Settlement SET-0931, Harbour Trading', idempotency_key: 'set-0931', beneficiary: { name: 'Harbour Trading Ltd', provider: 'Example Exchange' } }, 'broadcast');
+    await agentSays(p, 'Settled R15,000 to Harbour Trading, reference SET-0931, with its Travel Rule record. Confirmed by the platform.', 3800);
     await dropChat(p);
     await nav(p, 'safety', ['Emergency freeze', 'The desk suspects a compromised workstation and freezes the organisation. It stops the console, the API, settlements and agents at once.'], 2500);
     await type(p, '#fz-reason', 'Suspected compromised workstation, investigating', 25);
@@ -902,16 +904,18 @@ await forge(\`/keys/\${fundEth}/transfers\`, {
     const ADMINR = addr(); const AUDIT = addr();
     const key2 = await createAgentInConsole(p, { name: 'Fund I treasury agent', recipients: [ADMINR, AUDIT], per: 10000, daily: 30000, days: 30, why: 'The fund administrator and the auditor only; R10,000 a payment, R30,000 a day, thirty days.' });
     await logout(p);
-    const { mcp, tools } = await showAgentConfig(p, key2);
+    const { mcp, tools } = await showAgentConfig(p, key2, { legalPerson: { name: 'Kestrel Fund I', geographicAddress: { addressLine: ['5 Dock Rd, Cape Town'], country: 'ZA' } } });
     await chat(p, 'AI client', 'Fund I treasury agent · Kestrel AM', tools);
-    await user(p, 'Pay the fund administrator’s October fee, R8,200 (invoice FA-1010), and the auditor’s interim fee, R4,800 (AU-559).');
+    await user(p, 'Pay the fund administrator\u2019s October fee, R8,200 (invoice FA-1010), and the auditor\u2019s interim fee, R4,800 (AU-559).');
     await tool(p, mcp, 'get_spending_status', {});
-    await tool(p, mcp, 'send_payment', { token: 'tZAR', recipient: ADMINR, amount: '8200', chain_id: 1337, purpose: 'Fund administration fee, October, FA-1010', idempotency_key: 'fa-1010-oct' }, 'broadcast');
+    await tool(p, mcp, 'send_payment', { token: 'tZAR', recipient: ADMINR, amount: '8200', chain_id: 1337, purpose: 'Fund administration fee, October, FA-1010', idempotency_key: 'fa-1010-oct' }, 'travel_rule_required');
+    await agentSays(p, 'The platform needs the recipient identified first: R8,200 is above the Travel Rule threshold. Invoice FA-1010 names the payee: Apex Fund Services (Pty) Ltd, which holds its own wallet. Retrying with the same idempotency key.', 6000);
+    await tool(p, mcp, 'send_payment', { token: 'tZAR', recipient: ADMINR, amount: '8200', chain_id: 1337, purpose: 'Fund administration fee, October, FA-1010', idempotency_key: 'fa-1010-oct', beneficiary: { name: 'Apex Fund Services (Pty) Ltd' } }, 'broadcast');
     await tool(p, mcp, 'send_payment', { token: 'tZAR', recipient: AUDIT, amount: '4800', chain_id: 1337, purpose: 'Interim audit fee, AU-559', idempotency_key: 'au-559-interim' }, 'broadcast');
     await tool(p, mcp, 'list_payments', { limit: 5 });
-    await agentSays(p, 'Both paid: R8,200 to the administrator and R4,800 to the auditor, each with its invoice reference on the record. R17,000 of today’s R30,000 remains.', 5500);
+    await agentSays(p, 'Both paid: R8,200 to the administrator, with a Travel Rule record, and R4,800 to the auditor, below the threshold. Each has its invoice reference on the record. R17,000 of today’s R30,000 remains.', 6000);
     await user(p, 'Retry the administrator’s fee in case it failed.');
-    await tool(p, mcp, 'send_payment', { token: 'tZAR', recipient: ADMINR, amount: '8200', chain_id: 1337, purpose: 'Fund administration fee, October, FA-1010', idempotency_key: 'fa-1010-oct' }, 'already_paid');
+    await tool(p, mcp, 'send_payment', { token: 'tZAR', recipient: ADMINR, amount: '8200', chain_id: 1337, purpose: 'Fund administration fee, October, FA-1010', idempotency_key: 'fa-1010-oct', beneficiary: { name: 'Apex Fund Services (Pty) Ltd' } }, 'already_paid');
     await agentSays(p, 'It had not failed: the platform recognised the same payment and did not pay it twice.', 4500);
     await dropChat(p);
     await login(p, 'ada', null);
