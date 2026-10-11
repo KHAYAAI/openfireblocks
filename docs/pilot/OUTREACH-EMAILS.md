@@ -123,7 +123,7 @@ Security.
 >
 > Test accounts across roles (admin, approver, operator, auditor, viewer) and a second
 > cross-tenant organisation will be provisioned for you. Test chains only — Sepolia, Solana
-> devnet, Cosmos testnet. Never mainnet.
+> devnet, Cosmos testnet, Bitcoin testnet4. Never mainnet.
 >
 > Could you send:
 > 1. A quote based on the attached scope

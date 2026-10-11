@@ -108,3 +108,12 @@ Kind regards,
 Tebogo Mvelase
 Founder and CEO, FORGE CUSTODY | TKM@myforgepay.com | myforgepay.com
 ```
+
+
+## Optional update line for any follow-up (added 11 Oct 2026)
+
+Insert before the closing paragraph of any follow-up above:
+
+```
+Since my note, we have also taken the platform beyond private tests: transactions signed by our 2-of-3 threshold keys have been accepted by public test networks (Ethereum Sepolia, Solana devnet, the Cosmos testnet, and Bitcoin testnet4, where one has been mined), including USDC and EURC test-token transfers. These are test networks with no value, and we are not claiming mainnet operation. The transaction records are available under NDA.
+```

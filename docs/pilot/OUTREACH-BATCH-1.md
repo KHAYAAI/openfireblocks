@@ -75,7 +75,7 @@ connectors.
 
 Scope, objectives and rules of engagement are documented. Test accounts across roles (admin,
 approver, operator, auditor, viewer) and a second cross-tenant organisation will be
-provisioned. Test chains only (Sepolia, Solana devnet, Cosmos testnet), never mainnet.
+provisioned. Test chains only (Sepolia, Solana devnet, Cosmos testnet, Bitcoin testnet4), never mainnet.
 
 For context: an automated pentest has already been run against this deployment in three rounds.
 The first found 11 issues and the last found nothing critical, high or medium; all findings are fixed. We want an independent, human-led test and treat that run as a
