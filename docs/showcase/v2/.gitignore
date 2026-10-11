@@ -1,2 +1,4 @@
 # Playwright writes each recording into a temporary folder before record-v2.js moves it out.
 */
+# The raw WebM is converted to MP4 (H.264, plays everywhere and is a third of the size); only the MP4 is kept.
+*.webm

@@ -21,10 +21,10 @@ Each recording has the same three layers:
 
 | File | Story |
 |---|---|
-| `forge-custody-fintech.webm` | Northwind Pay: the app creates a key, takes a deposit, pays out, and has a large move held; the finance team approves; a payables agent pays invoices and refuses an injected payee; evidence |
-| `forge-custody-bank.webm` | Meridian Bank: API key rotation, IVMS101 Travel Rule on the API (and refusal without it); roles, dual control and segregation of duties; a settlements agent stopped by the emergency freeze; audit evidence |
-| `forge-custody-government.webm` | National Treasury: quorum raised to three; a grants system's request approved by three officials; safety controls; a disbursement assistant that refuses a diversion attempt; revoked at programme end |
-| `forge-custody-asset-manager.webm` | Kestrel AM: keys on Ethereum, Bitcoin and Solana from three parallel ceremonies; a rebalancing move approved by portfolio manager and risk; reconciliation; a treasury agent paying fund expenses, with a retry that does not pay twice |
+| `forge-custody-fintech.mp4` | Northwind Pay: the app creates a key, takes a deposit, pays out, and has a large move held; the finance team approves; a payables agent pays invoices and refuses an injected payee; evidence |
+| `forge-custody-bank.mp4` | Meridian Bank: API key rotation, IVMS101 Travel Rule on the API (and refusal without it); roles, dual control and segregation of duties; a settlements agent stopped by the emergency freeze; audit evidence |
+| `forge-custody-government.mp4` | National Treasury: quorum raised to three; a grants system's request approved by three officials; safety controls; a disbursement assistant that refuses a diversion attempt; revoked at programme end |
+| `forge-custody-asset-manager.mp4` | Kestrel AM: keys on Ethereum, Bitcoin and Solana from three parallel ceremonies; a rebalancing move approved by portfolio manager and risk; reconciliation; a treasury agent paying fund expenses, with a retry that does not pay twice |
 
 **Real:** every API call shown, the console, one-time codes, roles, policy decisions,
 approvals, the Travel Rule records, the freeze, real tss-lib key ceremonies, real threshold
