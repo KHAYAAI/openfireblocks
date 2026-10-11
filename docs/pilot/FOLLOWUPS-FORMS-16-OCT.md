@@ -117,3 +117,11 @@ Insert before the closing paragraph of any follow-up above:
 ```
 Since my note, we have also taken the platform beyond private tests: transactions signed by our 2-of-3 threshold keys have been accepted by public test networks (Ethereum Sepolia, Solana devnet, the Cosmos testnet, and Bitcoin testnet4, where one has been mined), including USDC and EURC test-token transfers. These are test networks with no value, and we are not claiming mainnet operation. The transaction records are available under NDA.
 ```
+
+## Optional AI-agent line (added 11 Oct 2026)
+
+Add after the update line above, for recipients interested in automation or AI:
+
+```
+We have also added an MCP server so that AI agents can pay from custody within limits a person sets: allowed recipients, a per-payment and daily limit, an expiry, and instant revocation. Every payment still goes through the same policy, Travel Rule and 2-of-3 signature, and the agent never holds a key. It is proven end to end on a local development chain, not yet on a public network; a short recording is available.
+```

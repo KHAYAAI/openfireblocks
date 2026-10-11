@@ -43,15 +43,19 @@ What changed today, with the evidence for each (all in `docs/evidence/`):
 | EURC (Sepolia) | Same path, after EUR ceilings were added to the policy; receipt and contract Transfer event confirmed, the exact recipient-balance check was not (shared burn address, lagging RPC) (`2026-10-11-erc20-eurc-sepolia.md`) |
 | OUSD (Ethereum and Base mainnets) | Registered and verified against the live contracts, **read-only; no transfer** (`2026-10-11-ousd-ethereum-verified.md`) |
 | Rand tokens (ZARP/ZARC) | Supported in code with rand-denominated ceilings and tests; no public-chain run yet |
+| AI agents through MCP | `services/mcp-server`: an agent pays within limits a person set (tokens, recipients, per-payment and 24-hour limits in rand, expiry, revocation); policy, Travel Rule and the 2-of-3 signature still apply; the platform reads nonce and fees and broadcasts; retries never pay twice. **20 of 20 end to end on a local EVM dev chain** (`2026-10-11-mcp-agent-end-to-end.md`), not on a public network. Recorded for four segments (`docs/showcase/v2/`) |
 
 Wording to use externally: "accepted by public test networks" for Bitcoin, Ethereum, Solana, Cosmos and test
-stablecoins; "registered and verified on-chain" for OUSD. Do **not** say mainnet, production-ready, independently
-audited, or that OUSD / ZARP / ZARC transfers are proven.
+stablecoins; "registered and verified on-chain" for OUSD; for AI agents, "AI agents can pay through MCP within
+limits a person sets, proven end to end on a local development chain". Do **not** say mainnet, production-ready,
+independently audited, that OUSD / ZARP / ZARC transfers are proven, or that agent payments run on a public network.
 
 Known limits and open items: EUR ceilings (900,000 global, 90,000 pro, 9,000 free) were chosen by engineering and
 need the founder's sign-off; the Stripe path has never charged a real card; the staging cluster resets its
 Helm settings on every `up.sh` (trust-proxy hops, EVM/Solana/Cosmos RPC, Cosmos gas price) and they must be
-reapplied; Solana SPL tokens are not supported (native SOL only); the independent human pentest, cryptographic
+reapplied; Solana SPL tokens are not supported (native SOL only); the MCP server and the new agent routes have not been
+through a pentest round, agent limits are denominated in rand only, and the recordings' agent sentences are scripted
+(no language model in the loop); the independent human pentest, cryptographic
 audit, SOC 2 Type II, isolated hosts with HSM, live TRISA, a real custodian, legal/licensing and a capped mainnet
 run all remain.
 
