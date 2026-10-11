@@ -407,11 +407,24 @@ async function setup() {
   const { key } = await L.waitActive(API_KEY, r.d.id);
   SHARED.evmKeyId = key.id; SHARED.evmKeyName = 'Treasury · Ethereum'; SHARED.evmAddress = key.address;
   await L.fundEth(key.address, 200);
-  const tok = await L.deployToken('tZAR', 18, 5_000_000);
-  r = await L.call('POST', '/admin/tokens', { admin: ADMIN, body: { chainId: 1337, contractAddress: tok.address, symbol: 'tZAR', name: 'Test rand (dev chain)', decimals: 18, pegCurrency: 'ZAR', issuer: 'FORGE demo' } });
-  SHARED.tokenId = r.d.token.tokenId; SHARED.tokenAddress = tok.address;
+  // One tZAR per chain in the registry: reuse it if an earlier scenario in this run (mcp-agent.js)
+  // registered it. The funding account deployed it either way, so it holds the supply.
+  const existing = (await L.call('GET', '/admin/tokens?chainId=1337', { admin: ADMIN })).d?.tokens || [];
+  const known = existing.find((t) => t.symbol === 'tZAR');
+  let tokenAddress;
+  if (known) {
+    SHARED.tokenId = known.tokenId; tokenAddress = known.contractAddress;
+  } else {
+    const tok = await L.deployToken('tZAR', 18, 5_000_000);
+    r = await L.call('POST', '/admin/tokens', { admin: ADMIN, body: { chainId: 1337, contractAddress: tok.address, symbol: 'tZAR', name: 'Test rand (dev chain)', decimals: 18, pegCurrency: 'ZAR', issuer: 'FORGE demo' } });
+    if (!r.d?.token?.tokenId) throw new Error('could not register tZAR: ' + JSON.stringify(r.d));
+    SHARED.tokenId = r.d.token.tokenId; tokenAddress = tok.address;
+  }
+  SHARED.tokenAddress = tokenAddress;
   await L.call('POST', `/admin/tokens/${SHARED.tokenId}/verify`, { admin: ADMIN });
-  await (await tok.contract.transfer(key.address, ethers.parseUnits('1000000', 18))).wait();
+  const funder = new ethers.Wallet(process.env.EVM_FUNDER_KEY, L.provider());
+  const erc20 = new ethers.Contract(tokenAddress, ['function transfer(address to, uint256 value) returns (bool)'], funder);
+  await (await erc20.transfer(key.address, ethers.parseUnits('500000', 18))).wait();
   console.log('setup done', SHARED);
 }
 
