@@ -251,7 +251,7 @@ infrastructure/multi-region/
 └── docker-compose.prod.yml # Multi-region HA deployment
 
 docs/
-├── PHASE3-ISO27001-ISMS.md              # 114 controls
+├── PHASE3-ISO27001-ISMS.md              # superseded: see docs/compliance/isms/
 ├── PHASE3-SOC2-COMPLIANCE.md            # 20+ controls
 ├── PHASE3-BACKUP-RECOVERY-PROCEDURES.md # RTO/RPO procedures
 ├── PHASE3-SECURITY-AUDIT-PROCEDURES.md  # Audit framework

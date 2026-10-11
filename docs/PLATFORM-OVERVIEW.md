@@ -598,7 +598,7 @@ client.broadcast_transaction(
 4. Configure incident response: [Incident Playbook](./PHASE3-INCIDENT-RESPONSE-PLAYBOOK.md)
 
 ### For Compliance
-1. Review [ISO 27001 ISMS](./PHASE3-ISO27001-ISMS.md)
+1. Review the [ISO 27001:2022 ISMS pack](./compliance/isms/README.md)
 2. Review [SOC 2 Compliance](./PHASE3-SOC2-COMPLIANCE.md)
 3. Schedule audits: [Audit Procedures](./PHASE3-SECURITY-AUDIT-PROCEDURES.md)
 4. Plan certification: [Implementation Roadmap](./PHASE3-IMPLEMENTATION-ROADMAP.md)

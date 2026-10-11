@@ -26,11 +26,17 @@ signing, approvals, freeze, Travel Rule) are strong *evidence* for many criteria
 by the customer in their own environment. If FORGE hosts the platform for a customer, that hosted
 environment comes into scope too.
 
-> **Warning about an existing document.** `docs/PHASE3-ISO27001-ISMS.md` ticks items as done that are
-> not (for example "CISO appointed", "security committee established (quarterly meetings)",
-> "policy communicated to all personnel"), and uses the 2013-style Annex A layout (114 controls,
-> A.5 to A.18) under a 2022 label. Do not give it to Sprinto or an auditor as evidence. Use it only
-> as a draft; the mapping below uses the ISO 27001:2022 structure (93 controls in four themes).
+> **Built since this mapping was written (same day).** The ISMS pack in `docs/compliance/isms/`
+> covers the items marked **Gap** for documents: scope, information security policy, risk register,
+> Statement of Applicability (93 controls), objectives, internal audit and management review
+> templates, 17 policies, record templates, tabletop and DR test scripts, and a privacy pack (RoPA,
+> privacy notice, PAIA manual, DPA, DPIA, request procedure, Information Officer registration,
+> cross-border transfers, outreach opt-out). All are **drafts awaiting approval**, so the statuses
+> below stay as they were until they are approved and records exist. The product now has a built-in
+> **access review** (Controls > Access review): signed with step-up, immutable, with a SHA-256 of
+> the snapshot. Check scripts for AWS and GitHub are in `scripts/compliance/`.
+> `docs/PHASE3-ISO27001-ISMS.md`, which claimed appointments and meetings that had not happened, has
+> been replaced with a pointer to the pack.
 
 ---
 
@@ -47,7 +53,7 @@ environment comes into scope too.
 | HR: onboarding, background checks, offboarding | CC1.4, CC6.2, CC6.3 | **Gap** | — | Background checks for anyone with production or key access; joiner/mover/leaver checklist with records; Sprinto HR integration |
 | Security awareness training | CC1.4, CC2.2 | **Gap** | — | Annual training through Sprinto, with completion records, from day one of the window |
 | Identity and access: SSO, MFA, least privilege | CC6.1 | **Partial** (company) / **Have** (product) | Product: OIDC SSO with PKCE, TOTP step-up, RLS, API-key expiry and rotation, agent keys | Company: MFA enforced on Google Workspace, GitHub, AWS (including root); SSO where possible; no shared accounts — **Unknown** until Sprinto connects |
-| Access reviews | CC6.2, CC6.3 | **Gap** | Product roles are revocable and take effect on the next request | Quarterly access review of Google Workspace, GitHub, AWS, the staging console, with sign-off records |
+| Access reviews | CC6.2, CC6.3 | **Partial** | Product: built-in access review per organisation (findings, step-up sign-off, immutable record with snapshot hash); roles revocable on the next request | Quarterly review of Google Workspace, GitHub and AWS with the template in `docs/compliance/isms/records/ACCESS-REVIEW-COMPANY.md`; first product review recorded in staging |
 | Cryptography and key management | CC6.1, CC6.7 | **Have** (product) / **Outside** (production) | 2-of-3 threshold keys, sealed shares (Vault or encrypted store), PKCS#11 HSM path, recovery drills, `KEY-RECOVERY.md` | Separate hosts and owners for the three parties; production HSM hardware; company secrets in a manager, not in files |
 | Endpoint security (laptops) | CC6.8 | **Gap** | — | Sprinto's agent on every laptop: disk encryption, screen lock, OS updates, anti-malware, password manager |
 | Network and boundary protection | CC6.6 | **Partial** | NetworkPolicies, mTLS between services, AWS security group limited to one IP, WAF resources defined | Apply and test NetworkPolicies on a real cluster; document the staging network |
@@ -87,7 +93,7 @@ environment comes into scope too.
 | A.5 Organisational | 37 | **Partial** | Access control, incident response, supplier assessment, threat intelligence (advisory reviews), secure development documents | Policy set approved; asset and information inventory; legal and regulatory register (POPIA, GDPR, FIC Act, FAIS/CASP); cloud-services policy (A.5.23); ICT readiness for continuity (A.5.30) |
 | A.6 People | 8 | **Gap** | — | Screening, terms of employment with security duties, training, disciplinary process, NDAs, remote-working rules, event reporting |
 | A.7 Physical | 14 | **Partial** | No own data centre: AWS covers facilities (inherited, with AWS's reports) | Clear-desk and screen, equipment and media handling for laptops, home-office rules |
-| A.8 Technological | 34 | **Have / Partial** | Strong: authentication (A.8.5), access restriction (A.8.3), cryptography (A.8.24), secure development and testing (A.8.25–8.29), logging (A.8.15), backup (A.8.13), segregation of environments (A.8.31), data masking for secrets (A.8.11), web filtering/WAF (A.8.23) | Endpoint devices (A.8.1), privileged access records (A.8.2), configuration management records (A.8.9), monitoring of company systems (A.8.16), capacity (A.8.6), deletion of information (A.8.10) |
+| A.8 Technological | 34 | **Have / Partial** | Strong: authentication (A.8.5), access restriction (A.8.3), cryptography (A.8.24), secure development and testing (A.8.25–8.29), logging (A.8.15), backup (A.8.13), segregation of environments (A.8.31), data masking for secrets (A.8.11), network security including the WAF (A.8.20) | Endpoint devices (A.8.1), web filtering on laptops (A.8.23), privileged access records (A.8.2), configuration management records (A.8.9), monitoring of company systems (A.8.16), capacity (A.8.6), deletion of information (A.8.10) |
 
 ---
 
@@ -123,7 +129,7 @@ are **only** POPIA:
 | PAIA manual | PAIA s51 | **Gap** | Publish a PAIA manual on the website |
 | Eight conditions (accountability, processing limitation, purpose, further processing, information quality, openness, security safeguards, data subject participation) | 8–25 | **Partial** | Security safeguards (s19) largely **Have**; the rest map to the GDPR rows above |
 | Cross-border transfers | 72 | **Gap** | Contract terms for data leaving South Africa (AWS region choice matters) |
-| Direct marketing by electronic communication | 69 | **Partial** | The 9 October emails went to organisations' business addresses (a B2B approach), each with a way to decline; keep an opt-out list and honour it |
+| Direct marketing by electronic communication | 69 | **Gap** | POPIA's data subjects include juristic persons, so business addresses are still covered: s69 needs consent from non-customers, who may be approached once to ask. Counsel to confirm before more sends; see `docs/compliance/isms/privacy/OUTREACH-OPT-OUT.md` |
 | Security compromise notification | 22 | **Partial** | Add the Information Regulator notification step to the incident plan |
 
 ---

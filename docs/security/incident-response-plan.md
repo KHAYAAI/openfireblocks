@@ -5,7 +5,13 @@ supporting tooling (persistent incident tracking, on-call paging, automated
 detection) is partially implemented — see §8 for what actually exists today
 versus what this plan assumes.
 
-**Owner**: [assign]
+**Version**: 0.2 (11 October 2026): containment updated to the current
+product (freeze, 2-of-3, token revocation); §10 regulatory notification
+(POPIA s22, GDPR art. 33/34, Cybercrimes Act) and §11 contacts added. Part of
+the ISMS in `docs/compliance/isms/`; exercised with
+`docs/compliance/isms/exercises/TABLETOP.md`.
+
+**Owner**: Incident lead [to complete: name] (see `docs/compliance/isms/02-information-security-policy.md` §4)
 **Review cycle**: Semi-annually, and after every incident (post-incident
 review must feed back into this document).
 
@@ -69,17 +75,27 @@ internal discovery during code review or testing, third-party disclosure
 ### 5.3 Containment
 Immediate actions to stop the incident from getting worse, before full root
 cause is understood. Examples specific to this platform:
-- **Suspected key compromise**: revoke/rotate the affected key via a new
-  DKG ceremony; the threshold design means a single compromised share does
-  not on its own enable signing (4-of-7 required) — confirm this
-  assumption holds for the specific ceremony in question before treating a
-  single-share compromise as contained.
+- **Funds at risk, any cause**: **freeze the organisation** (console:
+  Controls > Safety controls, or `POST /organisations/:id/controls/freeze`).
+  An approver or admin can freeze; only an admin can lift it. Freezing stops
+  every signing path at once and fails closed: if the platform cannot tell
+  whether an organisation is frozen, it refuses to sign. Freeze first, then
+  investigate. In a customer-operated installation the customer presses it;
+  FORGE advises.
+- **Suspected key compromise**: freeze, then generate a new key and sweep
+  funds to it (`docs/security/key-rotation.md`). Keys are 2-of-3: one
+  compromised share does not on its own allow signing, but two do, so
+  confirm which parties' hosts and administrators could be affected before
+  treating it as contained.
 - **Suspected account compromise**: suspend the account
-  (`status = 'suspended'`), which blocks new logins; note the current gap
-  that existing JWTs remain valid until natural expiry (≤ 1 hour) — see
-  access-control-policy.md §9.
-- **Suspected API abuse**: revoke the API key; rate limiting engages
-  automatically for anomalous volume.
+  (`status = 'suspended'`), which blocks new logins, and revoke its
+  sessions: tokens carry a `jti` and are denylisted on sign-out (AUTH-03,
+  AUTH-04 fixes). Remove the person's roles in affected organisations and
+  check their recent approvals and agent creations.
+- **AI agent misuse**: revoke the agent (console: Agents, or the agents
+  API). Revocation takes effect on the next request. Review its spend history.
+- **Suspected API abuse**: rotate the organisation API key; rate limiting
+  and velocity limits engage automatically (velocity fails closed).
 - **Platform-wide**: be prepared to take services offline (health-check
   failure / scale to zero) rather than serve requests under active
   compromise.
@@ -173,3 +189,47 @@ under pressure:
       checks (e.g., a batch job flagging statistical outliers).
 - [ ] Run a tabletop exercise against this plan with the real team before
       relying on it for a real incident.
+
+## 10. Regulatory and legal notification
+
+Decide **within 24 hours of confirming an incident** whether any of the
+following apply. The Information Officer leads; counsel advises. Record the
+decision and the reasons even when the answer is "not required".
+
+| Duty | Applies when | Who notifies whom | Deadline |
+|---|---|---|---|
+| POPIA s22 | Reasonable grounds to believe personal information was accessed or acquired by an unauthorised person, and FORGE is the responsible party | FORGE → Information Regulator (prescribed form, eServices portal) **and** the data subjects (unless identity cannot be established, or a public body says notice would impede an investigation) | "As soon as reasonably possible" after discovery |
+| POPIA s21(2) | FORGE is an **operator** for a customer (hosted environment) | FORGE → the customer (responsible party), who then notifies under s22 | Immediately |
+| GDPR art. 33 | Personal data breach of EU/UK data, FORGE as controller, unless unlikely to result in a risk | FORGE → the lead supervisory authority | Within **72 hours** of becoming aware; a late notice must give reasons |
+| GDPR art. 34 | High risk to individuals | FORGE → the data subjects | Without undue delay |
+| GDPR art. 33(2) | FORGE as **processor** | FORGE → the controller (customer) | Without undue delay |
+| Cybercrimes Act s54 | Applies to electronic communications service providers and financial institutions aware of their system being involved in certain offences. FORGE is likely neither, but **customers that are financial institutions are** | Customer → SAPS; FORGE supports | Within 72 hours (customer's duty) |
+| Customer contracts | As each contract states | FORGE → customer | Per contract [to complete] |
+| Law enforcement | Theft of funds or other crime | FORGE or the customer → SAPS (case number); on-chain theft: notify the stablecoin issuer to request a freeze where the token supports it | As soon as possible |
+
+**Content of a notice** (POPIA s22(5), GDPR art. 33(3)): what happened and
+when; the categories and approximate numbers of people and records; likely
+consequences; measures taken or proposed; what affected people can do;
+contact details of the Information Officer. If facts are not yet known,
+notify with what is known and follow up.
+
+**Log**: every personal-information incident, notified or not, is recorded
+(GDPR art. 33(5)) in the incident record, with the decision.
+
+## 11. Contacts
+
+Keep current; checked at every tabletop exercise.
+
+| Who | Contact |
+|---|---|
+| Incident lead | [to complete: name, phone] |
+| Deputy / second responder | [to complete] |
+| CEO | [to complete] |
+| Information Officer | [to complete] |
+| Counsel | [to complete] |
+| Information Regulator (South Africa) | https://inforegulator.org.za, breach reporting via the eServices portal; [confirm current email for complaints and POPIA compliance] |
+| EU lead supervisory authority | [to complete, only if EU data is processed] |
+| SAPS (cybercrime / commercial crime) | Local station for a case number; [to complete] |
+| AWS support / abuse | AWS console support case; [plan level, to complete] |
+| GitHub security | https://github.com/contact (account takeover), support case |
+| Customers' security contacts | Kept in the customer contract records |
