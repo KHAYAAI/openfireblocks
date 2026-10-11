@@ -1,0 +1,2 @@
+# Playwright writes each recording into a temporary folder before record-v2.js moves it out.
+*/
