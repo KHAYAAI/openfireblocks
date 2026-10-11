@@ -136,7 +136,7 @@ export function createServer(gateway: GatewayClient): McpServer {
         purpose: z.string().min(3).max(500).describe('Why this payment is being made, for the human record (invoice number, order, reason)'),
         idempotency_key: z
           .string()
-          .min(8)
+          .min(1)
           .max(120)
           .optional()
           .describe('Optional. The same key on a retry guarantees the payment is made at most once. Generated if omitted, and returned.'),
