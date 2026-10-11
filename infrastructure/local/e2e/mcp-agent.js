@@ -81,9 +81,10 @@ const STRANGER = '0x8F3c4B2a9e1d7F06cB5A3D19E0f4B7a2C6d8E915';
   check(Number(strangerBefore) === 0 && injected.d?.status === 'refused' && !injected.d?.txHash, 'and nothing reached that address: refused before signing, no transaction',
     `balance ${strangerBefore}; record ${JSON.stringify(injected.d)}; tool said ${L.toolText(t).slice(0, 300)}`);
 
+  const beforeRetry = await L.tokenBalance(tok.address, SUPPLIER, 18);
   t = await mcp.callTool({ name: 'send_payment', arguments: { token: 'tZAR', recipient: SUPPLIER, amount: '2500', chain_id: 1337, purpose: 'Invoice INV-2041, Acme Supplies', idempotency_key: 'inv-2041' } });
   const again = await L.tokenBalance(tok.address, SUPPLIER, 18);
-  check(Number(again) === Number(after) && t.structuredContent.outcome === 'already_paid', 'a retry with the same idempotency key is reported as already paid, and pays nothing', `${after} -> ${again}; ${L.toolText(t).slice(0, 200)}`);
+  check(Number(again) === Number(beforeRetry) && t.structuredContent.outcome === 'already_paid', 'a retry with the same idempotency key is reported as already paid, and pays nothing', `${beforeRetry} -> ${again}; ${L.toolText(t).slice(0, 200)}`);
 
   t = await mcp.callTool({ name: 'list_payments', arguments: {} });
   check((t.structuredContent.transfers || []).length >= 3, 'the agent sees its own history: paid and refused', L.toolText(t).slice(0, 300));
