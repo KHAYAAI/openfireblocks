@@ -1,14 +1,24 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
   HttpCode,
   HttpStatus,
+  Inject,
+  NotFoundException,
+  Optional,
   Param,
   Post,
+  Query,
   Req,
+  ServiceUnavailableException,
   UseGuards,
 } from '@nestjs/common';
+import { Pool } from 'pg';
+import { PG_POOL } from '../database/pg-pool.token';
+import { EvmRpcService } from '../tokens/evm-rpc.service';
+import { withEvmNonceLock } from '../blockchain/evm-nonce-lock';
 import {
   IsArray,
   IsInt,
@@ -50,7 +60,10 @@ export class AgentTransferDto {
   @Matches(/^0x[0-9a-fA-F]{40}$/) recipient: string;
   @Matches(/^[0-9]+(\.[0-9]+)?$/) amount: string;
   @IsInt() chainId: number;
-  @IsInt() @Min(0) nonce: number;
+  // Omitted (the normal case for an AI agent): the platform reads the nonce and fees from
+  // the chain when it signs, and broadcasts the transaction itself. Given: the caller owns
+  // nonce and fees, and gets back a signed transaction to broadcast (the original contract).
+  @IsOptional() @IsInt() @Min(0) nonce?: number;
   @IsOptional() @Matches(/^[0-9]+$/) gasPrice?: string;
   @IsOptional() @Matches(/^[0-9]+$/) maxFeePerGas?: string;
   @IsOptional() @Matches(/^[0-9]+$/) maxPriorityFeePerGas?: string;
@@ -122,6 +135,9 @@ export class AgentController {
     private readonly keys: KeysService,
     private readonly customers: CustomerService,
     private readonly tokens: TokenRegistryService,
+    private readonly rpc: EvmRpcService,
+    // For the per-key nonce lock shared with every other EVM sending path.
+    @Optional() @Inject(PG_POOL) private readonly pool?: Pool,
   ) {}
 
   @Get('me')
@@ -140,6 +156,51 @@ export class AgentController {
     };
   }
 
+  // The tokens this agent may pay in, with the chain and contract each lives on: what an
+  // agent needs in order to ask for a payment it is allowed to make.
+  @Get('tokens')
+  async allowedTokens(@Req() req: AgentRequest) {
+    const allowed = new Set(req.agent.allowedTokens.map((t) => t.toUpperCase()));
+    const all = await this.tokens.list();
+    return {
+      tokens: all
+        .filter((t) => allowed.has(t.symbol.toUpperCase()) && t.status === 'verified')
+        .map((t) => ({
+          symbol: t.symbol,
+          name: t.name,
+          chainId: t.chainId,
+          contractAddress: t.contractAddress,
+          decimals: t.decimals,
+          pegCurrency: t.pegCurrency,
+          platformBroadcasts: this.rpc.configured(t.chainId),
+        })),
+    };
+  }
+
+  // The agent's own history, newest first.
+  @Get('transfers')
+  async history(@Req() req: AgentRequest, @Query('limit') limit?: string) {
+    return { transfers: await this.agents.spends(req.agent, Number(limit ?? 20)) };
+  }
+
+  // One payment: what the platform recorded, and, given the chain, what the chain says.
+  @Get('transfers/:requestId')
+  async status(@Req() req: AgentRequest, @Param('requestId') requestId: string, @Query('chainId') chainId?: string) {
+    const spend = await this.agents.spend(req.agent, requestId);
+    if (!spend) throw new NotFoundException(`no payment ${requestId} for this agent`);
+    const chain = Number(chainId);
+    if (!spend.txHash || !Number.isInteger(chain) || chain <= 0 || !this.rpc.configured(chain)) {
+      return { ...spend, onChain: null };
+    }
+    const receipt = await this.rpc.provider(chain).getTransactionReceipt(spend.txHash);
+    return {
+      ...spend,
+      onChain: receipt
+        ? { chainId: chain, state: receipt.status === 1 ? 'confirmed' : 'reverted', blockNumber: receipt.blockNumber, confirmations: await receipt.confirmations() }
+        : { chainId: chain, state: 'pending', blockNumber: null, confirmations: 0 },
+    };
+  }
+
   // Pay. The budget is reserved before signing and released if signing
   // fails; the transfer itself goes through the same route a person's does
   // -- registered token, policy, Travel Rule, threshold signature.
@@ -148,6 +209,14 @@ export class AgentController {
   async transfer(@Req() req: AgentRequest, @Body() dto: AgentTransferDto) {
     const { agent } = req;
     const token = await this.tokens.requireTransactable(dto.chainId, dto.token);
+    // Checked before any budget is reserved: an agent that cannot be served should not
+    // leave a released reservation behind for every attempt.
+    const platformPrepared = dto.nonce === undefined;
+    if (platformPrepared && !this.rpc.configured(dto.chainId)) {
+      throw new ServiceUnavailableException(
+        `the platform has no RPC endpoint for chain ${dto.chainId} (EVM_RPC_${dto.chainId}), so it cannot read the nonce and fees or broadcast; pass nonce and fees to receive a signed transaction instead`,
+      );
+    }
     const requestId = dto.idempotencyKey ?? uuid();
     const reservation = await this.agents.reserve(agent, {
       requestId,
@@ -162,12 +231,34 @@ export class AgentController {
     try {
       const { purpose, ...transfer } = dto;
       void purpose;
-      const out = await this.keys.sendToken(customer, agent.keyId, { ...transfer, token: token.symbol, idempotencyKey: requestId } as any);
+      const out = platformPrepared
+        ? await this.signAndBroadcast(customer, agent.keyId, agent.customerId, { ...transfer, token: token.symbol, idempotencyKey: requestId })
+        : { ...(await this.keys.sendToken(customer, agent.keyId, { ...transfer, token: token.symbol, idempotencyKey: requestId } as any)), broadcast: false };
       await this.agents.settle(agent, reservation.spendId, { txHash: out.transaction_hash });
       return { ...out, agent: { agentId: agent.agentId, valueZar: reservation.valueZar, remaining24hZar: reservation.remaining24hZar } };
     } catch (err) {
       await this.agents.settle(agent, reservation.spendId, { failed: (err as Error).message.slice(0, 500) });
       throw err;
     }
+  }
+
+  // Nonce and fees read from the chain under the key's nonce lock, signed through the
+  // ordinary token route (registry, policy, Travel Rule, threshold signature), then
+  // broadcast before the lock is released.
+  private async signAndBroadcast(customer: any, keyId: string, customerId: string, transfer: Record<string, any>) {
+    const key = await this.keys.getKey(keyId, customerId);
+    if (!key?.address) throw new BadRequestException(`key ${keyId} has no address yet`);
+    const provider = this.rpc.provider(transfer.chainId);
+    return withEvmNonceLock(this.pool, transfer.chainId, key.address, async () => {
+      const [nonce, fee] = await Promise.all([provider.getTransactionCount(key.address, 'pending'), provider.getFeeData()]);
+      const fees = transfer.gasPrice || transfer.maxFeePerGas
+        ? {}
+        : fee.maxFeePerGas != null && fee.maxPriorityFeePerGas != null
+          ? { maxFeePerGas: fee.maxFeePerGas.toString(), maxPriorityFeePerGas: fee.maxPriorityFeePerGas.toString() }
+          : { gasPrice: (fee.gasPrice ?? 0n).toString() };
+      const signed = await this.keys.sendToken(customer, keyId, { ...transfer, ...fees, nonce } as any);
+      const sent = await provider.broadcastTransaction(signed.raw_transaction);
+      return { ...signed, transaction_hash: sent.hash, broadcast: true };
+    });
   }
 }

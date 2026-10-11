@@ -107,7 +107,8 @@ describe('agents with budgets (live Postgres)', () => {
     const tokens = {
       requireTransactable: jest.fn(async (_chain: number, sym: string) => TOKENS[sym.toUpperCase()]),
     } as unknown as TokenRegistryService;
-    return new AgentController(agents, keys, customers, tokens);
+    const rpc = { configured: () => false } as any;
+    return new AgentController(agents, keys, customers, tokens, rpc);
   }
 
   async function newAgent(over: Partial<Parameters<AgentsService['create']>[0]> = {}) {
@@ -250,5 +251,26 @@ describe('agents with budgets (live Postgres)', () => {
     await expect(newAgent({ keyId: randomUUID() })).rejects.toThrow(/not an active key/);
     await expect(newAgent({ perTransferLimitZar: 20000 })).rejects.toThrow(/per-transfer limit no more than/);
     await expect(newAgent({ expiresInDays: 0 })).rejects.toThrow(/expiresInDays/);
+  });
+
+  it('an agent sees its own history and one payment by request id, and nobody else\'s', async () => {
+    if (skipped()) return;
+    const { agent } = await newAgent();
+    const { agent: other } = await newAgent({ name: 'other bot' });
+    await pay(agent, '100', { idempotencyKey: 'inv-2001' });
+    await pay(agent, '9000').catch(() => undefined); // over the per-transfer limit: refused
+    await pay(other, '50', { idempotencyKey: 'inv-other' });
+
+    const c = controller();
+    const mine = (await c.history({ agent, headers: {} } as any)).transfers;
+    expect(mine.map((t: any) => t.status).sort()).toEqual(['refused', 'spent']);
+    expect(mine.every((t: any) => t.requestId !== 'inv-other')).toBe(true);
+
+    const one = await c.status({ agent, headers: {} } as any, 'inv-2001');
+    expect(one.status).toBe('spent');
+    expect(one.txHash).toMatch(/^0x/);
+    expect(one.onChain).toBeNull(); // no chain id given, no RPC configured
+
+    await expect(c.status({ agent, headers: {} } as any, 'inv-other')).rejects.toThrow(/no payment/);
   });
 });

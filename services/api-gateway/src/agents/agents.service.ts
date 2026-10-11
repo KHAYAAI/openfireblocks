@@ -54,6 +54,37 @@ function toAgent(row: Record<string, any>): Agent {
   };
 }
 
+// One line of an agent's history, as the agent itself may see it.
+export interface AgentSpend {
+  requestId: string;
+  token: string;
+  recipient: string;
+  amountBaseUnits: string;
+  valueZar: number | null;
+  status: 'reserved' | 'spent' | 'released' | 'refused';
+  reason: string | null;
+  purpose: string | null;
+  txHash: string | null;
+  createdAt: string;
+  settledAt: string | null;
+}
+
+function toSpend(row: Record<string, any>): AgentSpend {
+  return {
+    requestId: row.request_id,
+    token: row.token,
+    recipient: row.recipient,
+    amountBaseUnits: row.amount,
+    valueZar: row.value_zar == null ? null : Number(row.value_zar),
+    status: row.status,
+    reason: row.reason ?? null,
+    purpose: row.purpose ?? null,
+    txHash: row.tx_hash ?? null,
+    createdAt: new Date(row.created_at).toISOString(),
+    settledAt: row.settled_at ? new Date(row.settled_at).toISOString() : null,
+  };
+}
+
 const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 
 // Agents: credentials that can pay, and only pay, within limits.
@@ -201,6 +232,24 @@ export class AgentsService {
   }
 
   // ------------------------------------------------------------ agent side
+
+  // The agent's own recent history, newest first: payments, refusals and releases.
+  // Scoped to the agent, not the tenant: one agent cannot read another's record.
+  async spends(agent: Agent, limit = 20): Promise<AgentSpend[]> {
+    const n = Math.min(Math.max(Math.trunc(limit) || 20, 1), 100);
+    const r = await withTenant(this.pool, agent.customerId, (c) =>
+      c.query(`SELECT * FROM agent_spend WHERE agent_id = $1 ORDER BY created_at DESC LIMIT $2`, [agent.agentId, n]),
+    );
+    return r.rows.map(toSpend);
+  }
+
+  // One request of this agent's, by the request id it was given (or chose).
+  async spend(agent: Agent, requestId: string): Promise<AgentSpend | null> {
+    const r = await withTenant(this.pool, agent.customerId, (c) =>
+      c.query(`SELECT * FROM agent_spend WHERE agent_id = $1 AND request_id = $2 ORDER BY created_at DESC LIMIT 1`, [agent.agentId, requestId]),
+    );
+    return r.rows[0] ? toSpend(r.rows[0]) : null;
+  }
 
   // Resolves an agent key, before any tenant is known (hence the admin
   // pool, as for customers). Revoked or expired agents do not resolve.
