@@ -201,6 +201,27 @@ async function logEntry(p, kind, head, body, cls) {
     while (log.children.length > 5) log.removeChild(log.firstChild);
   }, [kind, head, body || '', cls || '']);
 }
+// Waits for a key ceremony while showing it is running: a live line in the log, updated from the
+// gateway's own status every two seconds.
+async function ceremony(p, label, apiKey, keyId) {
+  await p.evaluate((l) => {
+    const log = document.getElementById('rec-log'); if (!log) return;
+    const e = document.createElement('div'); e.className = 'ent'; e.id = 'rec-tick';
+    const H = document.createElement('div'); H.className = 'res w'; H.textContent = l; e.appendChild(H); log.appendChild(e);
+    while (log.children.length > 5) log.removeChild(log.firstChild);
+  }, `… ${label}: pending_dkg`);
+  const t0 = Date.now(); let k;
+  for (;;) {
+    k = (await L.call('GET', '/keys/' + keyId, { key: apiKey })).d;
+    const secs = Math.round((Date.now() - t0) / 1000);
+    await p.evaluate(([l]) => { const t = document.querySelector('#rec-tick div'); if (t) t.textContent = l; }, [`… ${label}: ${k.status}  ·  ${secs}s  ·  three parties exchanging ceremony messages`]);
+    if (!['pending', 'pending_dkg'].includes(k.status)) break;
+    if (Date.now() - t0 > 300000) throw new Error('ceremony did not finish: ' + JSON.stringify(k));
+    await sleep(2000);
+  }
+  await p.evaluate(() => document.getElementById('rec-tick')?.removeAttribute('id'));
+  return { key: { ...k, id: k.id || k.key_id || keyId }, seconds: Math.round((Date.now() - t0) / 1000) };
+}
 const short = (s, n = 10) => (typeof s === 'string' && s.length > n * 2 + 1 ? s.slice(0, n) + '…' + s.slice(-6) : s);
 const pretty = (o, max = 900) => { const t = JSON.stringify(o, null, 1).replace(/\n\s*/g, ' ').replace(/" (?=")/g, '"'); return t.length > max ? t.slice(0, max) + ' …' : t; };
 
@@ -484,8 +505,8 @@ await forge(\`/keys/\${key.id}/addresses\`);`);
     let r = await api(p, 'POST', '/keys', { key: API_KEY, body: { blockchain: 'ethereum', name: 'Payouts · Ethereum', threshold: 2, total_parties: 3 } }, (d) => ({ id: short(d.id, 8), status: d.status, threshold: d.threshold, total_parties: d.total_parties }));
     const newId = r.d.id;
     await caption(p, 'Key ceremony', 'Three parties exchange messages to create the key. Each ends with one share; the full private key is never assembled.');
-    const t0 = Date.now(); const { key } = await L.waitActive(API_KEY, newId);
-    await logEntry(p, 'res', `← status: active  ·  ceremony took ${Math.round((Date.now() - t0) / 1000)}s`, pretty({ address: key.address, threshold: '2 of 3' }));
+    const { key, seconds } = await ceremony(p, 'Payouts · Ethereum', API_KEY, newId);
+    await logEntry(p, 'res', `← status: active  ·  ceremony took ${seconds}s`, pretty({ address: key.address, threshold: '2 of 3' }));
     await wait(3000);
     await api(p, 'GET', `/keys/${newId}/addresses`, { key: API_KEY }, (d) => d.addresses || d);
     await caption(p, 'Deposit address', 'That address is where customers or a treasury send funds. It is derived from the key the three parties hold together.', 6000);
@@ -822,7 +843,7 @@ await forge(\`/keys/\${fundEth}/transfers\`, {
     await caption(p, 'Three ceremonies', 'Three key ceremonies run at once across the same three parties: two ECDSA, one EdDSA.');
     const t0 = Date.now();
     for (const [chain, id] of made) {
-      await L.waitActive(API_KEY, id);
+      await ceremony(p, `Fund I · ${chain}`, API_KEY, id);
       const a = await L.call('GET', `/keys/${id}/addresses`, { key: API_KEY });
       const pref = a.d?.addresses?.preferred || a.d?.address || '';
       await logEntry(p, 'res', `← ${chain}: active  ·  ${Math.round((Date.now() - t0) / 1000)}s`, `address ${pref}${chain === 'bitcoin' ? '   (derived; no Bitcoin node in this recording)' : chain === 'solana' ? '   (derived; Solana not used further here)' : ''}`);
