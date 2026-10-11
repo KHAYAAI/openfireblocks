@@ -157,8 +157,16 @@ for l in d['logs']:
 else:
     print('')")
 [[ "${transfer}" == "${BASE_UNITS}" ]] || fail "the token contract did not emit a Transfer of ${BASE_UNITS} (got '${transfer}')"
+# A public RPC can serve a block-behind node for a few seconds after mining, and a shared
+# address (the burn address) can receive other people's transfers meanwhile, so wait for the
+# balance to rise by at least the amount rather than reading it once and demanding equality.
 dest_after=$(token_balance "${DEST}")
-(( dest_after - dest_before == BASE_UNITS )) || fail "the recipient balance did not rise by ${BASE_UNITS}"
+for _ in $(seq 1 20); do
+  (( dest_after - dest_before >= BASE_UNITS )) && break
+  sleep 6
+  dest_after=$(token_balance "${DEST}")
+done
+(( dest_after - dest_before >= BASE_UNITS )) || fail "the recipient balance did not rise by at least ${BASE_UNITS} (before ${dest_before}, after ${dest_after})"
 
 {
   echo "ERC-20 stablecoin transfer accepted by a public chain"
