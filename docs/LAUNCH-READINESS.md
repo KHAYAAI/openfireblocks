@@ -59,6 +59,35 @@ through a pentest round, agent limits are denominated in rand only, and the reco
 audit, SOC 2 Type II, isolated hosts with HSM, live TRISA, a real custodian, legal/licensing and a capped mainnet
 run all remain.
 
+## Compliance and governance update, 2026-10-11 (evening)
+
+**Verdict unchanged.** Today's work moves the SOC 2 / ISO 27001 *preparation* forward. It does not
+change what the platform is cleared for.
+
+| Area | Result | Evidence |
+|---|---|---|
+| Access review in the product | **Built.** Controls > Access review (admins and auditors) lists every person, role, second factor, last sign-in, every AI agent and its limits, and the API key's age, and flags problems by severity. Sign-off needs a one-time code or a fresh SSO session; the server stores its own snapshot with a SHA-256, and the record cannot be changed or deleted (database trigger, row-level security) | 13 tests (8 unit, 5 against real Postgres) in CI; checked in a browser; 160 routes, all guarded (`docs/assurance/ROUTE-INVENTORY.md`) |
+| ISMS documentation (ISO 27001:2022) | **Drafted, not approved.** Scope, policy, risk register (24 risks), Statement of Applicability (all 93 controls), objectives, audit/review/corrective-action templates, 17 policies, record templates, tabletop and DR test scripts | `docs/compliance/isms/` |
+| Privacy (POPIA, PAIA, GDPR) | **Drafted for counsel.** RoPA, privacy notice, PAIA manual, DPA, DPIA (Travel Rule and agent payments), request procedure, Information Officer registration, cross-border clauses, outreach opt-out | `docs/compliance/isms/privacy/` |
+| Incident response plan | **Updated.** Freeze-first containment, 2-of-3 (it said 4-of-7), token revocation; POPIA s22 and GDPR 72-hour notification steps; contacts section (names to fill) | `docs/security/incident-response-plan.md` |
+| Account checks | **Built.** GitHub controls check (run against this repo); AWS baseline check (tested against a stub, **not yet run on the real account**); weekly evidence workflow | `scripts/compliance/`, `.github/workflows/compliance-evidence.yml`, `docs/evidence/2026-10-11-compliance-checks.md` |
+
+**New findings, found by those checks (all logged as corrective actions):**
+
+| Finding | Severity | Fix | Owner |
+|---|---|---|---|
+| The default branch (`claude/openfireblocks-mvp-plan-hvr6p1`) has **no branch protection**: anyone with write access can push, force-push or delete it | High | Rename to `main`; require pull request with review and CI; block force push and deletion; add CODEOWNERS | You (repo settings) |
+| **Dependabot alerts are disabled**; secret scanning status unknown | Medium | Turn on Dependabot alerts, secret scanning, push protection | You (repo settings) |
+| 39 third-party GitHub Actions not pinned to a commit, several on `@master`; 2 workflows without token permissions | Medium | Pin to SHAs; add `permissions: contents: read` | Engineering |
+| The repository is **public** while outreach and website copy say "source under NDA" | High (credibility) | Make it private, or change the wording everywhere | You |
+| **POPIA s69:** "data subject" includes companies, so emailing business addresses is still electronic direct marketing to non-customers, which needs consent (one approach to ask is allowed) | High (legal) | **Hold the follow-up drafts due 2026-10-16** until counsel confirms; treat first emails as the single consent request; keep an opt-out list | You + counsel |
+| Off-site backups have only run against an S3-compatible stand-in, never a real bucket | Medium | Turn on off-site backups to a real bucket in another account/region; record a DR test | Engineering |
+
+**Compliance timeline (from the Sprinto estimate, unchanged):** SOC 2 Type I about 2–3 months
+after signing a platform and approving the policies; ISO 27001 about 3–5 months; SOC 2 Type II
+about 6–8 months (needs a 3+ month observation window). The clock has not started: no platform
+is signed and no policy is approved.
+
 ## External pentest (Shannon, 2026-10-08) and remediation
 
 A real AI-driven penetration test (Shannon, by Keygraph) ran against the live
@@ -157,7 +186,13 @@ re-run the job three times and bisect only if it fails identically each time.
 | MPC parties on isolated hosts, `terraform apply`, hardware HSM | Separate hosts or accounts, credentials, HSM | You |
 | Live TRISA network | TRISA membership and certificates | You |
 | Custody against a real custodian | Custodian account | You |
-| Licensing, ToS, privacy policy, insurance, sanctions/KYC vendor | Legal and commercial work | You |
+| Licensing, ToS, privacy policy, insurance, sanctions/KYC vendor | Legal and commercial work; privacy notice, PAIA manual and DPA are drafted in `docs/compliance/isms/privacy/` for counsel | You |
+| Protect the default branch, enable Dependabot alerts and secret scanning | Repository admin settings (CA-003, CA-004) | You |
+| Decide repository visibility vs "source under NDA" | A decision, then aligned wording (R-21, CA-002) | You |
+| POPIA s69 position on outreach before the 2026-10-16 follow-ups | Counsel | You |
+| Sign Sprinto (or similar); approve policies; name ISMS owner, Information Officer, incident lead | Founder decisions and signatures | You |
+| Register the Information Officer; publish privacy notice and PAIA manual | Information Regulator portal; counsel review | You |
+| AWS baseline on the real account | Re-authorise the AWS connector, or set `AWS_AUDIT_ROLE_ARN` (SecurityAudit role) | You |
 
 ## Commercial and assurance outreach (started 2026-10-09)
 
@@ -165,7 +200,7 @@ Sent 14 emails on 2026-10-09 from TKM@myforgepay.com: 9 to government and regula
 innovation offices (SARB Fintech Unit, Mauritius FSC and Bank of Mauritius, Nigeria SEC, Bank of
 Ghana, Rwanda CMA, Seychelles FSA, Bank of Namibia, Bank of Tanzania), 3 to fintechs (Peach
 Payments, Ozow, Chipper Cash), 1 to Trail of Bits (cryptographic audit screening) and 1 to the Bank
-of England Digital Securities Sandbox. Follow-up drafts sit in Gmail for 2026-10-16. Form-based
+of England Digital Securities Sandbox. Follow-up drafts sit in Gmail for 2026-10-16. **Hold them until counsel confirms the POPIA s69 position** (see the compliance update above). Form-based
 outreach (VALR, OVEX, Luno, Yellow Card, Cross River Bank, plus pentest and SOC 2 firms) is
 prepared but not yet submitted. No replies yet. Details and tracker: `docs/pilot/OUTREACH-BATCH-1.md`,
 `docs/pilot/FORM-TEXTS-BATCH-2.md`, `docs/pilot/NAMED-CONTACTS.md`.
@@ -206,11 +241,13 @@ Competitive note: Absa launched a bank-led digital-asset custody service (with R
 
 ## Not proven anywhere
 
-A real public chain, the TRISA link on the live network, the custody
+Any mainnet transfer, the TRISA link on the live network, the custody
 executor against anything but a stand-in, Stripe with a real key, signing
-parties on isolated hosts, and an independent human-led pentest or
-cryptographic audit. The token contract is unaudited. (A real cluster with
-public HTTPS, and a real external AI-driven pentest with its findings fixed,
+parties on isolated hosts, off-site backups to a real bucket, AI-agent payments
+on a public network, the AWS baseline on the real account, and an independent
+human-led pentest or cryptographic audit. The token contract is unaudited.
+(A real cluster with public HTTPS, a real external AI-driven pentest with its
+findings fixed, and transfers accepted by public **test** networks on four chains
 are no longer on this list.)
 
 ## Critical path
@@ -221,6 +258,8 @@ are no longer on this list.)
 3. Follow up the audit, pen-test and SOC 2 outreach on 2026-10-16 and engage a firm in each
    category (the Shannon run does not substitute for the human test).
 4. Pick the SOC 2 firm and start the 6-12 month observation window.
-5. Run Solana devnet and Stripe test mode on the existing AWS deployment.
+5. Done: Solana devnet (and Sepolia, Osmosis, Bitcoin testnet4). Still to do: Stripe test mode.
 6. Stand up isolated-host MPC parties and a hardware HSM.
-7. Close `LAUNCH-CHECKLIST.md` section 1, then re-assess.
+7. Protect the default branch and turn on Dependabot and secret scanning (this week; minutes of work).
+8. Sign a compliance platform, approve the policy pack, name the roles; start the SOC 2 window.
+9. Close `LAUNCH-CHECKLIST.md` section 1, then re-assess.
