@@ -208,7 +208,7 @@ jobs:
               -d '{"jsonrpc":"2.0","id":1,"method":"eth_chainId"}' http://127.0.0.1:18545 && break
             sleep 1
           done
-      - name: Approvals, Travel Rule, agents and reconciliation over real Postgres
+      - name: Approvals, Travel Rule, agents, reconciliation and access reviews over real Postgres
         working-directory: services/api-gateway
         env:
           REQUIRE_LIVE_DB: "1"
@@ -219,7 +219,7 @@ jobs:
           RECON_EVM_RPC: http://127.0.0.1:18545
         run: |
           npm ci
-          npx jest src/approvals src/travel-rule src/agents src/reconciliation src/transfers src/controls src/identity src/keys src/sweeps src/custody src/tokenisation
+          npx jest src/approvals src/travel-rule src/agents src/reconciliation src/transfers src/controls src/identity src/keys src/sweeps src/custody src/tokenisation src/access-review
 
   gateway:
     name: API gateway

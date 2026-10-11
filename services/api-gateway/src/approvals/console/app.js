@@ -228,6 +228,7 @@
       { id: 'policy', label: 'Approval policy' },
       { id: 'safety', label: 'Safety controls' },
       { id: 'people', label: 'People' },
+      { id: 'access-review', label: 'Access review', roles: ['admin', 'auditor'] },
     ] },
     { label: 'Compliance', items: [
       { id: 'travel-rule', label: 'Travel Rule' },
@@ -272,7 +273,7 @@
     var r = OFB.state.route;
     var content = document.getElementById('content');
     var topTitle = document.getElementById('topTitle');
-    var known = ['overview', 'keys', 'transactions', 'agents', 'approvals', 'policy', 'people', 'travel-rule', 'reconciliation', 'compliance', 'webhooks', 'billing', 'safety'];
+    var known = ['overview', 'keys', 'transactions', 'agents', 'approvals', 'policy', 'people', 'travel-rule', 'reconciliation', 'compliance', 'webhooks', 'billing', 'safety', 'access-review'];
     if (known.indexOf(r.view) === -1) { navigate('overview'); return; }
     topTitle.textContent = titleFor(r.view);
     document.querySelectorAll('.navitem').forEach(function (b) {

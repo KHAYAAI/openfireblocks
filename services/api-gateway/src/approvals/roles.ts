@@ -31,6 +31,9 @@ export const CAN_READ_APPROVALS: readonly TenantRole[] = ['admin', 'approver', '
 export const CAN_DECIDE: readonly TenantRole[] = ['admin', 'approver'];
 export const CAN_INITIATE: readonly TenantRole[] = ['admin', 'operator', 'user'];
 export const CAN_MANAGE: readonly TenantRole[] = ['admin'];
+// Who reviews and signs off who has access. An admin, or the read-only auditor: an independent
+// reviewer is the stronger control, since an admin reviewing their own grants is reviewing themselves.
+export const CAN_REVIEW_ACCESS: readonly TenantRole[] = ['admin', 'auditor'];
 // Who sees and changes how the organisation pays. Billing is not custody:
 // a billing admin can add a card but cannot see keys or start transfers.
 export const CAN_BILL: readonly TenantRole[] = ['admin', 'billing_admin'];

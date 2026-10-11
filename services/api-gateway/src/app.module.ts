@@ -16,6 +16,7 @@ import { TokensModule } from './tokens/tokens.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { ApprovalsModule } from './approvals/approvals.module';
 import { AgentsModule } from './agents/agents.module';
+import { AccessReviewModule } from './access-review/access-review.module';
 import { ReconciliationModule } from './reconciliation/reconciliation.module';
 import { TransfersModule } from './transfers/transfers.module';
 import { ControlsModule } from './controls/controls.module';
@@ -48,6 +49,7 @@ import { TokenisationModule } from './tokenisation/tokenisation.module';
     DashboardModule,
     ApprovalsModule,
     AgentsModule,
+    AccessReviewModule,
     ReconciliationModule,
     TransfersModule,
     ControlsModule,

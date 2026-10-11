@@ -211,6 +211,10 @@ a { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }
 .tag.pending, .tag.recent, .tag.awaiting_transmission, .tag.reserved { background: var(--warn-wash); color: var(--warn); }
 .tag.approved, .tag.confirmed, .tag.transmitted, .tag.spent, .tag.active, .tag.ok, .tag.not_applicable_unhosted { background: var(--ok-wash); color: var(--ok); }
 .tag.rejected, .tag.expired, .tag.failed, .tag.missing, .tag.mismatch, .tag.unsigned_outbound, .tag.revoked, .tag.critical, .tag.released, .tag.refused { background: var(--critical-wash); color: var(--critical); }
+.tag.high, .tag.changes_required, .tag.suspended, .tag.inactive { background: var(--critical-wash); color: var(--critical); }
+.tag.medium, .tag.changes_made { background: var(--warn-wash); color: var(--warn); }
+.tag.no_changes { background: var(--ok-wash); color: var(--ok); }
+.tag.low { background: var(--accent-wash); color: var(--muted, var(--accent)); }
 .tag.info { background: var(--accent-wash); color: var(--accent); }
 
 .tabs { display: flex; gap: 4px; flex-wrap: wrap; margin: 2px 0 16px; border-bottom: 1px solid var(--line); }

@@ -1270,6 +1270,111 @@
     });
   }
 
+  // ------------------------------------------------------------- access review
+
+  // A quarterly look at who can do what, signed off with a fresh code. The server takes the
+  // snapshot at the moment of signing, so what is stored is what was true, not what the page showed.
+  var reviewFlash = null; // shown once on the review page reached right after signing
+  var OUTCOME_LABELS = { no_changes: 'No changes needed', changes_made: 'Changes made', changes_required: 'Changes required' };
+
+  // Cells are strings (set as text) or elements.
+  function cells(values) {
+    return el('tr', null, values.map(function (v) { return typeof v === 'string' ? el('td', { text: v }) : el('td', null, [v]); }));
+  }
+  function findingRow(f) {
+    return cells([tag(f.severity), f.subject, f.detail]);
+  }
+
+  function reviewSignOff(content) {
+    var sso = isSsoProvider(O.state.me.authProvider);
+    if (!sso && !O.state.me.mfaEnabled) return notice('Turn on two-factor authentication before signing off an access review.', 'error');
+    var outcome = el('select', { id: 'ar-outcome' }, Object.keys(OUTCOME_LABELS).map(function (k) { return el('option', { value: k, text: OUTCOME_LABELS[k] }); }));
+    var notes = el('textarea', { rows: '3', id: 'ar-notes', maxlength: '4000', placeholder: 'What you changed, or what must change and by when. Required unless no changes are needed.' });
+    var code = sso ? null : el('input', { inputmode: 'numeric', autocomplete: 'one-time-code', pattern: '[0-9]{6}', maxlength: '6', id: 'ar-totp' });
+    var status = el('div');
+    var btn = el('button', { type: 'button', text: 'Sign off review', onclick: function () {
+      if (outcome.value !== 'no_changes' && !notes.value.trim()) return status.replaceChildren(notice('Say what was changed, or what needs changing.', 'error'));
+      if (code && !/^\d{6}$/.test(code.value)) return status.replaceChildren(notice('Enter the six-digit code from your authenticator.', 'error'));
+      btn.disabled = true;
+      var body = { outcome: outcome.value };
+      if (notes.value.trim()) body.notes = notes.value.trim();
+      if (code) body.totpCode = code.value;
+      api('POST', orgPath('/access-reviews'), body).then(function (r) {
+        if (r.ok) {
+          reviewFlash = 'Review recorded. Snapshot fingerprint ' + r.body.snapshotSha256.slice(0, 16) + '…';
+          return O.navigate('access-review', r.body.reviewId);
+        }
+        btn.disabled = false; if (code) code.value = '';
+        status.replaceChildren(notice(errorText(r), 'error'));
+      });
+    } });
+    return el('div', { className: 'card' }, [
+      el('h2', { text: 'Sign off' }),
+      el('p', { className: 'muted', text: 'Check each person and agent above still needs the access they have. Fix what you can in People and Agents first, then sign.' }),
+      el('label', { for: 'ar-outcome', text: 'Outcome' }), outcome,
+      el('label', { for: 'ar-notes', text: 'Notes' }), notes,
+      code ? el('label', { for: 'ar-totp', text: 'Code from your authenticator app' }) : null, code,
+      el('div', { className: 'actions' }, [btn]),
+      status,
+    ]);
+  }
+
+  function snapshotCards(s, findings) {
+    var members = sheet(['Person', 'Role', 'Sign-in', 'Second factor', 'Last signed in', 'Status'], s.members.map(function (m) {
+      return cells([m.fullName + ' (' + m.email + ')', m.role, isSsoProvider(m.authProvider) ? 'single sign-on' : 'password',
+        isSsoProvider(m.authProvider) ? 'at identity provider' : (m.mfaEnabled ? 'on' : 'off'),
+        m.lastLoginAt ? fmtDate(m.lastLoginAt) : 'never', tag(m.status)]);
+    }));
+    var agentsSheet = s.agents.length ? sheet(['Agent', 'Status', 'Recipients', 'Per transfer', 'Daily', 'Expires'], s.agents.map(function (a) {
+      return cells([a.name, tag(a.status), a.allowedRecipients === null ? 'any' : String(a.allowedRecipients), fmtZar(a.perTransferLimitZar), fmtZar(a.dailyLimitZar), fmtDate(a.expiresAt)]);
+    })) : empty('No AI agents.');
+    return [
+      el('div', { className: 'card' }, [el('h2', { text: 'Needs a look (' + findings.length + ')' }),
+        findings.length ? sheet(['Severity', 'Subject', 'Finding'], findings.map(findingRow)) : empty('Nothing stands out.')]),
+      el('div', { className: 'card' }, [el('h2', { text: 'People with access (' + s.members.length + ')' }), members]),
+      el('div', { className: 'card' }, [el('h2', { text: 'AI agents (' + s.agents.length + ')' }), agentsSheet]),
+      el('div', { className: 'card' }, [el('h2', { text: 'Organisation API key' }), el('dl', { className: 'facts' }, [
+        el('dt', { text: 'Last rotated' }), el('dd', { text: fmtDate(s.apiKey.rotatedAt || s.apiKey.createdAt) }),
+        el('dt', { text: 'Expires' }), el('dd', { text: s.apiKey.expiresAt ? fmtDate(s.apiKey.expiresAt) : 'never' }),
+      ])]),
+    ];
+  }
+
+  function accessReviewCurrent(content) {
+    Promise.all([api('GET', orgPath('/access-review')), api('GET', orgPath('/access-reviews?limit=20'))]).then(function (rs) {
+      var r = rs[0], h = rs[1];
+      if (!r.ok) return failed(content, r);
+      var s = r.body.snapshot, prev = s.previousReview;
+      var history = h.ok && h.body.length ? sheet(['When', 'Reviewer', 'Outcome', 'Findings'], h.body.map(function (x) {
+        return cells([el('a', { href: '#/access-review/' + encodeURIComponent(x.reviewId), text: fmtDate(x.createdAt) }), x.reviewerEmail + ' (' + x.reviewerRole + ')', tag(x.outcome, OUTCOME_LABELS[x.outcome]), String((x.findings || []).length)]);
+      })) : empty('No reviews recorded yet.');
+      replace(content, [
+        notice(prev ? 'Last reviewed ' + relative(prev.at) + ' by ' + prev.by + '. Reviews are due every quarter.' : 'This organisation has not recorded an access review. Reviews are due every quarter.', prev ? null : 'error'),
+      ].concat(snapshotCards(s, r.body.findings), [reviewSignOff(content), el('div', { className: 'card' }, [el('h2', { text: 'Past reviews' }), history])]));
+    });
+  }
+
+  function accessReviewDetail(reviewId, content) {
+    var flash = reviewFlash; reviewFlash = null;
+    api('GET', orgPath('/access-reviews/' + encodeURIComponent(reviewId))).then(function (r) {
+      if (!r.ok) return failed(content, r);
+      var x = r.body;
+      replace(content, [
+        el('button', { type: 'button', className: 'ghost sm', text: '← Access review', onclick: function () { O.navigate('access-review'); } }),
+        el('div', { className: 'row', style: 'margin:12px 0 14px' }, [el('h1', { style: 'font-size:19px', text: 'Access review ' + fmtDate(x.createdAt) }), tag(x.outcome, OUTCOME_LABELS[x.outcome])]),
+        flash ? notice(flash, 'ok') : null,
+        el('div', { className: 'card' }, [el('dl', { className: 'facts' }, [
+          el('dt', { text: 'Signed by' }), el('dd', { text: x.reviewerEmail + ' (' + x.reviewerRole + ')' }),
+          el('dt', { text: 'Verified by' }), el('dd', { text: x.verifiedBy === 'sso' ? 'single sign-on' : 'one-time code' }),
+          el('dt', { text: 'Notes' }), el('dd', { text: x.notes || '—' }),
+          el('dt', { text: 'Snapshot SHA-256' }), el('dd', { className: 'mono', style: 'word-break:break-all', text: x.snapshotSha256 }),
+        ])]),
+      ].concat(x.snapshot ? snapshotCards(x.snapshot, x.findings || []) : []));
+    });
+  }
+
+  function accessReview(id, content) { loading(content); if (id) accessReviewDetail(id, content); else accessReviewCurrent(content); }
+
   // ----------------------------------------------------------------------- export
 
   window.OFBViews = {
@@ -1286,5 +1391,6 @@
     webhooks: webhooks,
     billing: billing,
     safety: safety,
+    accessReview: accessReview,
   };
 })();
