@@ -33,3 +33,5 @@ coverage/
 # docs/evidence/, which holds curated, written-up proof (smoke test runs,
 # etc.) that belongs in the repo.
 /evidence/
+
+__pycache__/
