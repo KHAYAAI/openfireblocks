@@ -53,7 +53,7 @@ today. "Planned" lists treatment not yet done.
 | R-04 | Policy bypass: a transfer evades limits or the whitelist (for example via token calldata) | Eng lead | 3×4 | Calldata decoded before policy (MISC-01 fix); fail-closed policy and velocity; whitelist; sanctions screening | 1×4 | **Low** | Pentest round 3 to cover new routes | Next pentest |
 | R-05 | Tenant data leaks to another tenant | Eng lead | 3×4 | Postgres row-level security on every tenant table; tenant role guard; CI isolation tests; route inventory | 1×4 | **Low** | — | — |
 | R-06 | Compromise of a developer laptop leads to code or credential theft | ISMS owner | 3×4 | [Unknown: depends on laptop settings] | 3×4 | **High** | Sprinto agent: disk encryption, screen lock, updates, anti-malware, password manager (`policies/ENDPOINT-AND-REMOTE-WORK.md`) | Month 1 |
-| R-07 | Compromise of a GitHub account or a malicious change merged to the release branch | Eng lead | 3×5 | CI checks; signed images (cosign) and SBOM defined | 3×5 | **High** | Branch protection with required review, MFA enforced, CODEOWNERS, signed releases from a protected branch; `scripts/compliance/github-controls-check.sh` | Month 1 |
+| R-07 | Compromise of a GitHub account or a malicious change merged to the release branch | Eng lead | 3×5 | CI checks; signed images (cosign) and SBOM defined | 3×5 | **High** | Branch protection with required review, MFA enforced, signed releases from a protected branch (CODEOWNERS and pinned actions done 2026-10-12); `scripts/compliance/github-controls-check.sh` | Month 1 |
 | R-08 | Compromise of the AWS account (root or IAM keys) | Eng lead | 3×4 | Security group limited to one IP; WAF resources defined | 3×4 | **High** | Root MFA, no root keys, IAM users with MFA or SSO, CloudTrail, GuardDuty; `scripts/compliance/aws-baseline-check.sh` | Month 1 |
 | R-09 | Supply-chain attack through a dependency or base image | Eng lead | 3×4 | Dependency audit gate, `govulncheck`, pinned digests, SBOM, accepted-vulnerability register | 2×4 | **Medium** | Dependabot and secret scanning on; signing on a real registry | Month 2 |
 | R-10 | Loss of the database or its backups means loss of approval and transfer records | Eng lead | 2×4 | Daily backups; restore drills; off-site encrypted copy built but not yet run against a real bucket | 2×4 | **Medium** | Turn on off-site backups to a real bucket in another account/region; yearly DR test with record (`exercises/DR-TEST.md`) | Month 2 |
@@ -67,14 +67,14 @@ today. "Planned" lists treatment not yet done.
 | R-18 | A vendor (AWS, GitHub, Google) has an outage or breach | ISMS owner | 3×3 | Off-site backups; code in git (distributed) | 2×3 | **Medium** | Vendor register with SOC reports; exit notes for critical vendors | Month 2 |
 | R-19 | Conflicting roles held by one person (small team) | CEO | 4×3 | Product-level controls do not depend on staff separation | 4×2 | **Medium** | Accept, with compensating control: an external reviewer for internal audit; CEO reviews logs of privileged actions quarterly | Accept, review yearly |
 | R-20 | Denial of service against a hosted endpoint | Eng lead | 3×2 | Rate limiting, HPA, WAF resources | 2×2 | **Low** | Attach WAF when an ALB is used | When hosting |
-| R-21 | Source code is public while sales and compliance material says "source under NDA" | CEO | 5×3 | — | 5×3 | **High** | Decide: make the repository private, or change the wording everywhere. Public code is not a security weakness if no secrets are in it, but the contradiction misleads customers | **Now** |
+| R-21 | Source code is public; sales material said "source under NDA" | CEO | 5×3 | 2026-10-12: decided to stay public; NDA claims removed from all outward material; secret scan clean; nothing above *Public* may be committed (classification policy §2) | 1×2 | **Low** | Keep the scan in the weekly evidence (GitHub secret scanning once enabled) | Closed 2026-10-12 |
 | R-22 | Secrets committed to the repository | Eng lead | 3×4 | Secrets by reference; `.gitignore`; review | 2×4 | **Medium** | GitHub secret scanning and push protection; rotate anything ever exposed | Month 1 |
 | R-23 | Regulatory change (FSCA CASP, FIC, MiCA, DORA) makes the product or the company non-compliant | CEO | 3×3 | Legal register; Travel Rule built in | 2×3 | **Medium** | Counsel review once a year | Yearly |
 | R-24 | Chain-level events (reorganisation, fee spikes, RPC failure) cause failed or double transfers | Eng lead | 3×3 | Idempotency, one transfer at a time per key, reconciliation against the chain, confirmations | 2×3 | **Medium** | Run own nodes for production chains | Production |
 
 ## 3. Risk treatment plan summary
 
-High residual risks that must be treated first: **R-21** (now), **R-06, R-07, R-08** (month 1,
+High residual risks that must be treated first: **R-06, R-07, R-08** (month 1,
 mostly settings found by the check scripts and Sprinto), **R-16** (month 3).
 
 ## 4. Acceptance

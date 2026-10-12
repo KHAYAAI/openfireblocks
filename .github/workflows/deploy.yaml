@@ -5,6 +5,10 @@ on:
     branches:
       - main
 
+# Least privilege by default; jobs that need more ask for it themselves.
+permissions:
+  contents: read
+
 jobs:
   security-scan:
     name: Security Scanning
@@ -13,19 +17,19 @@ jobs:
       - uses: actions/checkout@v4
       
       - name: Run Snyk Vulnerability Scan
-        uses: snyk/actions/golang@master
+        uses: snyk/actions/golang@11b673cfb4b0dc0d860a1323caa199d54950dcce # master as of 2026-10-12
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
       
       - name: Run SAST (Semgrep)
-        uses: returntocorp/semgrep-action@v1
+        uses: returntocorp/semgrep-action@713efdd345f3035192eaa63f56867b88e63e4e5d # v1
         with:
           config: >-
             p/owasp-top-ten
             p/security-audit
       
       - name: Check secrets
-        uses: gitleaks/gitleaks-action@v2
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -71,7 +75,7 @@ jobs:
           REDIS_URL: redis://localhost:6379
       
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v3
+        uses: codecov/codecov-action@ab904c41d6ece82784817410c45d8b8c02684457 # v3
         with:
           files: ./coverage.out
 
@@ -107,16 +111,16 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
+        uses: docker/setup-buildx-action@885d1462b80bc1c1c7f0b00334ad271f09369c55 # v2
 
       - name: Login to ECR
-        uses: aws-actions/amazon-ecr-login@v1
+        uses: aws-actions/amazon-ecr-login@5a88a04c91d5c6f97aae0d9be790e64d9b1d47b7 # v1
         with:
           registry-type: public
 
       - name: Build and push ${{ matrix.service }}
         id: push
-        uses: docker/build-push-action@v4
+        uses: docker/build-push-action@0a97817b6ade9f46837855d676c4cca3a2471fc9 # v4
         with:
           context: ./services/${{ matrix.service }}
           file: ./services/${{ matrix.service }}/Dockerfile
@@ -134,13 +138,13 @@ jobs:
       # customer (or the deploy job below) can then check that an image came
       # from this repository's workflow and read its bill of materials. See
       # docs/security/SUPPLY-CHAIN.md. Never run against a real registry yet.
-      - uses: sigstore/cosign-installer@v3
+      - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
 
       - name: Sign ${{ matrix.service }} by digest (keyless)
         run: cosign sign --yes "${{ secrets.ECR_REGISTRY }}/${{ matrix.service }}@${{ steps.push.outputs.digest }}"
 
       - name: Software bill of materials for ${{ matrix.service }}
-        uses: anchore/sbom-action@v0
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
         with:
           image: ${{ secrets.ECR_REGISTRY }}/${{ matrix.service }}@${{ steps.push.outputs.digest }}
           format: spdx-json
@@ -170,15 +174,18 @@ jobs:
     name: Deploy to Staging
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write  # role-to-assume via GitHub OIDC
     environment:
       name: staging
       url: https://staging.openfireblocks.io
     steps:
       - uses: actions/checkout@v4
 
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4
 
-      - uses: sigstore/cosign-installer@v3
+      - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
 
       # Deploy only images this repository's deploy workflow signed. A tag
       # someone pushed by hand, or an image from another pipeline, fails here.
@@ -197,7 +204,7 @@ jobs:
             --set imageRegistry=${{ secrets.ECR_REGISTRY }} --set imageTag=${{ github.sha }} > /dev/null
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v2
+        uses: aws-actions/configure-aws-credentials@5fd3084fc36e372ff1fff382a39b10d03659f355 # v2
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN_STAGING }}
           aws-region: us-east-1
@@ -226,6 +233,9 @@ jobs:
     name: Deploy to Production
     needs: deploy-staging
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write  # role-to-assume via GitHub OIDC
     # The environment's required reviewers are the production approval gate.
     environment:
       name: production
@@ -233,10 +243,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v2
+        uses: aws-actions/configure-aws-credentials@5fd3084fc36e372ff1fff382a39b10d03659f355 # v2
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN_PRODUCTION }}
           aws-region: us-east-1
@@ -259,7 +269,7 @@ jobs:
 
       - name: Send deployment notification
         if: success()
-        uses: slackapi/slack-github-action@v1.24.0
+        uses: slackapi/slack-github-action@e28cf165c92ffef168d23c5c9000cffc8a25e117 # v1.24.0
         with:
           webhook-url: ${{ secrets.SLACK_WEBHOOK }}
           payload: |
@@ -271,6 +281,9 @@ jobs:
     name: Post-Deployment Validation
     needs: deploy-production
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write  # opens an incident issue on failure
     steps:
       - uses: actions/checkout@v4
       

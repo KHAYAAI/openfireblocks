@@ -321,7 +321,7 @@ Fifteen minutes, in this order:
    completing a DKG, send a stablecoin, show the transaction on chain,
    show the policy engine refusing one over the limit.
 4. **"The private key is never assembled. Here is the code that proves
-   it."** Offer source access under NDA. This is what ELv2 buys you and
+   it."** Point them at the source: it is open for review. This is what ELv2 buys you and
    what a SaaS competitor cannot offer at all.
 5. **What is not built.** Volunteered, not extracted.
 6. **The design-partner offer**, with a date.

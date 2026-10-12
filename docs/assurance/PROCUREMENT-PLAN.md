@@ -79,7 +79,7 @@ three quotes. No figure is given here on purpose: a number in a repository is re
 >
 > Before we send the brief: could you name a threshold-signature implementation you have
 > reviewed, and a class of protocol-level finding you made in one? We will then send the
-> scope (AUDIT-READINESS.md and an addendum), repository access under NDA, and the evidence we
+> scope (AUDIT-READINESS.md and an addendum), repository access (the repository is public; scope documents and evidence shared directly), and the evidence we
 > have already produced, and ask for a quote, an estimated start date and duration, whether a
 > re-review window is included, and a sample redacted report.
 

@@ -1,0 +1,30 @@
+# Who must review changes to the parts of the platform that move or protect money.
+# GitHub asks these owners to review pull requests touching the paths below. To make it
+# binding, turn on "Require review from Code Owners" in the branch ruleset, but only once
+# a second person can review: GitHub never lets an author approve their own pull request.
+# (docs/compliance/isms/policies/SECURE-DEVELOPMENT.md; risk R-19)
+
+*                                         @KHAYAAI
+
+# Signing, keys and threshold parties
+/services/mpc-signer/                     @KHAYAAI
+/services/mpc-party/                      @KHAYAAI
+/services/vault-unseal/                   @KHAYAAI
+/services/vault-pki-init/                 @KHAYAAI
+
+# Approvals, policy, controls, agents, access review
+/services/api-gateway/src/approvals/      @KHAYAAI
+/services/api-gateway/src/controls/       @KHAYAAI
+/services/api-gateway/src/agents/         @KHAYAAI
+/services/api-gateway/src/access-review/  @KHAYAAI
+/services/api-gateway/src/identity/       @KHAYAAI
+/services/policy-service/                 @KHAYAAI
+/services/mcp-server/                     @KHAYAAI
+
+# Database rules (RLS, immutability triggers) and infrastructure
+/infrastructure/database/migrations/      @KHAYAAI
+/infrastructure/helm/                     @KHAYAAI
+/infrastructure/terraform/                @KHAYAAI
+
+# The pipeline itself, and this file
+/.github/                                 @KHAYAAI

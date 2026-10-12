@@ -47,7 +47,7 @@ What changed today, with the evidence for each (all in `docs/evidence/`):
 
 Wording to use externally: "accepted by public test networks" for Bitcoin, Ethereum, Solana, Cosmos and test
 stablecoins; "registered and verified on-chain" for OUSD; for AI agents, "AI agents can pay through MCP within
-limits a person sets, proven end to end on a local development chain". Do **not** say mainnet, production-ready,
+limits a person sets, proven end to end on a local development chain". Do **not** say "source under NDA" (the repository is public; say "the source code is open for review"), mainnet, production-ready,
 independently audited, that OUSD / ZARP / ZARC transfers are proven, or that agent payments run on a public network.
 
 Known limits and open items: EUR ceilings (900,000 global, 90,000 pro, 9,000 free) were chosen by engineering and
@@ -72,16 +72,18 @@ change what the platform is cleared for.
 | Incident response plan | **Updated.** Freeze-first containment, 2-of-3 (it said 4-of-7), token revocation; POPIA s22 and GDPR 72-hour notification steps; contacts section (names to fill) | `docs/security/incident-response-plan.md` |
 | Account checks | **Built.** GitHub controls check (run against this repo); AWS baseline check (tested against a stub, **not yet run on the real account**); weekly evidence workflow | `scripts/compliance/`, `.github/workflows/compliance-evidence.yml`, `docs/evidence/2026-10-11-compliance-checks.md` |
 
-**New findings, found by those checks (all logged as corrective actions):**
+**Findings from those checks, and where they stand (2026-10-12):**
 
-| Finding | Severity | Fix | Owner |
-|---|---|---|---|
-| The default branch (`claude/openfireblocks-mvp-plan-hvr6p1`) has **no branch protection**: anyone with write access can push, force-push or delete it | High | Rename to `main`; require pull request with review and CI; block force push and deletion; add CODEOWNERS | You (repo settings) |
-| **Dependabot alerts are disabled**; secret scanning status unknown | Medium | Turn on Dependabot alerts, secret scanning, push protection | You (repo settings) |
-| 39 third-party GitHub Actions not pinned to a commit, several on `@master`; 2 workflows without token permissions | Medium | Pin to SHAs; add `permissions: contents: read` | Engineering |
-| The repository is **public** while outreach and website copy say "source under NDA" | High (credibility) | Make it private, or change the wording everywhere | You |
-| **POPIA s69:** "data subject" includes companies, so emailing business addresses is still electronic direct marketing to non-customers, which needs consent (one approach to ask is allowed) | High (legal) | **Hold the follow-up drafts due 2026-10-16** until counsel confirms; treat first emails as the single consent request; keep an opt-out list | You + counsel |
-| Off-site backups have only run against an S3-compatible stand-in, never a real bucket | Medium | Turn on off-site backups to a real bucket in another account/region; record a DR test | Engineering |
+| Finding | Status | Detail |
+|---|---|---|
+| 39 GitHub Actions not pinned; 2 workflows without token permissions | **Closed** | All pinned to the commit their tag or branch pointed to (no behaviour change); least-privilege permissions per job. Check re-run: PASS |
+| No CODEOWNERS | **Closed** | `.github/CODEOWNERS` added |
+| Repository public while material said "source under NDA" | **Closed** (decision: stay public) | All NDA claims removed from website copy, templates, form texts and the 16 Oct follow-ups; full secret scan clean. One Gmail draft (Trail of Bits follow-up) still says the repository will be shared after an NDA: edit before sending |
+| Default branch has **no branch protection** | **Open: owner action** | The session's GitHub access refuses repository-settings writes. In GitHub: rename the default branch to `main`, add a ruleset (PR required, CI required, no force push or deletion). **Note:** `deploy.yaml` and `test-and-build.yml` trigger on `main` and will start running after the rename; `test-and-build.yml` is a legacy pipeline that will fail (it builds `./cmd/main.go`, which does not exist): retire or disable it at the same time |
+| **Dependabot alerts disabled**; secret scanning unknown | **Open: owner action** | Settings > Code security: Dependabot alerts, secret scanning, push protection |
+| **POPIA s69** on outreach | **Held** | Follow-ups due 2026-10-16 stay unsent until counsel confirms |
+| Off-site backups never run against a real bucket | **Open: blocked** | Needs AWS access (connector re-authorisation or credentials) |
+| AWS baseline never run on the real account | **Open: blocked** | Same: re-authorise the AWS connector, or set `AWS_AUDIT_ROLE_ARN` |
 
 **Compliance timeline (from the Sprinto estimate, unchanged):** SOC 2 Type I about 2–3 months
 after signing a platform and approving the policies; ISO 27001 about 3–5 months; SOC 2 Type II
@@ -188,7 +190,6 @@ re-run the job three times and bisect only if it fails identically each time.
 | Custody against a real custodian | Custodian account | You |
 | Licensing, ToS, privacy policy, insurance, sanctions/KYC vendor | Legal and commercial work; privacy notice, PAIA manual and DPA are drafted in `docs/compliance/isms/privacy/` for counsel | You |
 | Protect the default branch, enable Dependabot alerts and secret scanning | Repository admin settings (CA-003, CA-004) | You |
-| Decide repository visibility vs "source under NDA" | A decision, then aligned wording (R-21, CA-002) | You |
 | POPIA s69 position on outreach before the 2026-10-16 follow-ups | Counsel | You |
 | Sign Sprinto (or similar); approve policies; name ISMS owner, Information Officer, incident lead | Founder decisions and signatures | You |
 | Register the Information Officer; publish privacy notice and PAIA manual | Information Regulator portal; counsel review | You |

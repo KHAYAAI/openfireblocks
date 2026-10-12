@@ -95,7 +95,7 @@ If that is wrong, the physical controls A.7.1 to A.7.6 become applicable to the 
 | 8.1 User endpoint devices | Yes | Laptops hold code and credentials; R-06 | Endpoint policy; Sprinto agent | Plan |
 | 8.2 Privileged access rights | Yes | Admin roles, AWS, GitHub owners | Product: admin role separate, step-up for decisions; company: privileged accounts listed in access review | Part |
 | 8.3 Information access restriction | Yes | Core | Product: tenant role guard on every route, RLS; route inventory checked in CI | Impl |
-| 8.4 Access to source code | Yes | R-07, R-21 | GitHub permissions; branch protection; `github-controls-check.sh` | Part (repository is public: R-21) |
+| 8.4 Access to source code | Yes | R-07, R-21 | GitHub permissions; CODEOWNERS; branch protection (owner to enable); `github-controls-check.sh`. The repository is public by decision (R-21): nothing above *Public* is committed | Part |
 | 8.5 Secure authentication | Yes | Core | Product: OIDC/SSO with PKCE, TOTP, JWT revocation, lockout without oracle; company: MFA everywhere | Part (product **Impl**) |
 | 8.6 Capacity management | Yes | Hosted service availability | HPA, PDB in the Helm chart; monitoring when hosted | Part |
 | 8.7 Protection against malware | Yes | Laptops; containers | Endpoint anti-malware (Sprinto check); read-only non-root containers | Part |

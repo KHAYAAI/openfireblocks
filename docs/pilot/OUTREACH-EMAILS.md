@@ -1,5 +1,10 @@
 # Outreach emails: cryptographic audit, smart-contract audit, penetration test, SOC 2
 
+> **2026-10-12:** the repository is public, so "source under NDA" is no longer said in new
+> messages (decision recorded as CA-002 in `docs/compliance/isms/08-corrective-actions.md`). The
+> texts below are kept as the record of what was sent; reports (pentest, SOC 2) can still be shared
+> under NDA.
+
 Ready to copy, personalise the bracketed fields, and send. Send the **screening email first**
 to 3-4 firms per category before sending the full scope — it filters out firms that would
 quote the wrong kind of review, and keeps the real scope document (with repo access) out of

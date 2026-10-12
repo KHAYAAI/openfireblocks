@@ -288,7 +288,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4
         with:
           version: v3.16.2
       - name: Lint the chart
@@ -350,7 +350,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
       - name: Format
         run: terraform -chdir=infrastructure/terraform fmt -check -recursive
       - name: Validate
@@ -518,7 +518,7 @@ jobs:
           node-version: "22"
           cache: npm
           cache-dependency-path: services/api-gateway/package-lock.json
-      - uses: temporalio/setup-temporal@v0
+      - uses: temporalio/setup-temporal@1059a504f87e7fa2f385e3fa40d1aa7e62f1c6ca # v0
       - run: npm ci
         working-directory: services/api-gateway
       - name: A browser for the console scenario

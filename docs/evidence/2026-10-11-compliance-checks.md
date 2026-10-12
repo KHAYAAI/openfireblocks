@@ -36,3 +36,22 @@ Summary: 2 PASS, 2 FAIL, 5 WARN, 1 UNKNOWN. Entered as CA-003 to CA-005 in
 connector needs re-authorising. The script was tested against a stub AWS CLI in two scenarios: a
 misconfigured account (11 FAIL, 4 WARN, matching every planted fault) and a correct one (15 PASS).
 Run it with a `SecurityAudit` role, or set `AWS_AUDIT_ROLE_ARN` for the weekly workflow.
+
+## Re-run 2026-10-12, after fixes
+
+| Check | 2026-10-11 | 2026-10-12 | What changed |
+|---|---|---|---|
+| actions.pinned | WARN (39 unpinned) | **PASS** | All 39 pinned to the commit their tag or branch pointed to that day |
+| actions.permissions | WARN (2 workflows) | **PASS** | Top-level `contents: read`; per-job grants only where needed |
+| repo.codeowners | WARN | **PASS** | `.github/CODEOWNERS` |
+| repo.visibility | WARN | WARN (accepted) | Decision: stay public; NDA claims removed from outward material (CA-002, R-21 closed) |
+| branch.protected | FAIL | FAIL | Needs the owner in GitHub settings: the session's GitHub access refuses repository-settings writes (rulesets, rename, security features) |
+| dependabot.alerts | FAIL | FAIL | Same |
+| secret_scanning | UNKNOWN | UNKNOWN | Same |
+
+Secret scan of every tracked file (AWS keys, private-key blocks, Stripe, GitHub, Slack, Google,
+SendGrid, Anthropic/OpenAI-style keys, 64-hex keys next to secret-like names): no credentials.
+Three 64-hex values match: the well-known public Hardhat/Ganache development accounts and a widely
+published web3 documentation example key, used only for local dev chains
+(`infrastructure/README-local-setup.md`, `infrastructure/local/e2e-fullstack-local.sh`). Never
+fund those addresses on any real network.

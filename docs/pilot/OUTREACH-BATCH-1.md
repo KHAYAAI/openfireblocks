@@ -1,5 +1,10 @@
 # Outreach batch 1 (FORGE Custody)
 
+> **2026-10-12:** the repository is public, so "source under NDA" is no longer said in new
+> messages (decision recorded as CA-002 in `docs/compliance/isms/08-corrective-actions.md`). The
+> texts below are kept as the record of what was sent; reports (pentest, SOC 2) can still be shared
+> under NDA.
+
 Sender: Tebogo Mvelase, Founder and CEO, FORGE, TKM@myforgepay.com, https://myforgepay.com
 
 Status: drafts only. Nothing here has been sent. The Gmail connector dropped and its

@@ -29,7 +29,7 @@ before anything is signed.
 - **Reconciliation.** What the platform signed is checked against what the chain recorded, and the
   result is kept as evidence.
 - **Runs in your environment.** Deployed into your own cloud or data centre. Recovery does not
-  depend on us. Source available for review under NDA.
+  depend on us. Source code open for independent review.
 
 ## New: custody for AI agents
 
