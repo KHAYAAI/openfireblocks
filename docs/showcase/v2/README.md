@@ -21,10 +21,10 @@ Each recording has the same three layers:
 
 | File | Story |
 |---|---|
-| `forge-custody-fintech.mp4` (7 min) | Northwind Pay: the app creates a key, takes a deposit, pays out, and has a large move held; the finance team approves; a payables agent pays invoices and refuses an injected payee; evidence |
-| `forge-custody-bank.mp4` (6.5 min) | Meridian Bank: API key rotation, IVMS101 Travel Rule on the API (and refusal without it); roles, dual control and segregation of duties; a settlements agent paying R15,000 with Travel Rule data, then stopped by the emergency freeze; audit evidence |
-| `forge-custody-government.mp4` (5 min) | National Treasury: quorum raised to three; a grants system's request approved by three officials; safety controls; a disbursement assistant that refuses a diversion attempt; revoked at programme end |
-| `forge-custody-asset-manager.mp4` (6.5 min) | Kestrel AM: keys on Ethereum, Bitcoin and Solana from three parallel ceremonies; a rebalancing move approved by portfolio manager and risk; reconciliation; a treasury agent paying fund expenses, including a Travel Rule payment completed with the payee from the invoice, and a retry that does not pay twice |
+| `forge-custody-fintech.mp4` (8.5 min) | Northwind Pay: the app creates a key, takes a deposit, pays out, and has a large move held; the finance team approves; a payables agent pays invoices and refuses an injected payee; evidence |
+| `forge-custody-bank.mp4` (7.5 min) | Meridian Bank: API key rotation, IVMS101 Travel Rule on the API (and refusal without it); roles, dual control and segregation of duties; a settlements agent paying R15,000 with Travel Rule data, then stopped by the emergency freeze; audit evidence |
+| `forge-custody-government.mp4` (6.5 min) | National Treasury: quorum raised to three; a grants system's request approved by three officials; safety controls; a disbursement assistant that refuses a diversion attempt; revoked at programme end |
+| `forge-custody-asset-manager.mp4` (7 min) | Kestrel AM: keys on Ethereum, Bitcoin and Solana from three parallel ceremonies; a rebalancing move approved by portfolio manager and risk; reconciliation; a treasury agent paying fund expenses, including a Travel Rule payment completed with the payee from the invoice, and a retry that does not pay twice |
 
 **Real:** every API call shown, the console, one-time codes, roles, policy decisions,
 approvals, the Travel Rule records, the freeze, real tss-lib key ceremonies, real threshold
@@ -65,3 +65,8 @@ diagram, code panel and chat line, with the second it appeared. `scripts/video/n
 it into a spoken narration track through a local VoiceStudio server: see
 [`../NARRATION.md`](../NARRATION.md). Use a voice model whose licence allows commercial use;
 VoiceStudio's default OmniVoice weights are non-commercial.
+
+Recorded 2026-10-12 with narration pacing: the picture holds until each line could be spoken
+(150 words a minute), so a voice-over lines up with what is on screen. A dry run of `narrate.py`
+places every line on its cue in all four videos (0 s drift). The videos are still silent until
+you generate the voice-over.
