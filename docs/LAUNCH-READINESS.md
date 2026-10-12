@@ -90,10 +90,54 @@ checks) with narration pacing and cue files; `scripts/video/narrate.py` produces
 local VoiceStudio server (`docs/showcase/NARRATION.md`). Not yet narrated: VoiceStudio has to run on the
 founder's machine, with a commercially licensed voice model (its default OmniVoice is non-commercial).
 
-**Compliance timeline (from the Sprinto estimate, unchanged):** SOC 2 Type I about 2–3 months
-after signing a platform and approving the policies; ISO 27001 about 3–5 months; SOC 2 Type II
-about 6–8 months (needs a 3+ month observation window). The clock has not started: no platform
-is signed and no policy is approved.
+**Compliance timeline:** see "Measured timeline to certification and bank readiness" below. The
+clock has not started: no platform is signed and no policy is approved.
+
+## Measured timeline to certification and bank readiness (2026-10-12)
+
+Assumptions: the compliance platform (Sprinto) is signed on 16 October 2026; the founder gives
+it about 8–10 hours a week; auditors need 2–4 weeks' notice; the South African December–January
+shutdown costs about three weeks. The vendor's own estimate (ISO 27001 and SOC 2 Type I by late
+November, Type II in about 4.5 months) assumes none of that slack. These are planning dates,
+not commitments.
+
+**Compliance**
+
+| Item | Realistic date | What drives it |
+|---|---|---|
+| Onboarding; fix what the platform flags (GitHub settings, AWS, laptops) | Early November 2026 | Connect AWS, GitHub, Google Workspace; laptop agent; CA-003, CA-004 |
+| Policies approved, roles named, training done | Mid-November 2026 | Founder review of the drafts in `docs/compliance/isms/` |
+| Background checks | Mid-November 2026 | Provider turnaround |
+| GDPR readiness (no audit) | Late November 2026 | Counsel review of the privacy notice and DPA |
+| POPIA: Information Officer registered, PAIA manual, s22 steps | Late November 2026 | Counsel review; registration itself takes a day |
+| Penetration test (vendor partner, must include the MCP server) | Early to mid-December 2026 | 1–3 weeks to book, 1–2 weeks testing, fixes and retest |
+| SOC 2 Type I | Audit as of mid-December 2026; report late January to February 2027 | 6–8 weeks of readiness, then auditor scheduling and the holidays |
+| ISO 27001 | Stage 1 in December 2026, Stage 2 late January 2027; certificate late February to March 2027 | The ISMS must run for a while, with an internal audit and a management review on record before Stage 2 |
+| SOC 2 Type II | April to May 2027 | 3-month observation window from about mid-December, then fieldwork and the report |
+
+**Beyond compliance (banks, governments, uncapped funds)**
+
+| Item | Realistic date |
+|---|---|
+| Signing parties on separate hosts, hardware HSMs | January to February 2027 |
+| Live TRISA membership; a real custodian | Q1 2027 |
+| Capped mainnet pilot | February to March 2027 |
+| Independent cryptographic audit (tss-lib layer, token contract) | March to June 2027 |
+| Crypto-asset service provider licence (only if FORGE itself holds client funds) | Late 2027 |
+
+**What can be said to buyers, and when**
+
+| Period | Position |
+|---|---|
+| Now to January 2027 | Fintech testnet and capped pilots. "SOC 2 Type I and ISO 27001 audits scheduled for December and January." |
+| February to March 2027 | SOC 2 Type I report, ISO 27001 certificate, pentest report: enough to start most bank vendor-risk reviews |
+| April to May 2027 | SOC 2 Type II report, which many banks and government buyers require before production |
+| Mid-2027 | Production with banks, once the cryptographic audit is done and the signing parties run on separate hosts |
+
+**Faster:** book the auditor and the pentester as soon as the platform is signed, before the holiday
+rush; about 15 hours a week instead of 8–10; start the Type II window right after onboarding
+(some auditors allow it), which could bring Type II to about March 2027. **Slower:** an
+auditor's first slot in January, or pentest findings that need real engineering.
 
 ## External pentest (Shannon, 2026-10-08) and remediation
 
