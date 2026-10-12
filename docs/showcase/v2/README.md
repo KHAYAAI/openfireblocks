@@ -57,3 +57,11 @@ Playwright's Chromium, and `npm ci && npm run build` in `services/mcp-server`):
     ./infrastructure/local/e2e-fullstack-local.sh
 
 One segment only: `E2E_AFTER="node infrastructure/local/e2e/record-v2.js bank"`.
+
+## Voice-over
+
+Each recording has a cue file, `<name>.cues.json`, written by the recorder. It lists every caption, card,
+diagram, code panel and chat line, with the second it appeared. `scripts/video/narrate.py` turns
+it into a spoken narration track through a local VoiceStudio server: see
+[`../NARRATION.md`](../NARRATION.md). Use a voice model whose licence allows commercial use;
+VoiceStudio's default OmniVoice weights are non-commercial.
