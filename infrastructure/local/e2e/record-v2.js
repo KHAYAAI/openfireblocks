@@ -119,15 +119,28 @@ async function prep(p) { await p.evaluate(OVERLAY_JS).catch(() => {}); }
 // Narration cues: what appeared on screen and when, in seconds from the start of the video.
 // Written next to each recording as <name>.cues.json, so a voice track can be generated
 // afterwards (scripts/video/narrate.py) and line up with what the viewer sees.
-let REC_T0 = 0; let CUES = [];
-function cue(kind, text, extra = {}) {
+//
+// Pacing: on-screen text can be read faster than it can be spoken, so before a new line appears
+// the recorder waits until the previous one would have been said aloud (at NARRATION_WPM words
+// a minute, default 150, allowing the 1.15x speed-up narrate.py may apply). The screen holds
+// while the voice catches up. NARRATION_PACE=0 records at reading pace instead. Tool calls
+// shown in the agent chat are not spoken, so they do not wait.
+let REC_T0 = 0; let CUES = []; let SPEAK_UNTIL = 0;
+const PACE = process.env.NARRATION_PACE !== '0';
+const WPM = Number(process.env.NARRATION_WPM || 150) * 1.15;
+async function cue(kind, text, extra = {}) {
   if (!REC_T0 || !text) return;
+  text = String(text).replace(/([.!?])\.\s/g, '$1 ');
+  if (PACE && kind !== 'tool') {
+    const wait = SPEAK_UNTIL - Date.now(); if (wait > 0) await sleep(wait);
+    SPEAK_UNTIL = Date.now() + (text.split(/\s+/).length * 60000) / WPM + 450;
+  }
   CUES.push({ t: Math.round((Date.now() - REC_T0) / 100) / 10, kind, text: String(text).replace(/\s+/g, ' ').trim(), ...extra });
 }
 
 async function caption(p, eyebrow, text, ms = 0) {
   await prep(p);
-  cue('caption', text, { title: eyebrow });
+  await cue('caption', text, { title: eyebrow });
   await p.evaluate(([e, t]) => {
     let c = document.getElementById('rec-cap'); if (!c) { c = document.createElement('div'); c.id = 'rec-cap'; document.body.appendChild(c); }
     c.replaceChildren(); const b = document.createElement('b'); b.textContent = e; c.appendChild(b); c.appendChild(document.createTextNode(t));
@@ -137,7 +150,7 @@ async function caption(p, eyebrow, text, ms = 0) {
 
 async function card(p, eyebrow, titleParts, para, bullets, ms, num) {
   await prep(p);
-  cue('card', [titleParts.map((x) => (x && x.i) || x).join(''), para].filter(Boolean).join('. '), { title: eyebrow });
+  await cue('card', [titleParts.map((x) => (x && x.i) || x).join(''), para].filter(Boolean).join('. '), { title: eyebrow });
   await p.evaluate(([e, tp, pa, bu, n]) => {
     document.getElementById('rec-card')?.remove(); const d = document.createElement('div'); d.id = 'rec-card';
     if (n) { const N = document.createElement('div'); N.className = 'n'; N.textContent = n; d.appendChild(N); }
@@ -155,7 +168,7 @@ const chapter = (p, n, title, para, bullets, ms = 9000) => card(p, `Chapter ${n}
 // An architecture diagram: columns of boxes joined by arrows.
 async function diagram(p, eyebrow, title, columns, foot, ms) {
   await prep(p);
-  cue('diagram', [title, foot].filter(Boolean).join('. '), { title: eyebrow });
+  await cue('diagram', [title, foot].filter(Boolean).join('. '), { title: eyebrow });
   await p.evaluate(([e, t, cols, f]) => {
     document.getElementById('rec-dia')?.remove();
     const d = document.createElement('div'); d.id = 'rec-dia'; d.className = 'rec-full';
@@ -187,7 +200,7 @@ async function dropDiagram(p) { await p.evaluate(() => document.getElementById('
 // The integration stage: the application's code on the left, live calls on the right.
 async function stage(p, title, sub, code) {
   await prep(p);
-  cue('stage', [title, sub].filter(Boolean).join('. '), { title: 'Your application' });
+  await cue('stage', [title, sub].filter(Boolean).join('. '), { title: 'Your application' });
   await p.evaluate(([t, s, c]) => {
     document.getElementById('rec-stage')?.remove();
     const d = document.createElement('div'); d.id = 'rec-stage'; d.className = 'rec-full';
@@ -275,7 +288,7 @@ async function chat(p, client, agentName, toolList) {
 }
 async function dropChat(p) { await p.evaluate(() => document.getElementById('rec-chat')?.remove()).catch(() => {}); }
 async function msg(p, cls, text, who, ms = 2600) {
-  cue('chat', text, { speaker: cls.includes(' u') ? 'user' : 'agent' });
+  if (cls === 'tc') await cue('tool', text); else await cue('chat', text, { speaker: cls.includes(' u') ? 'user' : 'agent' });
   await p.evaluate(([c, t, w]) => {
     const m = document.getElementById('rec-msgs'); if (!m) return;
     const e = document.createElement('div'); e.className = c;
@@ -963,8 +976,8 @@ await forge(\`/keys/\${fundEth}/transfers\`, {
     const p = await ctx.newPage(); const errs = [];
     p.on('pageerror', (e) => errs.push(e.message));
     await p.route('https://checkout.stripe.com/**', (r) => r.fulfill({ status: 200, contentType: 'text/html', body: '<body>stand-in</body>' }));
-    const t0 = Date.now(); REC_T0 = t0; CUES = [];
-    try { await FLOWS[name](p); await sleep(800); } catch (e) { failed++; console.error(name, 'FAILED:', e.stack || e.message); await p.screenshot({ path: `${OUT}/${name}-fail.png` }).catch(() => {}); }
+    const t0 = Date.now(); REC_T0 = t0; CUES = []; SPEAK_UNTIL = 0;
+    try { await FLOWS[name](p); await sleep(Math.max(800, SPEAK_UNTIL - Date.now() + 800)); } catch (e) { failed++; console.error(name, 'FAILED:', e.stack || e.message); await p.screenshot({ path: `${OUT}/${name}-fail.png` }).catch(() => {}); }
     await ctx.close();
     const dir = OUT + '/' + name; const f = fs.readdirSync(dir).find((x) => x.endsWith('.webm'));
     const file = `${OUT}/forge-custody-${name.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase())}.webm`;

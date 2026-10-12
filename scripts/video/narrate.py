@@ -44,7 +44,7 @@ import urllib.request
 import wave
 
 RATE = 24000  # every clip is normalised to 24 kHz mono 16-bit before mixing
-KINDS = ("caption", "card", "diagram", "stage", "chat")
+KINDS = ("caption", "card", "diagram", "stage", "chat")  # also "tool": tool calls, not spoken by default
 
 
 def find_ffmpeg(explicit):
@@ -133,7 +133,8 @@ def estimate(text, speed, wpm):
 
 def clean(text):
     # Read code-ish tokens and symbols in a way a voice handles.
-    t = text.replace("→", " to ").replace("·", ",").replace("…", "...")
+    t = re.sub(r"([.!?])\.(\s)", r"\1\2", text)
+    t = t.replace("→", " to ").replace("·", ",").replace("…", "...")
     t = re.sub(r"\bofb_agent_\S*", "the agent key", t)
     t = re.sub(r"\b0x[0-9a-fA-F]{6,}\b", "the address", t)
     return re.sub(r"\s+", " ", t).strip()
@@ -175,6 +176,10 @@ def main():
     with open(cues_path) as f:
         doc = json.load(f)
     kinds = set(k.strip() for k in args.kinds.split(","))
+    for c in doc["cues"]:
+        # Cue files from before the recorder had a 'tool' kind logged tool calls as chat.
+        if c.get("kind") == "chat" and str(c.get("text", "")).startswith("→"):
+            c["kind"] = "tool"
     cues = [c for c in doc["cues"] if c.get("kind") in kinds and c.get("text")]
     cues.sort(key=lambda c: c["t"])
     if not cues:
