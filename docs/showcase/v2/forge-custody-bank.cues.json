@@ -1,0 +1,302 @@
+{
+ "video": "forge-custody-bank.webm",
+ "cues": [
+  {
+   "t": 0.3,
+   "kind": "card",
+   "text": "A digital-asset desk under bank controls. Meridian Bank (fictional) runs FORGE CUSTODY in its own cloud account. Its payments hub connects through the API; named people decide; an AI agent handles routine corporate settlements under strict terms.",
+   "title": "Bank · recorded on the running platform"
+  },
+  {
+   "t": 13.6,
+   "kind": "diagram",
+   "text": "Self-hosted inside the bank, with the bank’s people in charge. Deployed with Helm into the bank’s own Kubernetes; the three signing parties can run on separate hosts or accounts, and an HSM can hold the keys.",
+   "title": "How it fits"
+  },
+  {
+   "t": 29.7,
+   "kind": "card",
+   "text": "Connecting the payments hub. The bank’s systems call the API with a key that expires and can be rotated at any time. Transfers carry Travel Rule data in IVMS101 form, so the record exists before the signature does.",
+   "title": "Chapter 1"
+  },
+  {
+   "t": 43.3,
+   "kind": "stage",
+   "text": "Rotate the API key, then send with Travel Rule data. Keys expire (API_KEY_TTL_DAYS) and can be rotated by the customer or the operator. Rotation is immediate.",
+   "title": "Your application"
+  },
+  {
+   "t": 52.8,
+   "kind": "caption",
+   "text": "The new key works immediately and the old key is refused immediately. There is no overlap window to exploit.",
+   "title": "Rotation"
+  },
+  {
+   "t": 61.2,
+   "kind": "caption",
+   "text": "The IVMS101 record was created and checked before the parties signed, then linked to the transaction hash. A transfer missing the data is refused, not signed.",
+   "title": "Travel Rule first"
+  },
+  {
+   "t": 70.7,
+   "kind": "caption",
+   "text": "The same kind of transfer without Travel Rule data is refused before any signing, with the reason.",
+   "title": "Refused"
+  },
+  {
+   "t": 77,
+   "kind": "card",
+   "text": "Roles and dual control. Every person has exactly one role. The operator who asks for a transfer can never approve it; two approvers must, each with a fresh code.",
+   "title": "Chapter 2"
+  },
+  {
+   "t": 87.6,
+   "kind": "caption",
+   "text": "The desk administrator signs in. (Single sign-on through the bank’s identity provider is built and tested; this recording has no provider to connect to.)",
+   "title": "Sign in"
+  },
+  {
+   "t": 96.4,
+   "kind": "caption",
+   "text": "A one-time code from the person’s authenticator app. Every sign-in and every approval needs a fresh one.",
+   "title": "Second factor"
+  },
+  {
+   "t": 102.7,
+   "kind": "caption",
+   "text": "Each person has one role. Changes to roles are themselves recorded.",
+   "title": "People"
+  },
+  {
+   "t": 110.3,
+   "kind": "caption",
+   "text": "Dual control by default: two approvals. The requester is never counted, and each person decides once.",
+   "title": "Approval policy"
+  },
+  {
+   "t": 117.8,
+   "kind": "caption",
+   "text": "The emergency freeze, and a whitelist of addresses the organisation may send to.",
+   "title": "Safety controls"
+  },
+  {
+   "t": 124.6,
+   "kind": "caption",
+   "text": "Oscar is an operator: he can ask for a transfer, not approve one.",
+   "title": "Sign in"
+  },
+  {
+   "t": 129.6,
+   "kind": "caption",
+   "text": "A one-time code from the person’s authenticator app. Every sign-in and every approval needs a fresh one.",
+   "title": "Second factor"
+  },
+  {
+   "t": 147.8,
+   "kind": "caption",
+   "text": "The sender and recipient details are captured with the request, in the IVMS101 format other providers read, before anything is signed.",
+   "title": "Travel Rule"
+  },
+  {
+   "t": 155.5,
+   "kind": "caption",
+   "text": "The last look before money moves. Policy is evaluated when this is confirmed, not before.",
+   "title": "Review"
+  },
+  {
+   "t": 161.2,
+   "kind": "caption",
+   "text": "Over 10 ETH, policy requires approval. Nothing is signed; the request waits for two other people.",
+   "title": "Held"
+  },
+  {
+   "t": 167.4,
+   "kind": "caption",
+   "text": "Oscar can see his request but the console, and the API behind it, will not let him approve it.",
+   "title": "Segregation of duties"
+  },
+  {
+   "t": 179.3,
+   "kind": "caption",
+   "text": "A one-time code from the person’s authenticator app. Every sign-in and every approval needs a fresh one.",
+   "title": "Second factor"
+  },
+  {
+   "t": 188.1,
+   "kind": "caption",
+   "text": "Approver one: Alice, verified with a one-time code.",
+   "title": "Approval"
+  },
+  {
+   "t": 207,
+   "kind": "caption",
+   "text": "A one-time code from the person’s authenticator app. Every sign-in and every approval needs a fresh one.",
+   "title": "Second factor"
+  },
+  {
+   "t": 215.8,
+   "kind": "caption",
+   "text": "Approver two: Bob. The quorum is met and the stored request runs exactly once.",
+   "title": "Approval"
+  },
+  {
+   "t": 231.6,
+   "kind": "caption",
+   "text": "Both decisions are recorded with who, when and how each person was verified. Two of three parties signed; the chain accepted it.",
+   "title": "Result"
+  },
+  {
+   "t": 239.7,
+   "kind": "card",
+   "text": "An AI agent for settlements. The bank lets an AI agent settle routine obligations to one corporate client, in a rand stablecoin, up to R20,000 a payment. Then the desk freezes everything, and the agent stops too.",
+   "title": "Chapter 3"
+  },
+  {
+   "t": 253,
+   "kind": "caption",
+   "text": "The administrator issues the settlements agent.",
+   "title": "Sign in"
+  },
+  {
+   "t": 257.5,
+   "kind": "caption",
+   "text": "A one-time code from the person’s authenticator app. Every sign-in and every approval needs a fresh one.",
+   "title": "Second factor"
+  },
+  {
+   "t": 263.9,
+   "kind": "caption",
+   "text": "An agent is a credential that can only pay, within limits a person sets. It is issued here, by an admin.",
+   "title": "Agents"
+  },
+  {
+   "t": 271.6,
+   "kind": "caption",
+   "text": "One counterparty, R20,000 a payment, R50,000 a day, seven days. Short expiry is a control in itself.",
+   "title": "Its terms"
+  },
+  {
+   "t": 279.9,
+   "kind": "caption",
+   "text": "The agent key is displayed this one time and stored only as a hash. It goes into the AI client’s secret configuration, never into a prompt. (Masked here.)",
+   "title": "Shown once"
+  },
+  {
+   "t": 290.1,
+   "kind": "stage",
+   "text": "Connecting an AI client. The MCP server is a small process the AI client starts. It holds only the agent key (and, for Travel Rule payments, the organisation’s own details) and calls the same gateway.",
+   "title": "Your application"
+  },
+  {
+   "t": 302.7,
+   "kind": "caption",
+   "text": "MCP is how AI assistants discover and call tools. The server exposes five; only one can move money, and only within the agent’s terms.",
+   "title": "Model Context Protocol"
+  },
+  {
+   "t": 311.5,
+   "kind": "chat",
+   "text": "Settle today’s obligation to Harbour Trading Ltd (their wallet is held at Example Exchange): R15,000, reference SET-0931.",
+   "speaker": "user"
+  },
+  {
+   "t": 314.7,
+   "kind": "tool",
+   "text": "→ get_spending_status()"
+  },
+  {
+   "t": 320.5,
+   "kind": "chat",
+   "text": "R15,000 is above the R5,000 Travel Rule threshold, so I’ll include the beneficiary exactly as given: Harbour Trading Ltd, held at Example Exchange.",
+   "speaker": "agent"
+  },
+  {
+   "t": 324.7,
+   "kind": "tool",
+   "text": "→ send_payment({\"token\":\"tZAR\",\"recipient\":\"0x33AB722e4Aefb57AC6deAf942B1809e5E4F91f4E\",\"amount\":\"15000\",\"chain_id\":1337,\"purpose\":\"Settlement SET-0931, Harbour Trading\",\"idempotency_key\":\"set-0931\",\"beneficiary\":{\"name\":\"Harbour Trading Ltd\",\"provider\":\"Example Exchange\"}})"
+  },
+  {
+   "t": 331.1,
+   "kind": "chat",
+   "text": "Settled R15,000 to Harbour Trading, reference SET-0931, with its Travel Rule record. Confirmed by the platform.",
+   "speaker": "agent"
+  },
+  {
+   "t": 337.4,
+   "kind": "caption",
+   "text": "The desk suspects a compromised workstation and freezes the organisation. It stops the console, the API, settlements and agents at once.",
+   "title": "Emergency freeze"
+  },
+  {
+   "t": 345.1,
+   "kind": "caption",
+   "text": "Recorded with who, when and why, and sent to the alert channel.",
+   "title": "Frozen"
+  },
+  {
+   "t": 349.8,
+   "kind": "chat",
+   "text": "Settle SET-0932: R4,000 to Harbour Trading.",
+   "speaker": "user"
+  },
+  {
+   "t": 353,
+   "kind": "tool",
+   "text": "→ send_payment({\"token\":\"tZAR\",\"recipient\":\"0x33AB722e4Aefb57AC6deAf942B1809e5E4F91f4E\",\"amount\":\"4000\",\"chain_id\":1337,\"purpose\":\"Settlement SET-0932, Harbour Trading\",\"idempotency_key\":\"set-0932\"})"
+  },
+  {
+   "t": 358.7,
+   "kind": "chat",
+   "text": "Refused: the organisation is frozen. I can’t pay anything until an administrator lifts the freeze.",
+   "speaker": "agent"
+  },
+  {
+   "t": 366.4,
+   "kind": "caption",
+   "text": "Only an admin can lift it. An approver can freeze but not unfreeze, so a single compromised approver cannot undo a freeze.",
+   "title": "Lifting the freeze"
+  },
+  {
+   "t": 375.6,
+   "kind": "caption",
+   "text": "One payment made, one refused because of the freeze, with the reason. The bank can see exactly what the agent did and was stopped from doing.",
+   "title": "The agent’s record"
+  },
+  {
+   "t": 385.1,
+   "kind": "card",
+   "text": "Evidence for audit. What an internal auditor or a regulator would ask for, from the same records the platform uses itself.",
+   "title": "Chapter 4"
+  },
+  {
+   "t": 393.6,
+   "kind": "caption",
+   "text": "Every record in IVMS101 form, with its status and the transaction it belongs to.",
+   "title": "Travel Rule"
+  },
+  {
+   "t": 401.7,
+   "kind": "caption",
+   "text": "Activity aggregated against reporting thresholds, in rand.",
+   "title": "Thresholds"
+  },
+  {
+   "t": 409.2,
+   "kind": "caption",
+   "text": "The platform’s own ledger is compared with the chain. A transfer the chain does not show, or one the ledger does not know, is flagged.",
+   "title": "Reconciliation"
+  },
+  {
+   "t": 418.3,
+   "kind": "caption",
+   "text": "Each signed transfer was looked up on the chain by its hash. The result is stored, with who ran it and when, as evidence.",
+   "title": "Reconciliation"
+  },
+  {
+   "t": 427.1,
+   "kind": "card",
+   "text": "Real platform, local chain.",
+   "title": "What this recording is"
+  }
+ ]
+}
