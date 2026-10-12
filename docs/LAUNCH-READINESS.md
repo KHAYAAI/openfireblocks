@@ -79,11 +79,16 @@ change what the platform is cleared for.
 | 39 GitHub Actions not pinned; 2 workflows without token permissions | **Closed** | All pinned to the commit their tag or branch pointed to (no behaviour change); least-privilege permissions per job. Check re-run: PASS |
 | No CODEOWNERS | **Closed** | `.github/CODEOWNERS` added |
 | Repository public while material said "source under NDA" | **Closed** (decision: stay public) | All NDA claims removed from website copy, templates, form texts and the 16 Oct follow-ups; full secret scan clean. One Gmail draft (Trail of Bits follow-up) still says the repository will be shared after an NDA: edit before sending |
-| Default branch has **no branch protection** | **Open: owner action** | The session's GitHub access refuses repository-settings writes. In GitHub: rename the default branch to `main`, add a ruleset (PR required, CI required, no force push or deletion). **Note:** `deploy.yaml` and `test-and-build.yml` trigger on `main` and will start running after the rename; `test-and-build.yml` is a legacy pipeline that will fail (it builds `./cmd/main.go`, which does not exist): retire or disable it at the same time |
-| **Dependabot alerts disabled**; secret scanning unknown | **Open: owner action** | Settings > Code security: Dependabot alerts, secret scanning, push protection |
+| Default branch has **no branch protection** | **Open: owner action, part done (2026-10-12)** | Default branch renamed to `claude/openfireblocks-main` (not `main`; `deploy.yaml`/`test-and-build.yml` therefore stay dormant). Ruleset "Neo-rules" is active with the right rules (no deletion, no force push, PR required, 0 approvals) but **targets no branch**, and its required-status-checks list is empty: add target "Include default branch" and the CI checks. Deferred by the owner; does not block pilots |
+| **Dependabot alerts disabled**; secret scanning unknown | **Open: owner action, deferred** | Settings > Code security: Dependabot alerts, secret scanning, push protection. Does not block pilots; needed before the SOC 2 evidence window starts |
 | **POPIA s69** on outreach | **Held** | Follow-ups due 2026-10-16 stay unsent until counsel confirms |
 | Off-site backups never run against a real bucket | **Open: blocked** | Needs AWS access (connector re-authorisation or credentials) |
 | AWS baseline never run on the real account | **Open: blocked** | Same: re-authorise the AWS connector, or set `AWS_AUDIT_ROLE_ARN` |
+
+**Demo videos, 2026-10-12:** all four re-recorded on the full local stack (21/21 end-to-end
+checks) with narration pacing and cue files; `scripts/video/narrate.py` produces a voice-over through a
+local VoiceStudio server (`docs/showcase/NARRATION.md`). Not yet narrated: VoiceStudio has to run on the
+founder's machine, with a commercially licensed voice model (its default OmniVoice is non-commercial).
 
 **Compliance timeline (from the Sprinto estimate, unchanged):** SOC 2 Type I about 2–3 months
 after signing a platform and approving the policies; ISO 27001 about 3–5 months; SOC 2 Type II
