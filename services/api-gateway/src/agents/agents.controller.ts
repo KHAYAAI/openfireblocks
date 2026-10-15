@@ -44,6 +44,7 @@ import { AuditService } from '../database/audit.service';
 import { parseUnits } from '../keys/erc20';
 import type { TravelRuleInput } from '../travel-rule/travel-rule';
 import { AgentsService } from './agents.service';
+import { AgentAttestationService } from './agent-attestation.service';
 import { AgentKeyGuard, AgentRequest } from './agent-key.guard';
 
 export class CreateAgentDto {
@@ -82,6 +83,8 @@ export class AgentsAdminController {
   constructor(
     private readonly agents: AgentsService,
     private readonly audit: AuditService,
+    private readonly keys: KeysService,
+    private readonly attestations: AgentAttestationService,
   ) {}
 
   @Post()
@@ -109,6 +112,39 @@ export class AgentsAdminController {
   @RequireTenantRole(...CAN_READ_APPROVALS)
   get(@Param('customerId') customerId: string, @Param('agentId') agentId: string) {
     return this.agents.get(customerId, agentId);
+  }
+
+  // A signed statement of this agent's record, for the operator to give to a third party (the FORGE credit bureau). Admin only: it
+  // discloses how the agent has behaved. It names the address of the key the agent pays from, so the receiver can tie it to a wallet.
+  @Get(':agentId/attestation')
+  @RequireTenantRole(...CAN_MANAGE)
+  async attest(
+    @Param('customerId') customerId: string,
+    @Param('agentId') agentId: string,
+    @CurrentUser() claims: JwtClaims,
+    @Query('subject') subject?: string,
+    @Query('validityDays') validityDays?: string,
+  ) {
+    const days = validityDays === undefined ? undefined : Number(validityDays);
+    if (subject !== undefined && (subject.length === 0 || subject.length > 200)) throw new BadRequestException('subject must be 1 to 200 characters');
+    const agent = await this.agents.get(customerId, agentId);
+    const key = await this.keys.getKey(agent.keyId, customerId);
+    if (!key?.address) throw new ConflictException(`the agent's key ${agent.keyId} has no address yet, so there is no wallet to attest`);
+    const { record } = agent;
+    const out = this.attestations.issue({
+      customerId, agentId: agent.agentId, agentStatus: agent.status, keyAddress: key.address,
+      record: { transfers: record.transfers, released: record.released, refused: record.refused, refusalsByReason: record.refusalsByReason },
+      ...(subject ? { subject } : {}),
+      ...(days !== undefined ? { validityDays: days } : {}),
+    });
+    await this.audit.logEvent({
+      type: 'agent.attested',
+      requestId: agent.agentId,
+      customerId,
+      message: `${claims.email} issued a signed record of agent "${agent.name}"${subject ? ` for ${subject}` : ''}: ${record.transfers} payments, ${record.refused} refused`,
+      status: 'issued',
+    });
+    return out;
   }
 
   @Post(':agentId/revoke')

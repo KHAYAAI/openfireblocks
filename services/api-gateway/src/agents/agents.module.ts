@@ -5,12 +5,13 @@ import { TokensModule } from '../tokens/tokens.module';
 import { ApprovalsModule } from '../approvals/approvals.module';
 import { IdentityModule } from '../identity/identity.module';
 import { AgentsService } from './agents.service';
+import { AgentAttestationService } from './agent-attestation.service';
 import { AgentKeyGuard } from './agent-key.guard';
 import { AgentController, AgentsAdminController } from './agents.controller';
 
 @Module({
   imports: [KeysModule, CustomersModule, TokensModule, ApprovalsModule, IdentityModule],
   controllers: [AgentsAdminController, AgentController],
-  providers: [AgentsService, AgentKeyGuard],
+  providers: [AgentsService, AgentAttestationService, AgentKeyGuard],
 })
 export class AgentsModule {}
