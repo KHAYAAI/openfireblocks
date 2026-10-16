@@ -219,7 +219,7 @@ jobs:
           RECON_EVM_RPC: http://127.0.0.1:18545
         run: |
           npm ci
-          npx jest src/approvals src/travel-rule src/agents src/reconciliation src/transfers src/controls src/identity src/keys src/sweeps src/custody src/tokenisation src/access-review
+          npx jest src/approvals src/travel-rule src/agents src/reconciliation src/transfers src/controls src/identity src/keys src/sweeps src/custody src/tokenisation src/access-review src/retention
 
   gateway:
     name: API gateway

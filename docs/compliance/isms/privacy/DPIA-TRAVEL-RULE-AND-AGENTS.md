@@ -47,14 +47,17 @@ including abroad; a new technology (an AI system choosing payment details); immu
 | D4 | An AI agent invents or leaks beneficiary details (prompt injection, hallucination) | Possible | Significant | Recipient list per agent; limits; the person approving above thresholds sees the record; an agent key can read only its own spend records (recipient, amount, purpose, status: `agent_spend`, migration 025), never Travel Rule records, which the agent routes do not return (checked 2026-10-11); purposes recorded | Medium |
 | D5 | Free-text "purpose" fields collect personal or special information | Possible | Limited | Length limits; guidance to customers: no personal information in purposes | Medium |
 | D6 | Breach of the hosted database | Remote | Significant | ISMS controls; encryption in transit; immutable audit; backups encrypted off-site [once live] | Low |
-| D7 | Data kept beyond need because records are immutable | Likely | Limited | Retention schedule; deliberate deletion process at expiry | Medium |
+| D7 | Data kept beyond need because records are immutable | Possible | Limited | Retention schedule; logged purge of finished records past retention, never under five years (migration 037) | Low |
 
 ## 4. Measures to add
 
 1. Customer guidance: configure recipient lists for every agent; no personal information in purposes.
-2. A retention job (customer-controlled) that removes Travel Rule records past their retention date
-   through the database owner role, with a record of what was removed.
-3. Keep it that way: a test that the agent routes return no Travel Rule fields (D4).
+2. ~~A retention job~~ **Done 2026-10-16:** `POST /admin/retention/travel-rule` (migration 037)
+   removes finished Travel Rule records past the organisation's retention period. The database
+   refuses any delete of a record younger than five years (FIC Act), even inside a purge; dry run
+   is the default; every run is written to an immutable `retention_purges` log.
+3. ~~Keep it that way~~ **Done 2026-10-16:** `agents.live.spec.ts` checks that no agent route
+   (`me`, `tokens`, `transfers`, a payment, a retry) returns Travel Rule personal information (D4).
 4. Encryption at rest of the hosted database confirmed and recorded (AWS check script).
 5. DPA (`DPA-TEMPLATE.md`) signed with every hosted customer.
 

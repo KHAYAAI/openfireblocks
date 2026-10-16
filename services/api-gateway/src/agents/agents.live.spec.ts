@@ -106,6 +106,7 @@ describe('agents with budgets (live Postgres)', () => {
     const customers = { getByCustomerId: jest.fn(async () => ({ customer_id: customerId })) } as unknown as CustomerService;
     const tokens = {
       requireTransactable: jest.fn(async (_chain: number, sym: string) => TOKENS[sym.toUpperCase()]),
+      list: jest.fn(async () => Object.values(TOKENS)),
     } as unknown as TokenRegistryService;
     const rpc = { configured: () => false } as any;
     return new AgentController(agents, keys, customers, tokens, rpc);
@@ -272,5 +273,60 @@ describe('agents with budgets (live Postgres)', () => {
     expect(one.onChain).toBeNull(); // no chain id given, no RPC configured
 
     await expect(c.status({ agent, headers: {} } as any, 'inv-other')).rejects.toThrow(/no payment/);
+  });
+
+  // The privacy impact assessment (docs/compliance/isms/privacy/DPIA-TRAVEL-RULE-AND-AGENTS.md, D4)
+  // relies on this: an agent supplies a beneficiary when the Travel Rule asks for one, but no
+  // agent route ever hands Travel Rule personal information back -- not the beneficiary it sent,
+  // and not anyone else's. A prompt-injected agent cannot use the platform to read it.
+  it('no agent route returns Travel Rule personal information', async () => {
+    if (skipped()) return;
+    const marker = `Zanele Mokoena-${randomUUID().slice(0, 8)}`;
+    const originatorMarker = `Kestrel Fund I-${randomUUID().slice(0, 8)}`;
+    const ivms = {
+      originator: { originatorPersons: [{ legalPerson: { name: originatorMarker, geographicAddress: { addressLine: ['5 Dock Rd'], country: 'ZA' } } }] },
+      beneficiary: { beneficiaryPersons: [{ naturalPerson: { name: marker, nationalIdentification: '8001015009087' } }] },
+    };
+    const { agent } = await newAgent({ allowedRecipients: [SUPPLIER] });
+    const travelRule = { beneficiary: { naturalPerson: { name: marker } }, originator: { legalPerson: { name: originatorMarker } } };
+
+    const c = controller();
+    // The signing route is a recorder here; give it the shape the real one returns: a record
+    // reference and a transmission status, never the IVMS101 payload.
+    (c as any).keys.sendToken = jest.fn(async () => ({
+      transaction_hash: `0x${randomUUID().replace(/-/g, '')}`,
+      travel_rule: { record_id: randomUUID(), status: 'awaiting_transmission' },
+    }));
+    const paid = await c.transfer({ agent, headers: {} } as any, {
+      token: 'ZARP', recipient: SUPPLIER, amount: '4000', chainId: 1, nonce: 1, gasPrice: '1', purpose: 'invoice FA-1010',
+      idempotencyKey: 'tr-privacy-1', travelRule,
+    } as any);
+    // What the real route records for that payment, with the personal information in it.
+    await admin.query(
+      `INSERT INTO travel_rule_records (customer_id, request_id, chain_id, asset, amount, asset_decimals, originator_address,
+         beneficiary_address, value_zar, valuation, threshold_zar, ivms101, beneficiary_unhosted, transmission_status)
+       VALUES ($1, 'tr-privacy-1', 1, 'ZARP', 4000, 18, '0xabc', $2, 6000, 'peg', 5000, $3, false, 'awaiting_transmission')`,
+      [customerId, SUPPLIER, JSON.stringify(ivms)],
+    );
+
+    const responses = [
+      paid,
+      await c.me({ agent, headers: {} } as any),
+      await c.allowedTokens({ agent, headers: {} } as any),
+      await c.history({ agent, headers: {} } as any),
+      await c.status({ agent, headers: {} } as any, 'tr-privacy-1'),
+      // A retry returns the earlier payment, from the agent's own record.
+      await c.transfer({ agent, headers: {} } as any, {
+        token: 'ZARP', recipient: SUPPLIER, amount: '4000', chainId: 1, nonce: 1, gasPrice: '1', idempotencyKey: 'tr-privacy-1', travelRule,
+      } as any),
+    ];
+    expect((responses[5] as any).replayed).toBe(true);
+    for (const r of responses) {
+      const text = JSON.stringify(r);
+      expect(text).not.toContain(marker);
+      expect(text).not.toContain(originatorMarker);
+      expect(text).not.toContain('8001015009087');
+      expect(text).not.toMatch(/ivms101|naturalPerson|legalPerson|geographicAddress|nationalIdentification/i);
+    }
   });
 });
