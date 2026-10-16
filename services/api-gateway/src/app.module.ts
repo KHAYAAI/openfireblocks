@@ -18,6 +18,7 @@ import { ApprovalsModule } from './approvals/approvals.module';
 import { AgentsModule } from './agents/agents.module';
 import { AccessReviewModule } from './access-review/access-review.module';
 import { RetentionModule } from './retention/retention.module';
+import { WalletsModule } from './wallets/wallets.module';
 import { ReconciliationModule } from './reconciliation/reconciliation.module';
 import { TransfersModule } from './transfers/transfers.module';
 import { ControlsModule } from './controls/controls.module';
@@ -52,6 +53,7 @@ import { TokenisationModule } from './tokenisation/tokenisation.module';
     AgentsModule,
     AccessReviewModule,
     RetentionModule,
+    WalletsModule,
     ReconciliationModule,
     TransfersModule,
     ControlsModule,

@@ -309,10 +309,16 @@ export class PostgresService {
       return null;
     }
     const result = await this.withTenant(customerId, (client) =>
-      client.query(`SELECT * FROM key_pairs WHERE key_id = $1 AND customer_id = $2`, [
-        keyId,
-        customerId,
-      ]),
+      // With the user wallet the key belongs to, if any: a frozen wallet's
+      // keys do not sign (see KeysService.loadSignableKey).
+      client.query(
+        `SELECT k.*, w.wallet_id, w.status AS wallet_status
+           FROM key_pairs k
+           LEFT JOIN user_wallet_keys l ON l.key_id = k.key_id
+           LEFT JOIN user_wallets w ON w.wallet_id = l.wallet_id
+          WHERE k.key_id = $1 AND k.customer_id = $2`,
+        [keyId, customerId],
+      ),
     );
     return result.rows[0] ?? null;
   }

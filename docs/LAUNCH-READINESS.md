@@ -53,11 +53,26 @@ independently audited, that OUSD / ZARP / ZARC transfers are proven, or that age
 Known limits and open items: EUR ceilings (900,000 global, 90,000 pro, 9,000 free) were chosen by engineering and
 need the founder's sign-off; the Stripe path has never charged a real card; the staging cluster resets its
 Helm settings on every `up.sh` (trust-proxy hops, EVM/Solana/Cosmos RPC, Cosmos gas price) and they must be
-reapplied; Solana SPL tokens are not supported (native SOL only); the MCP server and the new agent routes have not been
+reapplied; Solana SPL tokens are built (2026-10-16) but not yet run on devnet; the MCP server and the new agent routes have not been
 through a pentest round, agent limits are denominated in rand only, and the recordings' agent sentences are scripted
 (no language model in the loop); the independent human pentest, cryptographic
 audit, SOC 2 Type II, isolated hosts with HSM, live TRISA, a real custodian, legal/licensing and a capped mainnet
 run all remain.
+
+## Build update, 2026-10-16
+
+**Verdict unchanged.** Four items that needed nothing from outside the team are now built and tested.
+None of them has been deployed to staging yet: pushes to the branch are blocked until the GitHub ruleset
+is retargeted.
+
+| Item | Result | Evidence |
+|---|---|---|
+| Per-user wallets (wallet-as-a-service) | **Built.** `POST /wallets` gives one of a customer's users their own 2-of-3 threshold key on each chain they need, under the customer's own reference (no personal information). Creation is idempotent. A per-user freeze stops every signing route; the API key can freeze, but only an admin can unfreeze. The database refuses re-pointing, deleting, or linking another organisation's key | 7 tests against real Postgres; `docs/USER-WALLETS-AND-SOLANA-TOKENS.md` |
+| Solana SPL tokens | **Built, not yet on devnet.** USDC/USDT-style tokens through the existing Solana route, with policy, approvals and Travel Rule on the token amount. Token accounts are derived and the recipient's is created when needed. The signer refuses, before the ceremony: wrong decimals, too few tokens, frozen accounts, too little SOL for fees and rent, and Token-2022 mints | Derivation and message checked against `@solana/spl-token` and `@solana/web3.js`; 9 Go and 9 gateway tests. A devnet transfer is still to do |
+| Travel Rule retention | **Built.** A logged purge that can remove only records older than the five-year legal minimum (enforced in the database trigger, not only in code), and only finished ones | 6 tests against real Postgres |
+| Agents never receive Travel Rule personal data | **Tested.** No agent route returns IVMS101 names, addresses or ID numbers | 1 new test (13 in the agent suite) |
+
+Full gateway suite: 59 suites, 628 tests passing. Signer: all Go packages pass. 175 routes, all guarded or deliberately public.
 
 ## Compliance and governance update, 2026-10-11 (evening)
 

@@ -7,7 +7,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { ApprovalsService, ApprovalRequestView, TransferKind } from '../approvals/approvals.service';
 import { NativeApprovalHandler, NativeApprovalHooks, TransferExecution } from '../approvals/native-approval-hooks';
 import { Customer, CustomerService } from '../customers/customer.service';
-import { KeysService, toPolicyUnits } from '../keys/keys.service';
+import { assertWalletNotFrozen, KeysService, toPolicyUnits } from '../keys/keys.service';
 import { ApprovalRequiredException } from '../keys/approval-required.exception';
 import { BitcoinTransactionDto } from '../keys/dto/bitcoin-transaction.dto';
 import { SolanaTransactionDto } from '../keys/dto/solana-transaction.dto';
@@ -154,6 +154,7 @@ export class TransfersService implements OnModuleInit, NativeApprovalHandler {
     );
 
     const key = await this.keys.getKey(keyId, customer.customer_id);
+    if (key) assertWalletNotFrozen(key, keyId);
     const policy = await this.approvals.getPolicy(customer.customer_id);
     // idempotencyKey is dropped: execution uses the approval's own.
     const { idempotencyKey: _ignored, ...request } = req as unknown as Record<string, unknown>;

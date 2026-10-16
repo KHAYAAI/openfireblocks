@@ -135,6 +135,14 @@ function nativeIntent(symbol: string, decimals: number, to: string, amount: stri
   };
 }
 
+// A key in a frozen user wallet signs nothing. Checked where every signing
+// path loads its key, and again when a transfer is parked for approval.
+export function assertWalletNotFrozen(key: { wallet_id?: string | null; wallet_status?: string | null }, keyId: string) {
+  if (key.wallet_status === 'frozen') {
+    throw new ForbiddenException(`key ${keyId} belongs to user wallet ${key.wallet_id}, which is frozen; unfreeze the wallet to send from it`);
+  }
+}
+
 @Injectable()
 export class KeysService {
   private readonly logger = new Logger(KeysService.name);
@@ -1648,6 +1656,7 @@ export class KeysService {
         `key ${keyId} is ${key.status}, not active; only an active key can sign`,
       );
     }
+    assertWalletNotFrozen(key, keyId);
     return key;
   }
 
