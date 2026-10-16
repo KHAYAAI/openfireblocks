@@ -245,3 +245,102 @@ func (s *SolanaRPC) Transfer(ctx context.Context, signature string) (*SolanaTran
 	}
 	return nil, nil
 }
+
+// SolanaAccount is what getAccountInfo reports. Exists is false for an
+// address with no account, which the node reports as a null value.
+type SolanaAccount struct {
+	Exists   bool
+	Owner    string
+	Lamports uint64
+	Data     []byte
+}
+
+// AccountInfo reads an account's owner program, balance and raw data.
+func (s *SolanaRPC) AccountInfo(ctx context.Context, address string) (*SolanaAccount, error) {
+	var r struct {
+		Value *struct {
+			Owner    string   `json:"owner"`
+			Lamports uint64   `json:"lamports"`
+			Data     []string `json:"data"`
+		} `json:"value"`
+	}
+	if err := s.call(ctx, "getAccountInfo", []interface{}{address, map[string]string{"commitment": s.commitment, "encoding": "base64"}}, &r); err != nil {
+		return nil, err
+	}
+	if r.Value == nil {
+		return &SolanaAccount{}, nil
+	}
+	acct := &SolanaAccount{Exists: true, Owner: r.Value.Owner, Lamports: r.Value.Lamports}
+	if len(r.Value.Data) > 0 {
+		data, err := base64.StdEncoding.DecodeString(r.Value.Data[0])
+		if err != nil {
+			return nil, fmt.Errorf("solana node returned unreadable account data: %w", err)
+		}
+		acct.Data = data
+	}
+	return acct, nil
+}
+
+// MinimumBalanceForRentExemption is the lamports an account of this many
+// data bytes must hold to persist.
+func (s *SolanaRPC) MinimumBalanceForRentExemption(ctx context.Context, size int) (uint64, error) {
+	var n uint64
+	if err := s.call(ctx, "getMinimumBalanceForRentExemption", []interface{}{size, map[string]string{"commitment": s.commitment}}, &n); err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
+// SPLMintInfo reads and checks a mint: it must exist, belong to the Token
+// program (Token-2022 is refused by name) and be initialized.
+func (s *SolanaRPC) SPLMintInfo(ctx context.Context, mint string) (*SPLMint, error) {
+	acct, err := s.AccountInfo(ctx, mint)
+	if err != nil {
+		return nil, err
+	}
+	if !acct.Exists {
+		return nil, fmt.Errorf("mint %s does not exist", mint)
+	}
+	switch acct.Owner {
+	case TokenProgramID:
+	case Token2022ProgramID:
+		return nil, fmt.Errorf("mint %s is a Token-2022 mint; only the original Token program is supported", mint)
+	default:
+		return nil, fmt.Errorf("%s is not a token mint (owned by %s)", mint, acct.Owner)
+	}
+	m, err := ParseSPLMint(acct.Data)
+	if err != nil {
+		return nil, err
+	}
+	if !m.Initialized {
+		return nil, fmt.Errorf("mint %s is not initialized", mint)
+	}
+	return m, nil
+}
+
+// SPLTokenBalance is a wallet's balance of a mint, read from its associated
+// token account. A wallet with no token account holds zero.
+func (s *SolanaRPC) SPLTokenBalance(ctx context.Context, wallet, mint string) (tokenAccount string, exists bool, acct *SPLTokenAccount, err error) {
+	ata, err := AssociatedTokenAddress(wallet, mint)
+	if err != nil {
+		return "", false, nil, err
+	}
+	info, err := s.AccountInfo(ctx, ata)
+	if err != nil {
+		return ata, false, nil, err
+	}
+	if !info.Exists {
+		return ata, false, &SPLTokenAccount{Mint: mint, Owner: wallet}, nil
+	}
+	if info.Owner != TokenProgramID {
+		return ata, true, nil, fmt.Errorf("token account %s is owned by %s, not the Token program", ata, info.Owner)
+	}
+	ta, err := ParseSPLTokenAccount(info.Data)
+	if err != nil {
+		return ata, true, nil, err
+	}
+	if ta.Mint != mint || ta.Owner != wallet {
+		return ata, true, nil, fmt.Errorf("token account %s is not %s's account for %s", ata, wallet, mint)
+	}
+	return ata, true, ta, nil
+}

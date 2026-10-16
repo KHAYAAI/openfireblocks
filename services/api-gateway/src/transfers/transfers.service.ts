@@ -132,15 +132,24 @@ export class TransfersService implements OnModuleInit, NativeApprovalHandler {
   }
 
   private async park(customer: Customer, keyId: string, kind: Exclude<TransferKind, 'custodian'>, req: AnyRequest, initiator: Initiator, reasons: string[], summaryExtra: Record<string, unknown> = {}): Promise<SubmitResult> {
-    const { asset, decimals } = DISPLAY[kind];
     const amount = (req as { amount: string }).amount;
     const to = (req as { destination: string }).destination;
+
+    // An SPL token on Solana is shown, and checked, as the token: approvers
+    // read "2.5 USDC", not a lamport figure. Resolved now, so a token that is
+    // not registered and verified is refused before anyone is asked.
+    const splToken = kind === 'solana' && (req as SolanaTransactionDto).token
+      ? await this.keys.resolveSolanaToken((req as SolanaTransactionDto).token!)
+      : null;
+    const { asset, decimals } = splToken ?? DISPLAY[kind];
 
     // Before anyone is asked: information the transfer will need at the time
     // it runs. Approvers must not approve something that then fails for a
     // missing Travel Rule field.
     this.keys.assertTravelRuleComplete(
-      { asset: 'NATIVE', amount: toPolicyUnits(amount, decimals), decimals: 18 },
+      splToken
+        ? { asset: splToken.asset, amount, decimals: splToken.decimals }
+        : { asset: 'NATIVE', amount: toPolicyUnits(amount, decimals), decimals: 18 },
       (req as { travelRule?: never }).travelRule,
     );
 
@@ -168,8 +177,10 @@ export class TransfersService implements OnModuleInit, NativeApprovalHandler {
         asset,
         decimals,
         amount,
-        // 18-decimal equivalent, for readers that only know this field.
-        valueWei: toPolicyUnits(amount, decimals),
+        // 18-decimal equivalent, for readers that only know this field. A
+        // token amount is not native value, so it has none.
+        valueWei: splToken ? null : toPolicyUnits(amount, decimals),
+        ...(splToken ? { mint: splToken.mint } : {}),
         chainId: (req as EvmTransferRequest).chainId ?? null,
         data: (req as EvmTransferRequest).data ?? '',
         memo: (req as CosmosTransactionDto).memo ?? null,

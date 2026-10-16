@@ -4,6 +4,38 @@ import { ethers } from 'ethers';
 import { PG_POOL } from '../database/database.module';
 import { EvmRpcService } from './evm-rpc.service';
 import { SELECTOR_DECIMALS, SELECTOR_SYMBOL } from '../keys/erc20';
+import { ChainSignerClient } from '../keys/chain-signer-client';
+
+// Solana is registered under chain id 501 (SLIP-44), like the native chain.
+// A Solana mint is a base58 address and, unlike an EVM address, its case IS
+// the address: two mints can differ only in case. So Solana mints are stored
+// and compared exactly; EVM addresses are lowercased.
+export const SOLANA_CHAIN_ID = 501;
+const BASE58_ADDRESS = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+
+export function isSolanaMint(value: string): boolean {
+  if (!BASE58_ADDRESS.test(value)) return false;
+  try {
+    return ethers.decodeBase58(value) < 1n << 256n;
+  } catch {
+    return false;
+  }
+}
+
+// One place for "is this a valid address on this chain, and how is it stored".
+export function normaliseTokenAddress(chainId: number, address: string): string {
+  if (chainId === SOLANA_CHAIN_ID) {
+    if (!isSolanaMint(address)) {
+      throw new BadRequestException(`${address} is not a valid Solana mint address`);
+    }
+    return address;
+  }
+  try {
+    return ethers.getAddress(address).toLowerCase();
+  } catch {
+    throw new BadRequestException(`${address} is not a valid contract address`);
+  }
+}
 
 // Which contracts the platform will move money through, and on whose say-so.
 //
@@ -86,6 +118,10 @@ export class TokenRegistryService {
     private readonly rpc: EvmRpcService,
   ) {}
 
+  // Solana mints are read through mpc-signer, which holds the node access.
+  // A property rather than a provider, as in KeysService, so tests can swap it.
+  private chainSigner = new ChainSignerClient();
+
   // No withTenant: this is platform reference data, not customer rows, and
   // it is granted SELECT to the app role precisely so every tenant reads
   // the same answer about what USDC is.
@@ -112,9 +148,12 @@ export class TokenRegistryService {
   // Lowercased on both sides. EIP-55 gives every address two spellings and
   // a case-sensitive comparison is how a registered token fails to match
   // itself when the caller happens to checksum it.
+  // Solana mints compare exactly; see SOLANA_CHAIN_ID.
   async byContract(chainId: number, contractAddress: string): Promise<Token | null> {
     const res = await this.pool.query<TokenRow>(
-      `SELECT ${COLUMNS} FROM tokens WHERE chain_id = $1 AND lower(contract_address) = lower($2)`,
+      chainId === SOLANA_CHAIN_ID
+        ? `SELECT ${COLUMNS} FROM tokens WHERE chain_id = $1 AND contract_address = $2`
+        : `SELECT ${COLUMNS} FROM tokens WHERE chain_id = $1 AND lower(contract_address) = lower($2)`,
       [chainId, contractAddress],
     );
     return res.rows[0] ? toToken(res.rows[0]) : null;
@@ -136,7 +175,9 @@ export class TokenRegistryService {
   // issuer, and a suspended one was withdrawn deliberately and should not
   // be quietly re-enabled by a retry.
   async requireTransactable(chainId: number, symbolOrAddress: string): Promise<Token> {
-    const token = symbolOrAddress.startsWith('0x')
+    const isAddress =
+      chainId === SOLANA_CHAIN_ID ? isSolanaMint(symbolOrAddress) : symbolOrAddress.startsWith('0x');
+    const token = isAddress
       ? await this.byContract(chainId, symbolOrAddress)
       : await this.bySymbol(chainId, symbolOrAddress);
 
@@ -159,7 +200,7 @@ export class TokenRegistryService {
       case 'unverified':
         throw new BadRequestException(
           `${token.symbol} on chain ${chainId} has never been verified against the chain. ` +
-            'Run verification so the contract\'s own symbol() and decimals() are checked ' +
+            'Run verification so the contract\'s own symbol() and decimals() (for a Solana mint, its decimals) are checked ' +
             'against the registry before anything is signed against it.',
         );
       case 'suspended':
@@ -179,17 +220,10 @@ export class TokenRegistryService {
     issuer?: string;
     notes?: string;
   }): Promise<Token> {
-    let address: string | null = null;
-    if (input.contractAddress) {
-      try {
-        // Checksum-validate, then store lowercase.
-        address = ethers.getAddress(input.contractAddress).toLowerCase();
-      } catch {
-        throw new BadRequestException(
-          `${input.contractAddress} is not a valid contract address`,
-        );
-      }
-    }
+    // EVM: checksum-validated, stored lowercase. Solana: stored as given.
+    const address = input.contractAddress
+      ? normaliseTokenAddress(input.chainId, input.contractAddress)
+      : null;
 
     const res = await this.pool.query<TokenRow>(
       `INSERT INTO tokens (chain_id, contract_address, symbol, name, decimals,
@@ -216,12 +250,11 @@ export class TokenRegistryService {
   // Records a contract address against a token that was registered without
   // one. Returns it to 'unverified', never straight to usable.
   async setAddress(tokenId: string, contractAddress: string): Promise<Token> {
-    let address: string;
-    try {
-      address = ethers.getAddress(contractAddress).toLowerCase();
-    } catch {
-      throw new BadRequestException(`${contractAddress} is not a valid contract address`);
+    const existing = await this.byId(tokenId);
+    if (!existing) {
+      throw new NotFoundException(`no token ${tokenId}`);
     }
+    const address = normaliseTokenAddress(existing.chainId, contractAddress);
     const res = await this.pool.query<TokenRow>(
       `UPDATE tokens
           SET contract_address = $2,
@@ -274,6 +307,10 @@ export class TokenRegistryService {
         `${token.symbol} has no contract address recorded, so there is nothing to verify. ` +
           'Record the address obtained from the issuer first.',
       );
+    }
+
+    if (token.chainId === SOLANA_CHAIN_ID) {
+      return this.verifySolanaMint(token);
     }
 
     let onChainSymbol: string;
@@ -331,6 +368,41 @@ export class TokenRegistryService {
     this.logger.log(
       `verified ${token.symbol} at ${token.contractAddress} on chain ${token.chainId}`,
     );
+    return toToken(res.rows[0]);
+  }
+
+  // A Solana mint has no on-chain symbol (token metadata is a separate,
+  // optional program), so what is checked is what the chain does say: the
+  // address is a mint owned by the Token program -- not Token-2022, not some
+  // other account -- and its decimals match the row. The mint address itself
+  // is the identity, which is why it must come from the issuer.
+  private async verifySolanaMint(token: Token): Promise<Token> {
+    let decimals: number;
+    try {
+      decimals = (await this.chainSigner.solanaTokenMint(token.contractAddress!)).decimals;
+    } catch (err) {
+      const message = (err as Error).message;
+      await this.recordVerificationFailure(token.tokenId, message);
+      throw new BadRequestException(
+        `could not verify ${token.symbol} at ${token.contractAddress} on Solana: ${message}`,
+      );
+    }
+    if (decimals !== token.decimals) {
+      const detail = `the mint reports ${decimals} decimals, the registry says ${token.decimals}`;
+      await this.recordVerificationFailure(token.tokenId, detail);
+      throw new BadRequestException(
+        `${token.contractAddress} on Solana is not the token this row describes: ${detail}. The token has been left unusable.`,
+      );
+    }
+    const res = await this.pool.query<TokenRow>(
+      `UPDATE tokens
+          SET status = 'verified', verified_symbol = NULL, verified_decimals = $2,
+              verified_at = NOW(), verification_error = NULL, updated_at = NOW()
+        WHERE token_id = $1
+        RETURNING ${COLUMNS}`,
+      [token.tokenId, decimals],
+    );
+    this.logger.log(`verified ${token.symbol} at ${token.contractAddress} on Solana`);
     return toToken(res.rows[0]);
   }
 

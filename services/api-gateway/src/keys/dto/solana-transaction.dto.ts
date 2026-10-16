@@ -14,9 +14,18 @@ export class SolanaTransactionDto {
   destination: string;
 
   // Lamports (1 SOL = 1,000,000,000), base-10, as a string so no precision
-  // is lost to a JavaScript number.
-  @Matches(/^[1-9][0-9]{0,18}$/, { message: 'amount must be a positive integer number of lamports, as a string' })
+  // is lost to a JavaScript number. With `token` set, the token's base units
+  // instead (1 USDC = 1,000,000).
+  @Matches(/^[1-9][0-9]{0,18}$/, { message: 'amount must be a positive integer number of base units (lamports for SOL), as a string' })
   amount: string;
+
+  // An SPL token to send instead of SOL: its registry symbol ("USDC") or its
+  // mint address. It must be registered and verified on Solana (chain 501).
+  // The destination is still the recipient's WALLET; the platform derives
+  // the token accounts and creates the recipient's if needed.
+  @IsOptional()
+  @Matches(/^([A-Za-z0-9.\-]{1,32}|[1-9A-HJ-NP-Za-km-z]{32,44})$/, { message: 'token must be a registered symbol or a base58 mint address' })
+  token?: string;
 
   // Assemble and verify without relaying. Off by default is wrong for a
   // payment API, so it defaults to relaying and this opts out.

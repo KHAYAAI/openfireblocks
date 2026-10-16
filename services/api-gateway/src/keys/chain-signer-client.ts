@@ -21,6 +21,33 @@ export interface SolanaPrepareResult {
   last_valid_block_height: number;
 }
 
+export interface SolanaTokenPrepareResult {
+  message_hex: string;
+  from: string;
+  to: string;
+  mint: string;
+  source_token_account: string;
+  destination_token_account: string;
+  creates_token_account: boolean;
+  amount: string;
+  decimals: number;
+  fee: string;
+  rent: string;
+  sol_balance: string;
+  token_balance: string;
+  blockhash: string;
+  last_valid_block_height: number;
+}
+
+export interface SolanaTokenBalance {
+  owner: string;
+  mint: string;
+  token_account: string;
+  exists: boolean;
+  amount: string;
+  frozen: boolean;
+}
+
 export interface SolanaFinalizeResult {
   signature: string;
   raw_tx_base64: string;
@@ -123,6 +150,16 @@ export class ChainSignerClient {
   }
   solanaStatus(signature: string): Promise<SolanaStatus> {
     return this.get('/solana/status', { signature });
+  }
+  // SPL tokens (Token program only; the signer refuses Token-2022 mints).
+  solanaTokenMint(mint: string): Promise<{ mint: string; program: string; decimals: number; supply: string }> {
+    return this.get('/solana/token/mint', { mint });
+  }
+  solanaTokenBalance(owner: string, mint: string): Promise<SolanaTokenBalance> {
+    return this.get('/solana/token/balance', { owner, mint });
+  }
+  solanaTokenPrepare(req: { pubkey_hex: string; destination: string; mint: string; amount: string; decimals: number }): Promise<SolanaTokenPrepareResult> {
+    return this.request('POST', '/solana/token/prepare', req);
   }
 
   // ---- Cosmos ----

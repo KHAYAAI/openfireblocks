@@ -42,7 +42,7 @@ import {
   formatUnits,
   parseUnits,
 } from './erc20';
-import { TokenRegistryService } from '../tokens/token-registry.service';
+import { SOLANA_CHAIN_ID, TokenRegistryService } from '../tokens/token-registry.service';
 import { EvmRpcService } from '../tokens/evm-rpc.service';
 import { TokenTransferDto } from './dto/token-transfer.dto';
 import { GovernedContracts } from './governed-contracts';
@@ -1208,8 +1208,8 @@ export class KeysService {
   // Same shape as sendBitcoin: policy, then the signer prepares (and refuses
   // overdrafts, rent violations and unfunded destinations before any
   // ceremony), then one threshold ceremony over the message, then the signer
-  // verifies the signature against the fee payer and relays. SPL tokens are
-  // not offered.
+  // verifies the signature against the fee payer and relays. With `token`
+  // set, the same route sends an SPL token instead; see sendSolanaToken.
   async sendSolana(customer: Customer, keyId: string, req: SolanaTransactionDto, opts: SendOptions = {}) {
     await this.enforceControls(customer, 'solana', req.destination);
     const requestId = req.idempotencyKey ?? uuidv4();
@@ -1229,6 +1229,10 @@ export class KeysService {
       from = (await this.chainSigner.solanaAddress(key.public_key)).address;
     } catch (err) {
       throw this.translateSignerError(err, 'deriving the Solana address');
+    }
+
+    if (req.token) {
+      return this.sendSolanaToken(customer, keyId, key, from, requestId, req, opts);
     }
 
     const travelRecord = await this.governNativeSpend(
@@ -1289,6 +1293,143 @@ export class KeysService {
       decimals: 9,
       fee: prepared.fee,
       balance_before: prepared.balance,
+      blockhash: prepared.blockhash,
+      last_valid_block_height: prepared.last_valid_block_height,
+      signature: finalized.signature,
+      raw_transaction: finalized.raw_tx_base64,
+      broadcast: finalized.broadcast,
+      parties: signed.parties,
+      threshold: key.threshold,
+    };
+  }
+
+  // What an SPL token reference names, for showing a parked transfer to
+  // approvers. Refuses a token that is not registered and verified.
+  async resolveSolanaToken(ref: string): Promise<{ asset: string; decimals: number; pegCurrency?: string; mint: string }> {
+    if (!this.tokens) {
+      throw new ServiceUnavailableException('the token registry is not configured, so token transfers cannot be signed');
+    }
+    const token = await this.tokens.requireTransactable(SOLANA_CHAIN_ID, ref);
+    if (!token.contractAddress) {
+      throw new BadRequestException(`${token.symbol} on Solana has no mint address recorded`);
+    }
+    return { asset: token.symbol, decimals: token.decimals, pegCurrency: token.pegCurrency ?? undefined, mint: token.contractAddress };
+  }
+
+  // An SPL token from a threshold Ed25519 key. The token must be in the
+  // registry and verified (a mint owned by the Token program, decimals read
+  // from the chain), so a symbol means one mint for every tenant. Policy and
+  // Travel Rule see the token and its amount, as for an ERC-20 transfer; the
+  // signer then checks the token balance, the SOL for the fee and for the
+  // recipient's token account rent, and that the registry's decimals still
+  // match the chain -- all before the ceremony.
+  private async sendSolanaToken(
+    customer: Customer,
+    keyId: string,
+    key: Awaited<ReturnType<KeysService['loadSignableKey']>>,
+    from: string,
+    requestId: string,
+    req: SolanaTransactionDto,
+    opts: SendOptions,
+  ) {
+    if (!this.tokens) {
+      throw new ServiceUnavailableException(
+        'the token registry is not configured, so token transfers cannot be signed',
+      );
+    }
+    const token = await this.tokens.requireTransactable(SOLANA_CHAIN_ID, req.token!);
+    if (!token.contractAddress) {
+      throw new BadRequestException(`${token.symbol} on Solana has no mint address recorded`);
+    }
+    const mint = token.contractAddress;
+
+    await this.enforcePolicy(customer, requestId, {
+      to: req.destination,
+      value: '0',
+      chainId: SOLANA_CHAIN_ID,
+      country: req.country,
+      asset: token.symbol,
+      assetAmount: req.amount,
+      assetDecimals: token.decimals,
+      pegCurrency: token.pegCurrency ?? undefined,
+      isAllowance: false,
+    }, opts.approvalGranted);
+    const travelRecord = await this.travelRuleBeforeSigning(
+      customer, requestId, SOLANA_CHAIN_ID, from, req.destination,
+      { asset: token.symbol, amount: req.amount, decimals: token.decimals, pegCurrency: token.pegCurrency ?? undefined },
+      req.travelRule,
+    );
+
+    let prepared;
+    try {
+      prepared = await this.chainSigner.solanaTokenPrepare({
+        pubkey_hex: key.public_key!, destination: req.destination, mint, amount: req.amount, decimals: token.decimals,
+      });
+    } catch (err) {
+      throw this.translateSignerError(err, 'preparing the token transfer');
+    }
+
+    const signed = await this.runSigningCeremony(
+      key, keyId, customer.customer_id, requestId, prepared.message_hex,
+    );
+    const signature = signed.signature.replace(/^0x/, '');
+    if (signature.length !== 128) {
+      throw new ServiceUnavailableException(
+        `the ceremony returned a ${signature.length / 2}-byte signature; an Ed25519 signature is 64 bytes`,
+      );
+    }
+
+    let finalized;
+    try {
+      finalized = await this.chainSigner.solanaFinalize({
+        message_hex: prepared.message_hex, signature_hex: signature, broadcast: req.broadcast ?? true,
+      });
+    } catch (err) {
+      throw this.translateSignerError(err, 'assembling the token transfer');
+    }
+
+    await this.recordTransfer(customer, requestId, SOLANA_CHAIN_ID, 'solana', {
+      to: req.destination, value: '0', data: null,
+      signedTx: finalized.raw_tx_base64, txHash: finalized.signature,
+      intent: {
+        policyTo: req.destination,
+        asset: token.symbol,
+        assetAmount: req.amount,
+        assetDecimals: token.decimals,
+        pegCurrency: token.pegCurrency ?? undefined,
+        effectiveTo: req.destination,
+        effectiveAmount: req.amount,
+        contractAddress: mint,
+        method: 'transferChecked',
+      },
+    });
+    const travelRule = travelRecord
+      ? { record_id: travelRecord, ...(await this.travelRule!.completeAfterSigning(customer.customer_id, travelRecord, finalized.signature)) }
+      : undefined;
+
+    if (finalized.broadcast) {
+      this.announce(customer.customer_id, 'transaction.broadcast', {
+        key_id: keyId, blockchain: 'solana', signature: finalized.signature,
+        to: req.destination, amount: req.amount, asset: token.symbol, fee: prepared.fee,
+      });
+    }
+    return {
+      travel_rule: travelRule,
+      request_id: requestId,
+      key_id: keyId,
+      from,
+      to: req.destination,
+      amount: req.amount,
+      asset: token.symbol,
+      decimals: token.decimals,
+      mint,
+      source_token_account: prepared.source_token_account,
+      destination_token_account: prepared.destination_token_account,
+      created_token_account: prepared.creates_token_account,
+      fee: prepared.fee,
+      rent: prepared.rent,
+      token_balance_before: prepared.token_balance,
+      sol_balance_before: prepared.sol_balance,
       blockhash: prepared.blockhash,
       last_valid_block_height: prepared.last_valid_block_height,
       signature: finalized.signature,
@@ -1456,7 +1597,19 @@ export class KeysService {
       if (key.blockchain === 'solana') {
         const { address } = await this.chainSigner.solanaAddress(key.public_key);
         const b = await this.chainSigner.solanaBalance(address);
-        return { key_id: keyId, blockchain: 'solana', address, balances: [{ asset: 'SOL', amount: b.lamports, decimals: b.decimals }] };
+        const balances: Array<{ asset: string; amount: string; decimals: number; mint?: string; token_account?: string; error?: string }> =
+          [{ asset: 'SOL', amount: b.lamports, decimals: b.decimals }];
+        // Verified SPL tokens too. One unreadable token is reported on its
+        // own line rather than hiding the SOL balance.
+        const tokens = this.tokens ? (await this.tokens.list(SOLANA_CHAIN_ID)).filter((t) => t.status === 'verified' && t.contractAddress) : [];
+        const reads = await Promise.allSettled(tokens.map((t) => this.chainSigner.solanaTokenBalance(address, t.contractAddress!)));
+        reads.forEach((r, i) => {
+          const t = tokens[i];
+          balances.push(r.status === 'fulfilled'
+            ? { asset: t.symbol, amount: r.value.amount, decimals: t.decimals, mint: t.contractAddress!, token_account: r.value.token_account }
+            : { asset: t.symbol, amount: '0', decimals: t.decimals, mint: t.contractAddress!, error: (r.reason as Error).message });
+        });
+        return { key_id: keyId, blockchain: 'solana', address, balances };
       }
       const { address } = await this.chainSigner.cosmosAddress(key.public_key);
       const b = await this.chainSigner.cosmosBalance(address, denom);

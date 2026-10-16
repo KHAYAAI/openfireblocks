@@ -23,7 +23,9 @@ export class RegisterTokenDto {
   // asset the platform intends to support and whose address has to come
   // from the issuer rather than from a search result.
   @IsOptional()
-  @Matches(/^0x[0-9a-fA-F]{40}$/, { message: 'contractAddress must be a 20-byte hex address' })
+  @Matches(/^(0x[0-9a-fA-F]{40}|[1-9A-HJ-NP-Za-km-z]{32,44})$/, {
+    message: 'contractAddress must be a 20-byte hex address (EVM) or a base58 mint address (Solana)',
+  })
   contractAddress?: string;
 
   @IsString()
@@ -58,7 +60,9 @@ export class RegisterTokenDto {
 }
 
 export class SetTokenAddressDto {
-  @Matches(/^0x[0-9a-fA-F]{40}$/, { message: 'contractAddress must be a 20-byte hex address' })
+  @Matches(/^(0x[0-9a-fA-F]{40}|[1-9A-HJ-NP-Za-km-z]{32,44})$/, {
+    message: 'contractAddress must be a 20-byte hex address (EVM) or a base58 mint address (Solana)',
+  })
   contractAddress: string;
 }
 

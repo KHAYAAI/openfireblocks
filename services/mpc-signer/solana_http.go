@@ -20,9 +20,7 @@ import (
 // against the party pods, and comes back with the signature to turn into a
 // transaction (/solana/finalize). This service holds no share.
 //
-// Native SOL only. SPL tokens need associated-token-account derivation and
-// creation, a different instruction set and a different fee shape; they are
-// not offered rather than offered half-working.
+// Native SOL here; SPL tokens are in solana_spl_http.go and share finalize.
 
 type solanaPrepareRequest struct {
 	// PubKeyHex is the threshold key's 32-byte Ed25519 public key. Its base58
