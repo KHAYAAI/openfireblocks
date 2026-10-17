@@ -5,8 +5,15 @@ on:
     branches:
       - main
       - claude/openfireblocks-main
-  # Run by hand for the first deploy, before relying on pushes.
+  # Run by hand to prove image signing before relying on pushes.
   workflow_dispatch:
+    inputs:
+      skip_gates:
+        description: >-
+          Build, sign and attach SBOMs only: skip the scan and test gates and
+          the deploy jobs. For the first signing proof; never for a release.
+        type: boolean
+        default: false
 
 # Least privilege by default; jobs that need more ask for it themselves.
 permissions:
@@ -101,6 +108,9 @@ jobs:
   build:
     name: Build ${{ matrix.service }}
     needs: [security-scan, test, services]
+    # The gates must pass, unless a person ran this by hand asking to skip
+    # them (skip_gates). A push can never skip them.
+    if: ${{ !cancelled() && needs.services.result == 'success' && (inputs.skip_gates == true || (needs.security-scan.result == 'success' && needs.test.result == 'success')) }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -135,12 +145,12 @@ jobs:
           context: ./services/${{ matrix.service }}
           file: ./services/${{ matrix.service }}/Dockerfile
           push: true
-          # One repository per service, tagged with the commit: the layout the
-          # chart and scripts/build-images.sh use (registry/<service>:<tag>).
+          # One repository per service, tagged with the commit only: the layout the
+          # chart and scripts/build-images.sh use (registry/<service>:<tag>). No
+          # :latest, because the registries are tag-immutable.
           # The repositories must exist before the first push.
           tags: |
             ${{ secrets.ECR_REGISTRY }}/${{ matrix.service }}:${{ github.sha }}
-            ${{ secrets.ECR_REGISTRY }}/${{ matrix.service }}:latest
           cache-from: type=gha,scope=${{ matrix.service }}
           cache-to: type=gha,mode=max,scope=${{ matrix.service }}
 
@@ -183,6 +193,7 @@ jobs:
   deploy-staging:
     name: Deploy to Staging
     needs: build
+    if: ${{ !inputs.skip_gates }}
     runs-on: ubuntu-latest
     permissions:
       contents: read

@@ -86,7 +86,10 @@ real registry. SOC 2 CC6.8 is marked "partial" until it has.
    - variable `AWS_REGION`.
    - The workflow now logs in with that role. It previously had no AWS credentials, and it pointed at ECR
      Public; both are fixed in `deploy.yaml`.
-4. **Run it once:** Actions → *Deploy* → *Run workflow*.
+4. **Run it once:** merge the branch into the default branch first (the *Run workflow* button only appears for
+   workflows on the default branch). Then Actions → *Deploy Production* → *Run workflow*, with **skip_gates ticked**.
+   - The scan and test gates need a Snyk token and a repaired test job; `skip_gates` builds, signs and attaches
+     SBOMs only, and skips every deploy job. A push can never skip the gates.
 5. **Verify it from your laptop:**
    ```bash
    REPO=KHAYAAI/openfireblocks scripts/verify-image.sh \
