@@ -1,4 +1,4 @@
-import { Inject, Injectable, Logger, BadRequestException, NotFoundException } from '@nestjs/common';
+import { Inject, Injectable, Logger, BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { Pool } from 'pg';
 import { ethers } from 'ethers';
 import { PG_POOL } from '../database/database.module';
@@ -225,25 +225,40 @@ export class TokenRegistryService {
       ? normaliseTokenAddress(input.chainId, input.contractAddress)
       : null;
 
-    const res = await this.pool.query<TokenRow>(
-      `INSERT INTO tokens (chain_id, contract_address, symbol, name, decimals,
-                           peg_currency, issuer, status, notes)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-       RETURNING ${COLUMNS}`,
-      [
-        input.chainId,
-        address,
-        input.symbol,
-        input.name,
-        input.decimals,
-        input.pegCurrency ?? null,
-        input.issuer ?? null,
-        // Never 'verified' on registration, whatever the caller wants.
-        // Verified means a node agreed, and no node has been asked yet.
-        address ? 'unverified' : 'awaiting_address',
-        input.notes ?? null,
-      ],
-    );
+    let res;
+    try {
+      res = await this.pool.query<TokenRow>(
+        `INSERT INTO tokens (chain_id, contract_address, symbol, name, decimals,
+                             peg_currency, issuer, status, notes)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         RETURNING ${COLUMNS}`,
+        [
+          input.chainId,
+          address,
+          input.symbol,
+          input.name,
+          input.decimals,
+          input.pegCurrency ?? null,
+          input.issuer ?? null,
+          // Never 'verified' on registration, whatever the caller wants.
+          // Verified means a node agreed, and no node has been asked yet.
+          address ? 'unverified' : 'awaiting_address',
+          input.notes ?? null,
+        ],
+      );
+    } catch (err) {
+      // 23505 = unique_violation: this chain already has the symbol, or the
+      // contract. A caller error, not a server one -- it used to be a 500.
+      if ((err as { code?: string }).code === '23505') {
+        throw new ConflictException(
+          `a token with symbol ${input.symbol}` +
+            (address ? ` or contract ${address}` : '') +
+            ` is already registered on chain ${input.chainId}. A symbol means one contract per chain; ` +
+            'use a different symbol for a different contract (for example USDC-DEV for a test token).',
+        );
+      }
+      throw err;
+    }
     return toToken(res.rows[0]);
   }
 

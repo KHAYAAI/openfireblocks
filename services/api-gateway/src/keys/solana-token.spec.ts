@@ -1,4 +1,4 @@
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { KeysService } from './keys.service';
 import { PostgresService } from '../database/postgres.service';
 import { PolicyService } from '../policies/policy.service';
@@ -206,5 +206,16 @@ describe('verifying a Solana mint', () => {
 
     r = registry(row, { status: 422, body: { error: 'mint X is a Token-2022 mint; only the original Token program is supported' } });
     await expect(r.service.verify('t-usdc')).rejects.toThrow(/Token-2022/);
+  });
+});
+
+describe('registering a token that already exists', () => {
+  it('answers 409 with what to do, not a 500', async () => {
+    const pool = { query: jest.fn().mockRejectedValue(Object.assign(new Error('dup'), { code: '23505' })) };
+    const registry = new TokenRegistryService(pool as never, {} as never);
+    await expect(registry.register({ chainId: 501, contractAddress: USDC_MINT, symbol: 'USDC', name: 'USD Coin', decimals: 6 }))
+      .rejects.toThrow(/already registered on chain 501.*USDC-DEV/);
+    await expect(registry.register({ chainId: 501, contractAddress: USDC_MINT, symbol: 'USDC', name: 'USD Coin', decimals: 6 }))
+      .rejects.toBeInstanceOf(ConflictException);
   });
 });
