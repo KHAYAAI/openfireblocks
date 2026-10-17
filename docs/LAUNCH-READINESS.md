@@ -97,7 +97,7 @@ change what the platform is cleared for.
 | Default branch has **no branch protection** | **Open: owner action, part done (2026-10-12)** | Default branch renamed to `claude/openfireblocks-main` (not `main`; `deploy.yaml`/`test-and-build.yml` therefore stay dormant). Ruleset "Neo-rules" is active with the right rules (no deletion, no force push, PR required, 0 approvals) but **targets no branch**, and its required-status-checks list is empty: add target "Include default branch" and the CI checks. Deferred by the owner; does not block pilots |
 | **Dependabot alerts disabled**; secret scanning unknown | **Open: owner action, deferred** | Settings > Code security: Dependabot alerts, secret scanning, push protection. Does not block pilots; needed before the SOC 2 evidence window starts |
 | **POPIA s69** on outreach | **Held** | Follow-ups due 2026-10-16 stay unsent until counsel confirms |
-| Off-site backups never run against a real bucket | **Open: blocked** | Needs AWS access (connector re-authorisation or credentials) |
+| Off-site backups never run against a real bucket | **Done 2026-10-17, restore still open** | A full backup uploaded encrypted to a locked bucket and a delete was refused (`docs/evidence/2026-10-17-offsite-backup-s3.md`); a restore from it into a fresh cluster has not been done |
 | AWS baseline never run on the real account | **Open: blocked** | Same: re-authorise the AWS connector, or set `AWS_AUDIT_ROLE_ARN` |
 
 **Demo videos, 2026-10-12:** all four re-recorded on the full local stack (21/21 end-to-end
