@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - main
+      - claude/openfireblocks-main
+  # Run by hand for the first deploy, before relying on pushes.
+  workflow_dispatch:
 
 # Least privilege by default; jobs that need more ask for it themselves.
 permissions:
@@ -113,10 +116,17 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@885d1462b80bc1c1c7f0b00334ad271f09369c55 # v2
 
+      # Credentials first: ECR login needs them. A role assumed through GitHub
+      # OIDC, so no long-lived AWS key is stored in the repository.
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN_BUILD }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      # Private ECR (the repositories ECR_REGISTRY names), not ECR Public.
       - name: Login to ECR
         uses: aws-actions/amazon-ecr-login@5a88a04c91d5c6f97aae0d9be790e64d9b1d47b7 # v1
-        with:
-          registry-type: public
 
       - name: Build and push ${{ matrix.service }}
         id: push
@@ -186,6 +196,16 @@ jobs:
       - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4
 
       - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
+
+      # Reading signatures from a private registry needs a login too.
+      - name: Configure AWS credentials for the registry
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN_BUILD }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Login to ECR
+        uses: aws-actions/amazon-ecr-login@5a88a04c91d5c6f97aae0d9be790e64d9b1d47b7 # v1
 
       # Deploy only images this repository's deploy workflow signed. A tag
       # someone pushed by hand, or an image from another pipeline, fails here.
