@@ -29,6 +29,8 @@ First run of the supply-chain control in `.github/workflows/deploy.yaml` against
 - Only `api-gateway` was checked; the other 13 images were built and signed by the same job but not
   individually verified.
 - The two gate jobs failed and were skipped by `skip_gates`: Snyk needs `SNYK_TOKEN`, and the workflow's
-  `test` job runs an invalid command (`go test -coverage` at the repository root). A push to the default
-  branch will therefore not build until those are fixed.
+  `test` job ran an invalid command. **Fixed afterwards** (not yet run on GitHub): the test job now runs the
+  signer's Go tests and the gateway's unit tests (all pass locally without a database), and the Snyk step is
+  skipped with a visible warning when no token is set. Semgrep and gitleaks are unchanged and not yet seen
+  to pass in this workflow.
 - The deploy job's own signature check (before rolling out) has not run.
