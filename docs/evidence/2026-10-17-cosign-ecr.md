@@ -20,13 +20,14 @@ First run of the supply-chain control in `.github/workflows/deploy.yaml` against
   presence in the transparency log was verified offline; the certificate chained to the trusted authority.
   The certificate names workflow `deploy.yaml@refs/heads/claude/openfireblocks-main`, trigger
   `workflow_dispatch`, commit `8364ebe3240788ac6aedb585a056ce796e8badf1`.
+- `cosign verify-attestation --type spdxjson` on the same image and identity: **passed** (same checks), so the
+  SBOM attestation is signed by the same workflow.
 - The same command with identity `^https://github.com/OTHERORG/`: **refused** ("none of the expected
   identities matched"), naming the real signer. The check does discriminate.
 
 ## Not yet done
 - Only `api-gateway` was checked; the other 13 images were built and signed by the same job but not
   individually verified.
-- The SBOM attestation was not verified (`cosign verify-attestation`).
 - The two gate jobs failed and were skipped by `skip_gates`: Snyk needs `SNYK_TOKEN`, and the workflow's
   `test` job runs an invalid command (`go test -coverage` at the repository root). A push to the default
   branch will therefore not build until those are fixed.
