@@ -8,7 +8,7 @@ Pre-filled from the repository on 11 October 2026; **people, devices and account
 | Asset | Location | Owner | Class | Notes |
 |---|---|---|---|---|
 | Source code (all services, charts, Terraform) | GitHub `khayaai/openfireblocks` | Engineering lead | Public while the repository is public (R-21); otherwise Confidential | Default branch is `claude/openfireblocks-mvp-plan-hvr6p1`: consider renaming to `main` and protecting it |
-| Container images and SBOMs | Container registry [to complete] | Engineering lead | Internal | Signed with cosign |
+| Container images and SBOMs | Private Amazon ECR, eu-west-1, 14 repositories, tag-immutable, scan on push | Engineering lead | Internal | Signed with cosign |
 | ISMS and policy documents | This directory; Sprinto | ISMS owner | Internal | |
 | Filled-in ISMS records | Sprinto / Google Drive | ISMS owner | Confidential | Not in git |
 | Customer contracts and NDAs | Google Drive [to complete] | CEO | Confidential | |
