@@ -1,6 +1,6 @@
 # Launch readiness
 
-As of 2026-10-11, branch `claude/platform-explanation-h0st5y`. This is a
+As of 2026-10-17, branch `claude/platform-explanation-h0st5y`. This is a
 summary; `LAUNCH-CHECKLIST.md` is the evidence-based source and wins if they
 disagree.
 
@@ -8,7 +8,7 @@ disagree.
 
 | Audience | Verdict |
 |---|---|
-| Fintech, supervised pilot on testnet or capped balances | **Ready to start.** A real key generation and signature pass on a real cluster (lite profile and AWS full profile), with public HTTPS. An external pentest has run against the AWS deployment and every finding is fixed on this branch (the last fixes are not yet redeployed to staging). Threshold-signed transactions have been accepted by public test networks on four chains (see below); a Stripe run is still to do |
+| Fintech, supervised pilot on testnet or capped balances | **Ready to start.** A real key generation and signature pass on a real cluster (lite profile and AWS full profile), with public HTTPS. An external AI-driven pentest has run against the AWS deployment and every finding is fixed and was redeployed to staging on 2026-10-17 (a fourth run, covering the newest routes, is deferred until after the separate-hosts and HSM work). Threshold-signed transactions have been accepted by public test networks on four chains (see below); a Stripe run is still to do |
 | Banks, governments, uncapped mainnet funds | **Not ready. Bounded pilots only** |
 | Production | **Not ready.** Blocked by external work (audit, SOC 2, isolated hosts, legal), not by known engineering gaps |
 
@@ -53,7 +53,7 @@ independently audited, that OUSD / ZARP / ZARC transfers are proven, or that age
 Known limits and open items: EUR ceilings (900,000 global, 90,000 pro, 9,000 free) were chosen by engineering and
 need the founder's sign-off; the Stripe path has never charged a real card; the staging cluster resets its
 Helm settings on every `up.sh` (trust-proxy hops, EVM/Solana/Cosmos RPC, Cosmos gas price) and they must be
-reapplied; Solana SPL tokens are built (2026-10-16) but not yet run on devnet; the MCP server and the new agent routes have not been
+reapplied; Solana SPL tokens ran on devnet on 2026-10-17; the MCP server and the new agent routes have not been
 through a pentest round, agent limits are denominated in rand only, and the recordings' agent sentences are scripted
 (no language model in the loop); the independent human pentest, cryptographic
 audit, SOC 2 Type II, isolated hosts with HSM, live TRISA, a real custodian, legal/licensing and a capped mainnet
@@ -73,6 +73,33 @@ is retargeted.
 | Agents never receive Travel Rule personal data | **Tested.** No agent route returns IVMS101 names, addresses or ID numbers | 1 new test (13 in the agent suite) |
 
 Full gateway suite: 59 suites, 628 tests passing. Signer: all Go packages pass. 175 routes, all guarded or deliberately public.
+
+## Staging update, 2026-10-17
+
+**Verdict unchanged.** Staging now runs the current code, the items built on 2026-10-16 were proven on a public
+test network, and three controls that existed only on paper have each run once against real AWS. Everything
+below is evidenced in `docs/evidence/` and `docs/security/`; what it does **not** show is listed after the table.
+
+| Area | Result | Evidence |
+|---|---|---|
+| Staging redeploy | Rebuilt at `61079b5` with the existing secrets (not the dev defaults); 4 migrations applied (036-039); settings that `up.sh` resets are now one script (`~/reapply.sh`); smoke test **PASS** (real key generation, 2-of-3 signature recovers to the address, over-limit denied, cross-tenant refused) | `2026-10-17-staging-redeploy-spl-wallets-retention.md` |
+| Solana SPL token on devnet | Devnet USDC registered and verified from the chain (6 decimals); a 2-of-3 key sent 1 USDC, policy and the Travel Rule applied to the token amount. An unpriced token is treated as over the Travel Rule threshold and refused until details are given | same |
+| User wallets | A wallet was created, sent 0.5 USDC from its own key, then frozen: the wallet route (409), the key's own route (403) and the generic transfer route (403) all refused, with no signature produced | same |
+| Travel Rule retention | Dry run on staging: cutoff exactly five years back, 0 rows, logged; a 30-day period refused | same |
+| Signed images on a real registry | 14 images built, pushed to private ECR, signed keyless and given SBOM attestations by the deploy workflow through GitHub OIDC (no stored AWS key). `api-gateway`'s signature **and** its SBOM attestation verified; a wrong identity was rejected | `2026-10-17-cosign-ecr.md` |
+| Off-site backups | A full backup (database and key shares) uploaded encrypted to a Governance-locked bucket in another region; the backup login cannot delete; three faults found and fixed on the way (a wrong key, no CA bundle in the image, no Vault address for the backup) | `2026-10-17-offsite-backup-s3.md` |
+| Restore from the off-site copy | Fetched with only the bucket and the saved checksums, restored into scratch copies: **60 of 60** Vault key-share paths identical, the marker before the backup present and the one after absent; 207 seconds. Scratch copies and decrypted files deleted | `2026-10-17-dr-offsite-restore-scratch.md` |
+| Our own pentest checks of the new routes | 26 hand-run checks with two tenants (cross-tenant access, no or wrong credentials, malformed wallet and token input): all as expected, no findings | `docs/security/PENTEST-ROUND-4-PRECHECKS-2026-10-17.md` |
+| Small fixes found by doing it | Registering a duplicate token symbol answered 500 (now 409); the deploy workflow's gate jobs could never pass (now repaired), and it pushed `:latest` to tag-immutable repositories (removed); the backup chart had no Vault setting of its own (added); `reload-image.sh` rebuilds one image | commits `6e9b642`, `5cc526f`, `9a255a8`, `4a31b38` |
+| GitHub | The default branch is `claude/openfireblocks-main`; pull request #19 merged to it. The ruleset now has a bypass actor | |
+
+**What this does not show.**
+- Staging does not yet include the duplicate-symbol (409) fix; it needs another `up.sh` or an image reload.
+- Creating a recipient's token account (and the sender paying its rent) has not run on a public network: the recipient already had one. The unfreeze of a wallet through the console was not tried.
+- The two transaction links were not independently checked on the Solana explorer.
+- Only one of the 14 signed images was verified. The repaired gate jobs have not run on GitHub; a normal push to the default branch still needs a Snyk token (or that step stays skipped with a warning).
+- **No full rebuild from the off-site backup has been done**, so there is no measured recovery time. The nightly backup job has not yet been seen to run. The shares were decrypted onto a staging host for the restore check, acceptable for test keys only. The backup's Vault token on staging is the development root token.
+- The agent routes and MCP server were not part of the 26 checks and have still not been through a pentest round.
 
 ## Compliance and governance update, 2026-10-11 (evening)
 
@@ -243,7 +270,8 @@ re-run the job three times and bisect only if it fails identically each time.
 | Item | Needs | Owner |
 |---|---|---|
 | Watch for mpc-party ceremony timeouts recurring | Passed on the last two runs; re-run and bisect only if one recurs | Engineering, low priority |
-| Redeploy `8735cd4` (round-3 fixes) to staging, optional round 4 | Rebuild with `up.sh`, reapply the Helm settings that `up.sh` resets, re-run Shannon | You (or delegate back) |
+| Redeploy round-3 fixes to staging | **Done 2026-10-17** (at `61079b5`) | Done |
+| Pentest round 4 (Shannon) on the redeployed staging, including wallets, tokens, retention, agents | Deferred until after separate hosts and the HSM; our own checks are done. Setup notes and brief are saved; use the Anthropic-compatible DeepSeek endpoint and `--validate-model` first | You |
 | Solana devnet run | **Done 2026-10-11** (`docs/evidence/2026-10-11-solana-devnet.md`) | Done |
 | Stripe test run | A test key as repo secret `STRIPE_TEST_API_KEY` (CI then runs it) | You |
 | Cryptographic audit (tss-lib layer, `PermissionedToken.sol`) | Auditor contract; brief and plan in `docs/assurance/`; outreach emails drafted in `docs/pilot/OUTREACH-EMAILS.md`, not yet sent | You; longest lead time |
@@ -257,7 +285,7 @@ re-run the job three times and bisect only if it fails identically each time.
 | POPIA s69 position on outreach before the 2026-10-16 follow-ups | Counsel | You |
 | Sign Sprinto (or similar); approve policies; name ISMS owner, Information Officer, incident lead | Founder decisions and signatures | You |
 | Register the Information Officer; publish privacy notice and PAIA manual | Information Regulator portal; counsel review | You |
-| AWS baseline on the real account | Re-authorise the AWS connector, or set `AWS_AUDIT_ROLE_ARN` (SecurityAudit role) | You |
+| AWS baseline on the real account | Re-authorise the AWS connector, or set `AWS_AUDIT_ROLE_ARN` (SecurityAudit role). The account now also holds ECR, an OIDC role and a locked backup bucket, so run it again | You |
 
 ## Commercial and assurance outreach (started 2026-10-09)
 
@@ -308,23 +336,41 @@ Competitive note: Absa launched a bank-led digital-asset custody service (with R
 
 Any mainnet transfer, the TRISA link on the live network, the custody
 executor against anything but a stand-in, Stripe with a real key, signing
-parties on isolated hosts, off-site backups to a real bucket, AI-agent payments
-on a public network, the AWS baseline on the real account, and an independent
+parties on isolated hosts, a restore of the **whole platform** from the off-site
+backup into a fresh cluster (the database and key shares were restored into
+scratch copies and matched), the nightly backup job, AI-agent payments on a
+public network, the AWS baseline on the real account, and an independent
 human-led pentest or cryptographic audit. The token contract is unaudited.
 (A real cluster with public HTTPS, a real external AI-driven pentest with its
-findings fixed, and transfers accepted by public **test** networks on four chains
-are no longer on this list.)
+findings fixed and redeployed, transfers accepted by public **test** networks on
+four chains, an SPL token and a user-wallet transfer on devnet, signed images in
+a real registry, and an off-site backup in a real locked bucket are no longer on
+this list.)
 
-## Critical path
+## What is needed next (2026-10-17)
 
-1. Done: CI green on `5ab7a4f` and `56e6662`.
-2. Re-run Shannon against the fixed AWS deployment to confirm the 11
-   findings are actually closed end-to-end, not just unit-tested.
-3. Follow up the audit, pen-test and SOC 2 outreach on 2026-10-16 and engage a firm in each
-   category (the Shannon run does not substitute for the human test).
-4. Pick the SOC 2 firm and start the 6-12 month observation window.
-5. Done: Solana devnet (and Sepolia, Osmosis, Bitcoin testnet4). Still to do: Stripe test mode.
-6. Stand up isolated-host MPC parties and a hardware HSM.
-7. Protect the default branch and turn on Dependabot and secret scanning (this week; minutes of work).
-8. Sign a compliance platform, approve the policy pack, name the roles; start the SOC 2 window.
-9. Close `LAUNCH-CHECKLIST.md` section 1, then re-assess.
+In the order to do them. "You" means it needs a person with access or authority; "Engineering" can be done
+from here once you say go.
+
+| # | Step | Effort | Who | Why now |
+|---|---|---|---|---|
+| 1 | Merge this branch into the default branch (open a pull request) | 10 min | You | Images are built from the default branch, and it lacks the gate repair, the backup fixes and the evidence |
+| 2 | Check the nightly backup ran (a second backup id in the bucket after 02:17 UTC); delete the first, wrong access key in IAM | 5 min | You | The scheduled path has never been seen to run |
+| 3 | Verify the other 13 images' signatures and run the repaired Deploy workflow on a push (add a Snyk token or accept the skipped scan) | 1 hour | You, then Engineering | Supply-chain control is proven for one image only |
+| 4 | **Disaster-recovery rebuild (Part B):** fresh server, `up.sh`, restore database and key shares, stand the parties back up, sign with a restored key and check the address is unchanged, timed | half a day, a second instance for a day | You, with Engineering writing the commands | Gives the measured recovery time; the biggest open item in the backup story |
+| 5 | Redeploy staging with the 409 fix; try the two untried paths (a recipient with no token account; unfreeze in the console) | 1 hour | You | Closes the small gaps above |
+| 6 | **Signing parties on separate hosts** (three operators, three AWS accounts), then a new key generated on them | 1-2 weeks | Three people | The step between bounded pilots and real money |
+| 7 | **CloudHSM** for the single-key signer (check the hourly price first) | about a week | You | Hardware key custody for that path; the 2-of-3 shares are not covered by it |
+| 8 | **Pentest round 4** (Shannon), then commission the independent human-led test | 1-2 days, plus a vendor | You | Most useful on the final shape of the system (after 6 and 7) |
+| 9 | Re-run the AWS baseline check once the AWS connector is re-authorised | 30 min | You | New resources exist in the account |
+| 10 | Stripe test key as a repository secret | 5 min | You | Lets CI run the billing test |
+
+**Needs a decision or signature, not engineering:** engage the cryptographic auditor and the SOC 2 firm; sign
+the compliance platform and approve the policy pack; name the ISMS owner, Information Officer and incident
+lead; register the Information Officer; counsel on licensing, terms, privacy and POPIA s69; a custodian
+account and TRISA membership; insurance and a KYC/sanctions vendor; protect the default branch properly and
+turn on Dependabot and secret scanning.
+
+**What would change the verdict.** For banks and uncapped mainnet funds: steps 6, 7 and 8, the cryptographic
+audit, and SOC 2 Type II. For a supervised fintech pilot on testnet or capped balances, steps 1 to 5 are the
+ones that make it safer; none of them is a blocker to starting.
