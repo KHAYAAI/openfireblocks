@@ -1,0 +1,46 @@
+# Overlay for laptops: LITE=1 infrastructure/kind/up.sh
+#
+# Applied after values-kind.yaml. It narrows the deployment to the signing
+# path -- gateway, three MPC parties, signer, policy, worker -- and runs one
+# replica of each, so an ordinary laptop can complete a real 2-of-3 key
+# generation and a threshold signature.
+#
+# What this leaves out, and therefore what it does NOT prove: billing,
+# settlement, marketplace, compliance, webhooks and the policy API are not
+# deployed, and neither are redundant replicas, so none of the availability
+# behaviour of the full chart is exercised. Use the default (full) profile on
+# a bigger machine for that.
+#
+# The three MPC parties and the three-node cluster are unchanged: each party
+# still lands on its own node.
+
+apiGateway:
+  replicas: 1
+  # Doubled from the chart's 1Gi. If the gateway was being killed for memory
+  # on the first laptop run (never confirmed), this removes that cause; if it
+  # still stops, the previous container's log will show a real error.
+  resources:
+    requests: { cpu: 250m, memory: 512Mi }
+    limits: { cpu: "1", memory: 2Gi }
+
+mpcSigner:
+  replicas: 1
+
+policyService:
+  replicas: 1
+
+temporalWorker:
+  replicas: 1
+
+policyApi:
+  enabled: false
+settlement:
+  enabled: false
+billing:
+  enabled: false
+webhooks:
+  enabled: false
+marketplace:
+  enabled: false
+compliance:
+  enabled: false

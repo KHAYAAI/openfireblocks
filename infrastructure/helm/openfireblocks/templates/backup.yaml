@@ -1,0 +1,225 @@
+{{- if .Values.backup.enabled }}
+# Backups of Postgres (and Vault KV, if configured), taken on a schedule and
+# restorable on request. See services/backup and docs/PHASE3-BACKUP-RECOVERY-PROCEDURES.md.
+#
+# What this does NOT give you: the dumps land on a volume in this cluster, so a
+# cluster loss takes the backups with it. Pointing backup.storage at a
+# different failure domain (a snapshotted network volume in another zone, or
+# an S3-backed one) is the operator's job until an off-cluster storage backend
+# exists. Treat this as protection against bad deploys and operator error, not
+# against losing the cluster.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ofb.fullname" . }}-backup
+  labels:
+    {{- include "ofb.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backup
+spec:
+  replicas: 1
+  # One writer on a ReadWriteOnce volume: a rolling update would start the
+  # new pod while the old one still holds it.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: backup
+  template:
+    metadata:
+      labels:
+        {{- include "ofb.labels" . | nindent 8 }}
+        app.kubernetes.io/component: backup
+    spec:
+      serviceAccountName: {{ include "ofb.fullname" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: backup
+          image: {{ include "ofb.image" (dict "root" . "image" .Values.backup.image "tag" .Values.backup.tag) }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.backup.port }}
+          env:
+            - name: APP_ENV
+              value: production
+            - name: PORT
+              value: {{ .Values.backup.port | quote }}
+            # pg_dump needs to read every table, including those the tenant
+            # role cannot see, so this is the admin DSN.
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.external.databaseAdminUrlSecret }}
+                  key: database-admin-url
+            # Without this every route but /health answers 503: /restore and
+            # /dr/failover must not be callable by anything that can reach
+            # the pod.
+            - name: BACKUP_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.backup.apiTokenSecret }}
+                  key: backup-api-token
+            {{- if .Values.backup.standbyDatabaseUrlSecret }}
+            - name: STANDBY_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.backup.standbyDatabaseUrlSecret }}
+                  key: standby-database-url
+            {{- end }}
+            {{- if .Values.mpcSigner.vault.addr }}
+            - name: VAULT_ADDR
+              value: {{ .Values.mpcSigner.vault.addr | quote }}
+            - name: VAULT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.mpcSigner.vault.tokenSecret }}
+                  key: vault-token
+            {{- end }}
+            {{- if .Values.backup.offsite.enabled }}
+            # An encrypted copy outside the cluster (services/backup/offsite.go).
+            # Encrypted here with the key below before it leaves; the bucket
+            # owner never sees plaintext or the key.
+            - name: BACKUP_OFFSITE_BUCKET
+              value: {{ required "backup.offsite.bucket is required when backup.offsite.enabled" .Values.backup.offsite.bucket | quote }}
+            - name: BACKUP_OFFSITE_REGION
+              value: {{ .Values.backup.offsite.region | quote }}
+            {{- if .Values.backup.offsite.endpoint }}
+            - name: BACKUP_OFFSITE_ENDPOINT
+              value: {{ .Values.backup.offsite.endpoint | quote }}
+            {{- end }}
+            - name: BACKUP_OFFSITE_PREFIX
+              value: {{ .Values.backup.offsite.prefix | quote }}
+            - name: BACKUP_OFFSITE_KEY_FILE
+              value: /etc/backup-offsite/key
+            {{- if .Values.backup.offsite.credentialsSecret }}
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.backup.offsite.credentialsSecret }}
+                  key: aws-access-key-id
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.backup.offsite.credentialsSecret }}
+                  key: aws-secret-access-key
+            {{- end }}
+            {{- end }}
+          volumeMounts:
+            - name: dumps
+              mountPath: /var/lib/openfireblocks-backup
+            {{- if .Values.backup.offsite.enabled }}
+            - name: offsite-key
+              mountPath: /etc/backup-offsite
+              readOnly: true
+            {{- end }}
+            # pg_dump writes scratch files under /tmp.
+            - name: tmp
+              mountPath: /tmp
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          resources:
+            {{- toYaml .Values.backup.resources | nindent 12 }}
+      volumes:
+        - name: dumps
+          persistentVolumeClaim:
+            claimName: {{ include "ofb.fullname" . }}-backup
+        - name: tmp
+          emptyDir: {}
+        {{- if .Values.backup.offsite.enabled }}
+        - name: offsite-key
+          secret:
+            secretName: {{ required "backup.offsite.keySecret is required" .Values.backup.offsite.keySecret }}
+            defaultMode: 0440
+            items:
+              - key: backup-offsite-key
+                path: key
+        {{- end }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "ofb.fullname" . }}-backup
+  labels:
+    {{- include "ofb.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backup
+  annotations:
+    # Never garbage-collected by a helm uninstall: it holds the only copy.
+    helm.sh/resource-policy: keep
+spec:
+  accessModes: [ReadWriteOnce]
+  {{- if .Values.backup.storage.className }}
+  storageClassName: {{ .Values.backup.storage.className | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.backup.storage.size }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ofb.fullname" . }}-backup
+  labels:
+    {{- include "ofb.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backup
+spec:
+  selector:
+    app.kubernetes.io/component: backup
+  ports:
+    - name: http
+      port: {{ .Values.backup.port }}
+      targetPort: http
+{{- if .Values.backup.schedule.enabled }}
+---
+# Asks the service to take a full backup. The service keeps the volume; this
+# job only knocks on the door, so it needs no volume and no database access.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "ofb.fullname" . }}-backup
+  labels:
+    {{- include "ofb.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backup-schedule
+spec:
+  schedule: {{ .Values.backup.schedule.cron | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        spec:
+          restartPolicy: Never
+          securityContext:
+            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+          containers:
+            - name: trigger
+              image: {{ .Values.backup.schedule.image }}
+              securityContext:
+                {{- toYaml .Values.containerSecurityContext | nindent 16 }}
+              env:
+                - name: BACKUP_API_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.backup.apiTokenSecret }}
+                      key: backup-api-token
+              # -f makes a non-2xx a failed job, so a backup that did not
+              # happen is a red job rather than a quiet success.
+              command:
+                - sh
+                - -c
+                - >-
+                  curl -fsS --max-time 3600 -X POST
+                  -H "Authorization: Bearer ${BACKUP_API_TOKEN}"
+                  http://{{ include "ofb.fullname" . }}-backup:{{ .Values.backup.port }}/backup/full
+{{- end }}
+{{- end }}

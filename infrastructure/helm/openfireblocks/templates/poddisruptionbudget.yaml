@@ -1,0 +1,29 @@
+{{- if .Values.podDisruptionBudgets.enabled }}
+# Keeps a node drain from taking down every replica of a service at once.
+# Only for components that run more than one replica: a budget on a single
+# replica would block drains forever. Signing parties are one pod each by
+# design and are not covered; draining a node that holds one is a deliberate
+# act (see docs/deployment/SEPARATE-HOSTS.md).
+{{- $multi := dict
+  "api-gateway" .Values.apiGateway.replicas
+  "mpc-signer" .Values.mpcSigner.replicas
+  "policy-service" .Values.policyService.replicas
+  "temporal-worker" .Values.temporalWorker.replicas
+}}
+{{- range $component, $replicas := $multi }}
+{{- if gt (int $replicas) 1 }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "ofb.fullname" $ }}-{{ $component }}
+  labels:
+    {{- include "ofb.labels" $ | nindent 4 }}
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: {{ $component }}
+{{- end }}
+{{- end }}
+{{- end }}
