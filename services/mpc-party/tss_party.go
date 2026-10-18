@@ -334,6 +334,14 @@ func driveKeygen[S any](
 			m.failCeremony(ceremonyID, fmt.Errorf("tss-lib protocol error: %w", err))
 			return
 		case save := <-endCh:
+			// Send what this party still owes its peers before finishing:
+			// see relayPending.
+			if err := relayPending(outCh, func(msg tsscommon.Message) error {
+				return m.relayMessage(ceremonyID, ceremony, msg)
+			}); err != nil {
+				m.failCeremony(ceremonyID, fmt.Errorf("failed to relay message: %w", err))
+				return
+			}
 			m.completeCeremony(ceremonyID, ceremony, wrap(save))
 			return
 		}

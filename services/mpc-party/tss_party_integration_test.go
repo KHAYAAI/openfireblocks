@@ -96,6 +96,10 @@ func runKeygenOverHTTPFor(t *testing.T, curve Curve, blockchain string) *sharedK
 		t.Cleanup(server.Close)
 	}
 
+	if curve != CurveEd25519 {
+		seedPreParams(t, managers[1], managers[2], managers[3])
+	}
+
 	ceremonyID := "integration-test-ceremony-" + string(curve) + "-" + blockchain
 	for i := 1; i <= n; i++ {
 		var err error
