@@ -22,7 +22,7 @@ is good, so the nightly job going red means "this is not yet safe".
 
 ## What is stored
 
-`<prefix>/<backup-id>/{postgres,vault,manifest}.enc`: AES-256-GCM in 1 MiB
+`<prefix>/<backup-id>/{postgres,vault,manifest,checksums}.enc`: AES-256-GCM in 1 MiB
 chunks, each bound to its position and to whether it is the last, so a
 reordered, altered or truncated object fails to decrypt. The SHA-256 of each
 plaintext is recorded in the backup's metadata and checked on the way back.
@@ -30,11 +30,14 @@ plaintext is recorded in the backup's metadata and checked on the way back.
 ## Restoring when the cluster is gone
 
 1. New cluster, same chart, same key secret, same bucket settings.
-2. `POST /offsite/fetch {"backup_id": "...", "tags": {"offsite_postgres_sha256": "...", ...}}`
-   with the backup token. The `tags` are in the backup's metadata; if the local
-   record is gone as well, use the ones you saved from the run's output.
-   It decrypts and verifies into a staging directory and refuses anything it
-   cannot check.
+2. `POST /offsite/fetch {"backup_id": "..."}` with the backup token. Find the id by
+   listing the bucket (`aws s3 ls s3://<bucket>/<prefix>/`); newest is last.
+   The service reads the checksums stored in the bucket beside the files
+   (`checksums.enc`, encrypted with the same key), decrypts and verifies each
+   file into a staging directory, and refuses anything it cannot check. You can
+   still pass `"tags"` with the `offsite_*_sha256` values from a run's output,
+   and those take precedence; a backup made before `checksums.enc` existed
+   needs them.
 3. Restore from those files with the usual procedure.
 
 ## Honest status

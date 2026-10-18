@@ -226,8 +226,8 @@ func TestACompletedBackupIsCopiedOffsiteAndCanBeFetchedBack(t *testing.T) {
 			t.Errorf("no receipt for %s: %v", name, meta.Tags)
 		}
 	}
-	if len(objs.m) != 3 {
-		t.Fatalf("%d objects uploaded, want 3", len(objs.m))
+	if len(objs.m) != 4 {
+		t.Fatalf("%d objects uploaded, want 4 (postgres, vault, manifest and their checksums)", len(objs.m))
 	}
 
 	// The cluster is gone: only the bucket, the key and the checksums remain.
@@ -239,9 +239,113 @@ func TestACompletedBackupIsCopiedOffsiteAndCanBeFetchedBack(t *testing.T) {
 	if string(got) != "contents of postgres" {
 		t.Errorf("restored %q", got)
 	}
-	// Without the recorded checksums it refuses rather than restoring unchecked.
-	if _, err := mgr.FetchOffsite(ctx, meta.ID, nil, t.TempDir()); err == nil {
-		t.Error("fetched with no checksums to verify against")
+}
+
+// The case the first rebuild test exposed: the cluster, and with it the
+// recorded checksums, is gone. Only the bucket and the key remain.
+func TestABackupCanBeFetchedFromTheBucketAndKeyAlone(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	mgr := NewBackupManager(&FilesystemBackupStorage{Dir: filepath.Join(dir, "meta")}, fakeDump{"v1", "vault", dir}, fakeDump{"p1", "postgres", dir})
+	objs := newMem()
+	key := key32(t)
+	st, _ := NewOffsiteStore(objs, "ofb", key)
+	mgr.SetOffsite(st)
+	meta, err := mgr.ExecuteFullBackup(ctx, "local")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A new cluster: same bucket and key, no local record, no tags.
+	fresh := NewBackupManager(&FilesystemBackupStorage{Dir: filepath.Join(t.TempDir(), "meta")}, fakeDump{"v1", "vault", dir}, fakeDump{"p1", "postgres", dir})
+	st2, _ := NewOffsiteStore(objs, "ofb", key)
+	fresh.SetOffsite(st2)
+	files, err := fresh.FetchOffsite(ctx, meta.ID, nil, filepath.Join(t.TempDir(), "restore"))
+	if err != nil {
+		t.Fatalf("a backup could not be fetched with only the bucket and the key: %v", err)
+	}
+	if got, _ := os.ReadFile(files["vault"]); string(got) != "contents of vault" {
+		t.Errorf("restored %q", got)
+	}
+
+	// Checksums the caller supplies still win over the stored ones.
+	bad := map[string]string{"offsite_postgres_sha256": "00", "offsite_vault_sha256": "00", "offsite_manifest_sha256": "00"}
+	if _, err := fresh.FetchOffsite(ctx, meta.ID, bad, t.TempDir()); err == nil {
+		t.Error("fetched against supplied checksums that do not match")
+	}
+}
+
+func TestStoredChecksumsAreNotTrustedBlindly(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	newMgr := func(objs *memObjects, key []byte) *BackupManager {
+		m := NewBackupManager(&FilesystemBackupStorage{Dir: filepath.Join(t.TempDir(), "meta")}, fakeDump{"v1", "vault", dir}, fakeDump{"p1", "postgres", dir})
+		st, _ := NewOffsiteStore(objs, "ofb", key)
+		m.SetOffsite(st)
+		return m
+	}
+	objs := newMem()
+	key := key32(t)
+	meta, err := newMgr(objs, key).ExecuteFullBackup(ctx, "local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	checksumsKey := "ofb/" + meta.ID + "/checksums.enc"
+	copyObjs := func() *memObjects {
+		c := newMem()
+		for k, v := range objs.m {
+			c.m[k] = append([]byte(nil), v...)
+		}
+		return c
+	}
+	fetch := func(o *memObjects, k []byte) error {
+		_, err := newMgr(o, k).FetchOffsite(ctx, meta.ID, nil, filepath.Join(t.TempDir(), "r"))
+		return err
+	}
+
+	// Missing: refuses rather than restoring unchecked.
+	missing := copyObjs()
+	delete(missing.m, checksumsKey)
+	if fetch(missing, key) == nil {
+		t.Error("fetched a backup that has no stored checksums and none supplied")
+	}
+
+	// Altered: authenticated encryption catches it.
+	altered := copyObjs()
+	altered.m[checksumsKey][len(altered.m[checksumsKey])-1] ^= 1
+	if fetch(altered, key) == nil {
+		t.Error("accepted altered checksums")
+	}
+
+	// Another backup's checksums put in this one's place.
+	other, err := newMgr(objs, key).ExecuteFullBackup(ctx, "local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	swapped := copyObjs()
+	swapped.m[checksumsKey] = append([]byte(nil), objs.m["ofb/"+other.ID+"/checksums.enc"]...)
+	if fetch(swapped, key) == nil {
+		t.Error("accepted another backup's checksums")
+	}
+
+	// A data file swapped for another backup's validly encrypted one: the
+	// stored checksum catches what encryption alone would accept.
+	swappedData := copyObjs()
+	swappedData.m["ofb/"+meta.ID+"/postgres.enc"] = append([]byte(nil), objs.m["ofb/"+other.ID+"/postgres.enc"]...)
+	// Same fake contents, so make the swap detectable: re-encrypt different data.
+	st, _ := NewOffsiteStore(swappedData, "ofb", key)
+	f := filepath.Join(dir, "other-postgres")
+	_ = os.WriteFile(f, []byte("a different database"), 0o600)
+	if _, err := st.Put(ctx, meta.ID, "postgres", f); err != nil {
+		t.Fatal(err)
+	}
+	if fetch(swappedData, key) == nil {
+		t.Error("accepted a data file that does not match the stored checksum")
+	}
+
+	// The wrong key reads nothing.
+	if fetch(objs, key32(t)) == nil {
+		t.Error("fetched with the wrong key")
 	}
 }
 
