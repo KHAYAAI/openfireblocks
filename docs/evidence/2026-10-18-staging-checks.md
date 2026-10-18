@@ -78,8 +78,9 @@ on the running gateway, and the token-account creation path that the first run d
   over-limit request denied, another tenant refused (404), and a 2-of-3 signature from the public API recovered to the
   key's address. Restarting the parties drops every earlier key from their memory (the shares stay sealed in Vault), so
   the older test keys on staging need a restore before they sign again.
-- Not shown: that the registry images built from `c585a2e` verify (the CloudShell signature check was still to be run
-  when this was written), and that the earlier test keys were restored.
+- **Signed images from the merged commit:** `~/verify-images.sh c585a2e60fce2a2283e6f194057bc665107f2503` in CloudShell
+  printed **14 PASS, problems: 0** (signature and SBOM attestation against the deploy workflow's identity).
+- Not shown: that the earlier test keys were restored.
 
 ## Old backup access key
 - The first (wrong) IAM access key for the backup writer is gone: the user has one working key.
