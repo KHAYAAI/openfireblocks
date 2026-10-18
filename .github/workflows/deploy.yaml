@@ -24,7 +24,12 @@ jobs:
     name: Security Scanning
     runs-on: ubuntu-latest
     steps:
+      # Full history: gitleaks scans the range of commits in the push, and a
+      # shallow checkout does not contain the range's first commit, so the scan
+      # failed before reading anything ("unknown revision") and blocked every build.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       
       # Needs a SNYK_TOKEN secret. Without one this step is skipped, loudly,
       # instead of failing the whole pipeline; Semgrep, gitleaks and the CI
