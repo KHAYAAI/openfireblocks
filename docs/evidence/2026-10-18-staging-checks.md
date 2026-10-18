@@ -102,5 +102,20 @@ on the running gateway, and the token-account creation path that the first run d
 - Not shown by this run: signing from the wallet's key after the unfreeze; a console screen (none exists); an admin with
   a second factor enrolled.
 
+## First real run of `restore-all-keys.sh`
+- On staging, after the party restart, the script found **23 active keys** and restored **21** of them on all three
+  parties, including the Solana keys, the Bitcoin keys and the user-wallet keys. A few had already been restored by the
+  earlier smoke test and were skipped.
+- **The two Cosmos keys were refused by every party**, with "the restored share controls 0x69... but was sealed against
+  cosmos1...; refusing to load it". Cause: at key generation the party seals the address written for the key's chain
+  (bech32 for Cosmos), but the restore re-derived the curve's default (Ethereum-style) address and compared the two, so a
+  Cosmos key could never match its own sealed address. The refusal was the safe outcome and no share was exposed.
+  **A proactive refresh of a Cosmos key had the same flaw** and would have been refused (confirmed by a test that reverts
+  only that half). Both now compare the public key, which determines every address the key can have, and keep the
+  address the key was created with. New test `TestACosmosKeyCanBeRefreshedAndRestored` (a real Cosmos DKG, a restore, a
+  refresh, a restore after the refresh); without the fix it fails with the production error.
+- Not shown: the two Cosmos keys restored on staging (its parties run the unfixed image until the next deploy), and a
+  signature from a Cosmos key after a restore.
+
 ## Not done
-- The rebuild on a fresh server (Part B of the disaster-recovery test).
+- The two Cosmos keys on staging (see above).
