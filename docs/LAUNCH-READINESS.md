@@ -109,10 +109,10 @@ below is evidenced in `docs/evidence/` and `docs/security/`; what it does **not*
 | Duplicate token symbol | Live on staging: registering `USDC-DEV` again answers **409** with an explanation |
 | Recipient with no token account | A send of 1 USDC-DEV to a fresh address **completed**: the platform created the token account, the sending key paid rent of 1,488,440 lamports (read from the node), fee 5,000 |
 | Solana explorer | The transaction above was checked by a person on the explorer: Success, Finalized, the fee payer is the first key, fee 0.000005 SOL |
-| Signed images | All **14** images for the first tag verify against the deploy workflow's identity (14 PASS). A rebuild from the merged default branch is pending (see below) |
+| Signed images | All **14** images for the first tag verify against the deploy workflow's identity (14 PASS). Rebuilt from the merged default branch (`2571281`): gates and all 14 builds passed, and all 14 new images verify too |
 | Old backup access key | Deleted; the backup login has one working key |
 | Saved secrets | Both tenant API keys return 200 against the platform, and the saved backup encryption key matches the cluster's (compared by fingerprint, never printed) |
-| Deploy gates | The first run with gates on failed at the secret scan (the shallow checkout lacked history); fixed in pull request #46 (full-history checkout). The 14 builds from the merged branch have not run yet |
+| Deploy gates | The first run with gates on failed at the secret scan (the shallow checkout lacked history); fixed in pull request #46 (full-history checkout). Re-run after the merge: both gates and the 14 builds passed. The same run's "Deploy to Staging" job fails at its AWS credentials step (not used by the single-server staging; not investigated) |
 
 **Still not shown.** A rebuild on a fresh server from the off-site backup, with a measured recovery time (Part B,
 runbook `docs/deployment/DR-REBUILD-RUNBOOK.md`); the unfreeze through the console; separate hosts; hardware HSM

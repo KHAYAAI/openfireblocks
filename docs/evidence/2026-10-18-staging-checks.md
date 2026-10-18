@@ -41,8 +41,16 @@ on the running gateway, and the token-account creation path that the first run d
   policy-service temporal-worker vault-pki-init vault-unseal billing webhooks marketplace settlement policy
   compliance backup`): **14 of 14 PASS** against the deploy workflow's identity. The images for the merged commit
   `6e62356` do not exist yet: the Deploy run's secret-scan gate failed (the checkout was shallow, so the scan's
-  commit range was missing), which skipped the builds. The fix is pull request #46; this record is to be extended
-  when those builds are verified.
+  commit range was missing), which skipped the builds. The fix was pull request #46, merged as `2571281`.
+- **Rebuilt from `2571281`:** Security Scanning, Run Tests and all 14 Build jobs succeeded on the Deploy run, and
+  `~/verify-images.sh 2571281b80042ebcf46ebbf45691efd23527bd7c` in CloudShell printed **14 PASS, problems: 0**
+  (signature and SBOM attestation, against the deploy workflow's identity). This is the first Deploy run in which
+  the gates ran and passed.
+- The same run's **Deploy to Staging** job failed at its first step, "Configure AWS credentials for the registry",
+  and the rest of that job was skipped. It targets a cluster setup that the single-server staging does not use;
+  the cause has not been investigated. The push-event CI run of the merged commit also had one failure,
+  `TestParticipantsCanBeRestoredFromSealedMaterialAndStillSign` ("timed out signing with restored shares"); the
+  pull-request run of the same commit passed it. Treated as a flake, not yet explained.
 
 ## Old backup access key
 - The first (wrong) IAM access key for the backup writer is gone: the user has one working key.
@@ -55,5 +63,4 @@ on the running gateway, and the token-account creation path that the first run d
 
 ## Not done
 - Unfreezing a wallet in the console (no console login for the demo tenant).
-- The images for the merged commit (see above).
 - The rebuild on a fresh server (Part B of the disaster-recovery test).
