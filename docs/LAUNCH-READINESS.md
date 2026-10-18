@@ -94,12 +94,29 @@ below is evidenced in `docs/evidence/` and `docs/security/`; what it does **not*
 | GitHub | The default branch is `claude/openfireblocks-main`; pull request #19 merged to it. The ruleset now has a bypass actor | |
 
 **What this does not show.**
-- Staging does not yet include the duplicate-symbol (409) fix; it needs another `up.sh` or an image reload.
-- Creating a recipient's token account (and the sender paying its rent) has not run on a public network: the recipient already had one. The unfreeze of a wallet through the console was not tried.
-- The two transaction links were not independently checked on the Solana explorer.
-- Only one of the 14 signed images was verified. The repaired gate jobs have not run on GitHub; a normal push to the default branch still needs a Snyk token (or that step stays skipped with a warning).
+- *(Closed on 2026-10-18, see the update below: the 409 fix is live, a recipient's token account was created on devnet, one transaction was checked on the explorer, and all 14 signatures were verified for the first tag.)* Still open from this list: the unfreeze of a wallet through the console was not tried, and a normal push to the default branch still needs a Snyk token (or that step stays skipped with a warning).
 - **No full rebuild from the off-site backup has been done**, so there is no measured recovery time. The nightly backup job has not yet been seen to run. The shares were decrypted onto a staging host for the restore check, acceptable for test keys only. The backup's Vault token on staging is the development root token.
 - The agent routes and MCP server were not part of the 26 checks and have still not been through a pentest round.
+
+## Staging update, 2026-10-18
+
+**Verdict unchanged.** The gaps listed under the 2026-10-17 update were worked through. Evidence is in
+`docs/evidence/2026-10-18-staging-checks.md`.
+
+| Area | Result |
+|---|---|
+| Nightly backup | The scheduled job ran by itself at 02:17:02 UTC: a third backup is in the bucket, with all three files |
+| Duplicate token symbol | Live on staging: registering `USDC-DEV` again answers **409** with an explanation |
+| Recipient with no token account | A send of 1 USDC-DEV to a fresh address **completed**: the platform created the token account, the sending key paid rent of 1,488,440 lamports (read from the node), fee 5,000 |
+| Solana explorer | The transaction above was checked by a person on the explorer: Success, Finalized, the fee payer is the first key, fee 0.000005 SOL |
+| Signed images | All **14** images for the first tag verify against the deploy workflow's identity (14 PASS). A rebuild from the merged default branch is pending (see below) |
+| Old backup access key | Deleted; the backup login has one working key |
+| Saved secrets | Both tenant API keys return 200 against the platform, and the saved backup encryption key matches the cluster's (compared by fingerprint, never printed) |
+| Deploy gates | The first run with gates on failed at the secret scan (the shallow checkout lacked history); fixed in pull request #46 (full-history checkout). The 14 builds from the merged branch have not run yet |
+
+**Still not shown.** A rebuild on a fresh server from the off-site backup, with a measured recovery time (Part B,
+runbook `docs/deployment/DR-REBUILD-RUNBOOK.md`); the unfreeze through the console; separate hosts; hardware HSM
+(deferred, see step 7 below).
 
 ## Compliance and governance update, 2026-10-11 (evening)
 
@@ -360,7 +377,7 @@ from here once you say go.
 | 4 | **Disaster-recovery rebuild (Part B):** fresh server, `up.sh`, restore database and key shares, stand the parties back up, sign with a restored key and check the address is unchanged, timed | half a day, a second instance for a day | You, with Engineering writing the commands | Gives the measured recovery time; the biggest open item in the backup story |
 | 5 | Redeploy staging with the 409 fix; try the two untried paths (a recipient with no token account; unfreeze in the console) | 1 hour | You | Closes the small gaps above |
 | 6 | **Signing parties on separate hosts** (three operators, three AWS accounts), then a new key generated on them | 1-2 weeks | Three people | The step between bounded pilots and real money |
-| 7 | **CloudHSM** for the single-key signer (check the hourly price first) | about a week | You | Hardware key custody for that path; the 2-of-3 shares are not covered by it |
+| 7 | **CloudHSM** for the single-key signer. **Deferred, 2026-10-18:** about US$1,100 a month for one HSM and about US$2,200 for the two that high availability needs (hourly, so billed whether or not it is used; confirm the figure for the region on AWS's pricing page). It covers only the single-key path, not the 2-of-3 shares. The signing code already passes against SoftHSM2 in CI. Revisit when a customer or auditor requires FIPS 140-2 Level 3 custody, or once revenue covers it; a one-afternoon test (one HSM, then deleted) would cost a few dollars | about a week | You | Hardware key custody for that path; the 2-of-3 shares are not covered by it |
 | 8 | **Pentest round 4** (Shannon), then commission the independent human-led test | 1-2 days, plus a vendor | You | Most useful on the final shape of the system (after 6 and 7) |
 | 9 | Re-run the AWS baseline check once the AWS connector is re-authorised | 30 min | You | New resources exist in the account |
 | 10 | Stripe test key as a repository secret | 5 min | You | Lets CI run the billing test |

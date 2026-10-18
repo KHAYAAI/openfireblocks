@@ -33,6 +33,15 @@
 #       Drills an existing key. For rehearsing against a real deployment,
 #       which section 6 of KEY-RECOVERY.md asks you to do annually.
 #
+#   ./recovery-drill.sh --restore-only --ceremony-id C --key-id K --api-key KEY
+#       For a cluster that was just rebuilt from a backup (the database and
+#       the sealed shares restored, the parties freshly started and holding
+#       nothing). It skips the baseline signature and the destroy step,
+#       because there is nothing to sign with and nothing to destroy, and
+#       runs the rest: it still requires that the parties do not know the
+#       ceremony and that signing fails, then restores the parties from
+#       Vault and requires a signature for the key's address.
+#
 # Requires a deployed cluster. The drill opens its own tunnels and cleans
 # them up.
 set -euo pipefail
@@ -49,17 +58,21 @@ CURL=(curl -sS --noproxy '*')
 CEREMONY_ID=""
 KEY_ID=""
 API_KEY=""
+RESTORE_ONLY=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --ceremony-id) CEREMONY_ID="$2"; shift 2 ;;
     --key-id)      KEY_ID="$2"; shift 2 ;;
     --api-key)     API_KEY="$2"; shift 2 ;;
-    -h|--help)     sed -n '2,36p' "$0" | sed 's/^# \?//'; exit 0 ;;
+    --restore-only) RESTORE_ONLY=1; shift ;;
+    -h|--help)     sed -n '2,46p' "$0" | sed 's/^# \?//'; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
+[[ "${RESTORE_ONLY}" != "1" || -n "${CEREMONY_ID}" ]] \
+  || fail "--restore-only needs --ceremony-id, --key-id and --api-key: there is no key to provision on a rebuilt cluster"
 jqp() { python3 -c "import sys,json;d=json.load(sys.stdin);print($1)"; }
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -293,13 +306,16 @@ sign_and_recover() {
   echo "    ${label}: recovered ${recovered}"
 }
 
+if [[ "${RESTORE_ONLY}" != "1" ]]; then
 echo "==> baseline: signing before the parties are destroyed"
 sign_and_recover "baseline" || fail "the key could not sign before the drill started"
+fi
 
 # ---------------------------------------------------------------------------
 # Step 4 -- destroy the parties
 # ---------------------------------------------------------------------------
 
+if [[ "${RESTORE_ONLY}" != "1" ]]; then
 echo "==> destroying every party"
 # --force --grace-period=0 deliberately. A graceful stop is not the
 # scenario: the scenario is the hosts going away. Nothing in this platform
@@ -313,6 +329,9 @@ for id in $(seq 1 "${PARTY_COUNT}"); do
     || fail "party ${id} did not come back"
 done
 echo "    all ${PARTY_COUNT} parties restarted with empty memory"
+else
+  echo "==> restore-only: the parties are taken as freshly started, holding nothing"
+fi
 
 setup_client_identity
 open_party_tunnels
@@ -408,6 +427,7 @@ sign_and_recover "post-restore" \
   || fail "the restored committee could not sign"
 
 echo
+[[ "${RESTORE_ONLY}" == "1" ]] && echo "(restore-only: the parties came from a rebuilt cluster; none were destroyed here)"
 echo "PASS: every party was destroyed with no grace period, lost the ceremony,"
 echo "      was rebuilt from material sealed in Vault, and the restored committee"
 echo "      signed for ${ORIGINAL_ADDRESS} -- the address the original DKG derived."

@@ -31,7 +31,29 @@ on the running gateway, and the token-account creation path that the first run d
 - The Tenant A key was rotated after a wrong paste; the new key was verified (HTTP 200) and saved to a password
   manager. Keys are never recorded here.
 
+## Explorer check
+- The signature above was opened on the Solana explorer (devnet) by a person: **Success, Finalized**, slot 512,497,572,
+  fee 0.000005 SOL, and the fee payer is the first key. The recipient's token account is created in the same
+  transaction.
+
+## Signed images, first tag
+- `~/verify-images.sh <tag>` run in CloudShell for the 14 repositories (`api-gateway mpc-party mpc-signer
+  policy-service temporal-worker vault-pki-init vault-unseal billing webhooks marketplace settlement policy
+  compliance backup`): **14 of 14 PASS** against the deploy workflow's identity. The images for the merged commit
+  `6e62356` do not exist yet: the Deploy run's secret-scan gate failed (the checkout was shallow, so the scan's
+  commit range was missing), which skipped the builds. The fix is pull request #46; this record is to be extended
+  when those builds are verified.
+
+## Old backup access key
+- The first (wrong) IAM access key for the backup writer is gone: the user has one working key.
+
+## Saved secrets
+- Tenant A and Tenant B API keys, entered from the password manager: length 52 each, and `GET /wallets` returned
+  **200** for both.
+- Backup encryption key: the saved key's SHA-256 fingerprint was compared with the cluster's (64 characters each):
+  **MATCH**. Neither the key nor the fingerprint was recorded here.
+
 ## Not done
-- The explorer check of the signature above had not been done when this was written.
 - Unfreezing a wallet in the console (no console login for the demo tenant).
-- The old IAM access key for the backup writer was not yet deleted when this was written.
+- The images for the merged commit (see above).
+- The rebuild on a fresh server (Part B of the disaster-recovery test).

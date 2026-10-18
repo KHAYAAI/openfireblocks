@@ -242,6 +242,12 @@ The full procedure, with every command, is in [SEPARATE-HOSTS.md](SEPARATE-HOSTS
 price for your region on the AWS pricing page before creating anything, and delete the cluster when you're
 not using it.
 
+> **Deferred, 2026-10-18.** Roughly US$1.45 to 1.60 an hour per HSM (about US$1,100 a month for one, about
+> US$2,200 for the two that high availability needs; confirm for your region). It is billed whether or not it
+> signs anything, and it covers only the single-key path. Do not provision it until a customer or auditor
+> requires hardware custody, or revenue covers it. A one-afternoon test with a single HSM, deleted afterwards,
+> costs a few dollars and proves the integration.
+
 1. **Network:** the HSM cluster needs a VPC with subnets in two availability zones. The machine running
    `mpc-signer` must be in that VPC and allowed to reach the HSMs on TCP 2223–2225.
 2. **Create the cluster:** CloudHSM → Create cluster → choose the two subnets. Then create **one** HSM
