@@ -1,0 +1,31 @@
+{
+  "name": "@forge-custody/mcp-server",
+  "version": "0.1.0",
+  "description": "Model Context Protocol server that lets an AI agent pay within the limits a FORGE CUSTODY organisation set for it",
+  "license": "Apache-2.0",
+  "type": "module",
+  "bin": {
+    "forge-custody-mcp": "dist/src/index.js"
+  },
+  "main": "dist/src/index.js",
+  "files": [
+    "dist/src",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "tsc -p tsconfig.json && node --test 'dist/test/**/*.test.js'",
+    "start": "node dist/src/index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "typescript": "^5.9.3"
+  }
+}

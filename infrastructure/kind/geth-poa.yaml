@@ -1,0 +1,230 @@
+# A multi-node Ethereum network with real consensus, real peer-to-peer
+# gossip, and real pending state.
+#
+# geth-dev.yaml (single node, --dev) proves transaction *encoding*: a node
+# accepts the bytes and mines them. It cannot prove anything else, because
+# --dev is a single-signer instant-seal chain with no peers -- the
+# transaction never enters a mempool that anyone else sees, is never
+# gossiped, and is mined by the same process that received it. A transaction
+# that is malformed for propagation, or that a node accepts locally but will
+# not relay, passes there and fails on any real network.
+#
+# So: three nodes running Clique proof-of-authority. One is the signer and
+# seals blocks every two seconds. The other two mine nothing at all. The
+# chain test broadcasts to a *non-signing* node, which means the transaction
+# has to survive that node's mempool, cross the peer-to-peer link, be picked
+# up by the signer, be sealed, and have the block propagate back before the
+# receipt can be read from the node that never mined it.
+#
+# What this still is not: three containers on one host, with a single
+# authority, no competing signers, no fee market and therefore no realistic
+# reorgs. It is a network, not a public chain. Read the results as evidence
+# about propagation and encoding, not about mainnet.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: geth-poa-config
+  namespace: openfireblocks
+data:
+  # Clique genesis. The extradata field encodes the authorised signer set:
+  # 32 zero bytes of vanity, then each signer's 20-byte address, then 65
+  # zero bytes reserved for the seal. Exactly one signer here, which is why
+  # blocks are produced steadily and no reorg ever happens -- the honest
+  # limitation of a single-authority chain.
+  genesis.json: |
+    {
+      "config": {
+        "chainId": 424242,
+        "homesteadBlock": 0,
+        "eip150Block": 0,
+        "eip155Block": 0,
+        "eip158Block": 0,
+        "byzantiumBlock": 0,
+        "constantinopleBlock": 0,
+        "petersburgBlock": 0,
+        "istanbulBlock": 0,
+        "berlinBlock": 0,
+        "londonBlock": 0,
+        "clique": { "period": 2, "epoch": 30000 }
+      },
+      "difficulty": "1",
+      "gasLimit": "0x7A1200",
+      "extradata": "0x0000000000000000000000000000000000000000000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb922660000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "alloc": {
+        "f39fd6e51aad88f6f4ce6ab8827279cfffb92266": {
+          "balance": "0x3635c9adc5dea00000"
+        }
+      }
+    }
+  # The signer's key. A publicly known development key with no value on any
+  # real network -- it is the standard first Hardhat/Anvil account, chosen
+  # precisely because it is well known and can never be mistaken for a real
+  # one. This whole network exists for the duration of a test.
+  signer.key: |
+    ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: geth-signer
+  namespace: openfireblocks
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: geth-signer }
+  template:
+    metadata:
+      labels: { app: geth-signer, chain: geth-poa }
+    spec:
+      containers:
+        - name: geth
+          image: ethereum/client-go:v1.13.15
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              ADDR=0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+              if [ ! -d /data/geth ]; then
+                geth init --datadir /data /config/genesis.json
+                : > /data/password
+                cp /config/signer.key /data/signer.key
+                geth account import --datadir /data \
+                  --password /data/password /data/signer.key
+              fi
+              # --nodiscover: peers are wired explicitly by the sidecar
+              # below rather than found by discovery, which needs a routable
+              # bootnode and buys nothing on a three-node network.
+              exec geth --datadir /data --networkid 424242 \
+                --http --http.addr 0.0.0.0 --http.port 8545 \
+                --http.api eth,net,web3,admin,txpool,miner \
+                --http.vhosts '*' --http.corsdomain '*' \
+                --port 30303 --nodiscover \
+                --unlock "${ADDR}" --password /data/password \
+                --allow-insecure-unlock \
+                --mine --miner.etherbase "${ADDR}" \
+                --verbosity 2
+          ports:
+            - { name: rpc, containerPort: 8545 }
+            - { name: p2p, containerPort: 30303 }
+          readinessProbe:
+            tcpSocket: { port: rpc }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+          volumeMounts:
+            - { name: config, mountPath: /config }
+            - { name: data, mountPath: /data }
+      volumes:
+        - name: config
+          configMap: { name: geth-poa-config }
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: geth-signer
+  namespace: openfireblocks
+spec:
+  selector: { app: geth-signer }
+  ports:
+    - { name: rpc, port: 8545, targetPort: rpc }
+    - { name: p2p, port: 30303, targetPort: p2p, protocol: TCP }
+---
+# The nodes the platform actually talks to. These seal nothing: a
+# transaction sent here is only ever mined because it reached the signer
+# over the peer-to-peer link.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: geth-peer
+  namespace: openfireblocks
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: geth-peer }
+  template:
+    metadata:
+      labels: { app: geth-peer, chain: geth-poa }
+    spec:
+      containers:
+        - name: geth
+          image: ethereum/client-go:v1.13.15
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              if [ ! -d /data/geth ]; then
+                geth init --datadir /data /config/genesis.json
+              fi
+              exec geth --datadir /data --networkid 424242 \
+                --http --http.addr 0.0.0.0 --http.port 8545 \
+                --http.api eth,net,web3,admin,txpool \
+                --http.vhosts '*' --http.corsdomain '*' \
+                --port 30303 --nodiscover \
+                --syncmode full --verbosity 2
+          ports:
+            - { name: rpc, containerPort: 8545 }
+            - { name: p2p, containerPort: 30303 }
+          readinessProbe:
+            tcpSocket: { port: rpc }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+          volumeMounts:
+            - { name: config, mountPath: /config }
+            - { name: data, mountPath: /data }
+
+        # Wires this peer to the signer, and keeps it wired.
+        #
+        # The signer's enode contains a public key that is generated on
+        # first start and is not knowable in advance, so it is read from the
+        # signer's own RPC at runtime rather than baked into the manifest.
+        # The advertised host is rewritten to the Service name because the
+        # signer reports the address it sees for itself, which is not
+        # reachable from here.
+        #
+        # It re-checks rather than running once: either pod can restart, and
+        # a peer that silently loses its only link would make the chain test
+        # fail in a way that looks like a broken transaction.
+        - name: peer-wiring
+          image: ethereum/client-go:v1.13.15
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              while true; do
+                peers=$(geth --exec 'admin.peers.length' attach http://127.0.0.1:8545 2>/dev/null || echo 0)
+                if [ "${peers}" = "0" ]; then
+                  enode=$(geth --exec 'admin.nodeInfo.enode' attach http://geth-signer:8545 2>/dev/null | tr -d '"' || true)
+                  case "${enode}" in
+                    enode://*)
+                      key=$(echo "${enode}" | sed 's|enode://||; s|@.*||')
+                      target="enode://${key}@geth-signer:30303"
+                      geth --exec "admin.addPeer(\"${target}\")" \
+                        attach http://127.0.0.1:8545 >/dev/null 2>&1 || true
+                      echo "wired to ${target}"
+                      ;;
+                  esac
+                fi
+                sleep 5
+              done
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+      volumes:
+        - name: config
+          configMap: { name: geth-poa-config }
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: geth-peer
+  namespace: openfireblocks
+spec:
+  selector: { app: geth-peer }
+  ports:
+    - { name: rpc, port: 8545, targetPort: rpc }

@@ -1,0 +1,47 @@
+#!/usr/bin/python3
+"""runc shim that strips process.oomScoreAdj from the OCI bundle.
+
+Kubelet asks static control-plane pods for oomScoreAdj -998. Lowering
+oom_score_adj below the inherited oom_score_adj_min requires
+CAP_SYS_RESOURCE in the *initial* user namespace. In a nested container
+that capability is not in the bounding set, so runc's nsexec dies with
+"failed to update /proc/self/oom_score_adj: Permission denied", surfacing
+as "can't get final child's PID from pipe: EOF".
+
+oom_score_adj only biases the kernel OOM killer's victim selection. Dropping
+it changes which process the kernel would kill under memory pressure on a
+throwaway dev node; it changes nothing about how Kubernetes schedules,
+admits or runs workloads. This exists solely to let kind run inside a
+sandbox. Never use it on a real node.
+"""
+import json, os, sys
+
+REAL = "/usr/local/sbin/runc.real"
+
+def bundle_dir(argv):
+    if "create" not in argv and "run" not in argv:
+        return None
+    for i, a in enumerate(argv):
+        if a in ("-b", "--bundle") and i + 1 < len(argv):
+            return argv[i + 1]
+        if a.startswith("--bundle="):
+            return a.split("=", 1)[1]
+    return os.getcwd()
+
+try:
+    d = bundle_dir(sys.argv[1:])
+    if d:
+        p = os.path.join(d, "config.json")
+        with open(p) as f:
+            spec = json.load(f)
+        if spec.get("process", {}).pop("oomScoreAdj", None) is not None:
+            tmp = p + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump(spec, f)
+            os.replace(tmp, p)
+except Exception:
+    # Never block container creation because the rewrite failed; let the
+    # real runc report whatever the actual problem is.
+    pass
+
+os.execv(REAL, [REAL] + sys.argv[1:])
