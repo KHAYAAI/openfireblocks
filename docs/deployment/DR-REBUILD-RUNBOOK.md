@@ -248,12 +248,21 @@ curl -sS -H "x-api-key: $DR_API_KEY" http://127.0.0.1:3000/keys/$DR_KEY_ID | jq 
 ```
 
 The two addresses must be identical. This also shows a tenant API key from the old cluster working on the new one,
-because only its hash was stored. Now the restore, using the drill's restore half
-(`infrastructure/kind/recovery-drill.sh --restore-only`, which is KEY-RECOVERY.md Route A):
+because only its hash was stored. The checkout on the new server is at the old server's commit, which may predate the `--restore-only` option and two
+fixes to the drill (a client certificate when the worker has no `cat`, and full peer names). Take the current script from
+the branch first, then run it:
+
+```bash
+git fetch -q origin claude/platform-explanation-h0st5y
+git show origin/claude/platform-explanation-h0st5y:infrastructure/kind/recovery-drill.sh > infrastructure/kind/recovery-drill-restore.sh && chmod +x infrastructure/kind/recovery-drill-restore.sh
+```
+
+Now the restore, using the drill's restore half
+(`--restore-only`, which is KEY-RECOVERY.md Route A):
 
 ```bash
 cd ~/openfireblocks
-ADMIN_KEY="$ADMIN_API_KEY" ./infrastructure/kind/recovery-drill.sh --restore-only \
+ADMIN_KEY="$ADMIN_API_KEY" ./infrastructure/kind/recovery-drill-restore.sh --restore-only \
   --ceremony-id "$DR_CEREMONY" --key-id "$DR_KEY_ID" --api-key "$DR_API_KEY" 2>&1 | tee ~/dr-restore-drill.log
 ```
 
@@ -287,3 +296,8 @@ The test tenant can stay; it holds no funds.
 - The Vault tree restored is the key-share KV export, not a Raft snapshot. Policies, auth methods and the PKI
   mounts are not in the backup; the new cluster built its own.
 - Images were rebuilt from source. A production rebuild would pull the signed images from the registry.
+
+## Measured result
+
+First run, 2026-10-18: 41 minutes 42 seconds from launching the instance to a restored signature, including the faults
+found. See `docs/evidence/2026-10-18-dr-rebuild-fresh-server.md`.

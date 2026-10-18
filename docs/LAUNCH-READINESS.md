@@ -114,9 +114,13 @@ below is evidenced in `docs/evidence/` and `docs/security/`; what it does **not*
 | Saved secrets | Both tenant API keys return 200 against the platform, and the saved backup encryption key matches the cluster's (compared by fingerprint, never printed) |
 | Deploy gates | The first run with gates on failed at the secret scan (the shallow checkout lacked history); fixed in pull request #46 (full-history checkout). Re-run after the merge: both gates and the 14 builds passed. The same run's "Deploy to Staging" job fails at its AWS credentials step (not used by the single-server staging; not investigated) |
 
-**Still not shown.** A rebuild on a fresh server from the off-site backup, with a measured recovery time (Part B,
-runbook `docs/deployment/DR-REBUILD-RUNBOOK.md`); the unfreeze through the console; separate hosts; hardware HSM
-(deferred, see step 7 below).
+**Disaster-recovery rebuild, done later the same day** (`docs/evidence/2026-10-18-dr-rebuild-fresh-server.md`): a new
+server was rebuilt from the off-site backup alone. The database came back with identical row counts, 66 of 66 key shares
+matched, and the restored parties signed for the original address. **Measured recovery time: 41 minutes 42 seconds**
+(including the faults found: no BuildKit on the new server, and two defects in the recovery drill, now fixed). Limits: one
+key was restored, not all 24; the checksums needed to fetch a backup exist only in the cluster; test keys only.
+
+**Still not shown.** The unfreeze through the console; separate hosts; hardware HSM (deferred, see step 7 below).
 
 ## Compliance and governance update, 2026-10-11 (evening)
 
@@ -353,9 +357,8 @@ Competitive note: Absa launched a bank-led digital-asset custody service (with R
 
 Any mainnet transfer, the TRISA link on the live network, the custody
 executor against anything but a stand-in, Stripe with a real key, signing
-parties on isolated hosts, a restore of the **whole platform** from the off-site
-backup into a fresh cluster (the database and key shares were restored into
-scratch copies and matched), the nightly backup job, AI-agent payments on a
+parties on isolated hosts, restoring **every** key after a rebuild at once (one key was restored on a fresh
+server; the nightly checksums are not kept off the cluster), AI-agent payments on a
 public network, the AWS baseline on the real account, and an independent
 human-led pentest or cryptographic audit. The token contract is unaudited.
 (A real cluster with public HTTPS, a real external AI-driven pentest with its
@@ -374,7 +377,7 @@ from here once you say go.
 | 1 | Merge this branch into the default branch (open a pull request) | 10 min | You | Images are built from the default branch, and it lacks the gate repair, the backup fixes and the evidence |
 | 2 | Check the nightly backup ran (a second backup id in the bucket after 02:17 UTC); delete the first, wrong access key in IAM | 5 min | You | The scheduled path has never been seen to run |
 | 3 | Verify the other 13 images' signatures and run the repaired Deploy workflow on a push (add a Snyk token or accept the skipped scan) | 1 hour | You, then Engineering | Supply-chain control is proven for one image only |
-| 4 | **Disaster-recovery rebuild (Part B):** fresh server, `up.sh`, restore database and key shares, stand the parties back up, sign with a restored key and check the address is unchanged, timed | half a day, a second instance for a day | You, with Engineering writing the commands | Gives the measured recovery time; the biggest open item in the backup story |
+| 4 | **Done 2026-10-18 (41 min 42 s; one key restored).** Disaster-recovery rebuild (Part B): fresh server, `up.sh`, restore database and key shares, stand the parties back up, sign with a restored key and check the address is unchanged, timed | half a day, a second instance for a day | You, with Engineering writing the commands | Gives the measured recovery time; the biggest open item in the backup story |
 | 5 | Redeploy staging with the 409 fix; try the two untried paths (a recipient with no token account; unfreeze in the console) | 1 hour | You | Closes the small gaps above |
 | 6 | **Signing parties on separate hosts** (three operators, three AWS accounts), then a new key generated on them | 1-2 weeks | Three people | The step between bounded pilots and real money |
 | 7 | **CloudHSM** for the single-key signer. **Deferred, 2026-10-18:** about US$1,100 a month for one HSM and about US$2,200 for the two that high availability needs (hourly, so billed whether or not it is used; confirm the figure for the region on AWS's pricing page). It covers only the single-key path, not the 2-of-3 shares. The signing code already passes against SoftHSM2 in CI. Revisit when a customer or auditor requires FIPS 140-2 Level 3 custody, or once revenue covers it; a one-afternoon test (one HSM, then deleted) would cost a few dollars | about a week | You | Hardware key custody for that path; the 2-of-3 shares are not covered by it |
