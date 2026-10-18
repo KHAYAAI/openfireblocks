@@ -71,6 +71,11 @@ func TestPreParamsPoolServesWarmEntries(t *testing.T) {
 		t.Skip("generates safe primes; slow by construction")
 	}
 
+	// The test binary turns the background pool off (TestMain), because
+	// leftover searches from earlier tests starved the heavy ceremonies. This
+	// is the one test about the pool itself, so it turns it back on.
+	t.Setenv("TSS_PREPARAMS_POOL", "1")
+
 	p := newPreParamsPool(1)
 	p.start()
 

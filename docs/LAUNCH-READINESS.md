@@ -1,6 +1,6 @@
 # Launch readiness
 
-As of 2026-10-17, branch `claude/platform-explanation-h0st5y`. This is a
+As of 2026-10-18, branch `claude/platform-explanation-h0st5y`. This is a
 summary; `LAUNCH-CHECKLIST.md` is the evidence-based source and wins if they
 disagree.
 
@@ -8,7 +8,7 @@ disagree.
 
 | Audience | Verdict |
 |---|---|
-| Fintech, supervised pilot on testnet or capped balances | **Ready to start.** A real key generation and signature pass on a real cluster (lite profile and AWS full profile), with public HTTPS. An external AI-driven pentest has run against the AWS deployment and every finding is fixed and was redeployed to staging on 2026-10-17 (a fourth run, covering the newest routes, is deferred until after the separate-hosts and HSM work). Threshold-signed transactions have been accepted by public test networks on four chains (see below); a Stripe run is still to do |
+| Fintech, supervised pilot on testnet or capped balances | **Ready to start.** A real key generation and signature pass on a real cluster (lite profile and AWS full profile), with public HTTPS. An external AI-driven pentest has run against the AWS deployment and every finding is fixed and was redeployed to staging on 2026-10-17 (a fourth run, covering the newest routes, is deferred until after the separate-hosts work; CloudHSM is deferred on cost, see step 7 below). Threshold-signed transactions have been accepted by public test networks on four chains (see below); a Stripe run is still to do |
 | Banks, governments, uncapped mainnet funds | **Not ready. Bounded pilots only** |
 | Production | **Not ready.** Blocked by external work (audit, SOC 2, isolated hosts, legal), not by known engineering gaps |
 
@@ -94,12 +94,40 @@ below is evidenced in `docs/evidence/` and `docs/security/`; what it does **not*
 | GitHub | The default branch is `claude/openfireblocks-main`; pull request #19 merged to it. The ruleset now has a bypass actor | |
 
 **What this does not show.**
-- Staging does not yet include the duplicate-symbol (409) fix; it needs another `up.sh` or an image reload.
-- Creating a recipient's token account (and the sender paying its rent) has not run on a public network: the recipient already had one. The unfreeze of a wallet through the console was not tried.
-- The two transaction links were not independently checked on the Solana explorer.
-- Only one of the 14 signed images was verified. The repaired gate jobs have not run on GitHub; a normal push to the default branch still needs a Snyk token (or that step stays skipped with a warning).
+- *(Closed on 2026-10-18, see the update below: the 409 fix is live, a recipient's token account was created on devnet, one transaction was checked on the explorer, and all 14 signatures were verified for the first tag.)* Still open from this list: a normal push to the default branch still needs a Snyk token (or that step stays skipped with a warning).
 - **No full rebuild from the off-site backup has been done**, so there is no measured recovery time. The nightly backup job has not yet been seen to run. The shares were decrypted onto a staging host for the restore check, acceptable for test keys only. The backup's Vault token on staging is the development root token.
 - The agent routes and MCP server were not part of the 26 checks and have still not been through a pentest round.
+
+## Staging update, 2026-10-18
+
+**Verdict unchanged.** The gaps listed under the 2026-10-17 update were worked through. Evidence is in
+`docs/evidence/2026-10-18-staging-checks.md`.
+
+| Area | Result |
+|---|---|
+| Nightly backup | The scheduled job ran by itself at 02:17:02 UTC: a third backup is in the bucket, with all three files |
+| Duplicate token symbol | Live on staging: registering `USDC-DEV` again answers **409** with an explanation |
+| Recipient with no token account | A send of 1 USDC-DEV to a fresh address **completed**: the platform created the token account, the sending key paid rent of 1,488,440 lamports (read from the node), fee 5,000 |
+| Solana explorer | The transaction above was checked by a person on the explorer: Success, Finalized, the fee payer is the first key, fee 0.000005 SOL |
+| Signed images | All **14** images for the first tag verify against the deploy workflow's identity (14 PASS). Rebuilt from the merged default branch (`2571281`): gates and all 14 builds passed, and all 14 new images verify too |
+| Old backup access key | Deleted; the backup login has one working key |
+| Saved secrets | Both tenant API keys return 200 against the platform, and the saved backup encryption key matches the cluster's (compared by fingerprint, never printed) |
+| Deploy gates | The first run with gates on failed at the secret scan (the shallow checkout lacked history); fixed in pull request #46 (full-history checkout). Re-run after the merge: both gates and the 14 builds passed. The same run's "Deploy to Staging" job fails at its AWS credentials step (not used by the single-server staging; not investigated) |
+
+**Disaster-recovery rebuild, done later the same day** (`docs/evidence/2026-10-18-dr-rebuild-fresh-server.md`): a new
+server was rebuilt from the off-site backup alone. The database came back with identical row counts, 66 of 66 key shares
+matched, and the restored parties signed for the original address. **Measured recovery time: 41 minutes 42 seconds**
+(including the faults found: no BuildKit on the new server, and two defects in the recovery drill, now fixed). Limits: one
+key was restored, not all 24; the checksums needed to fetch a backup exist only in the cluster; test keys only.
+
+**Unfreeze, done:** a signed-in organisation admin unfroze the frozen wallet through the organisation route (the reason was recorded with their email). There is no wallets screen in the console yet.
+
+**A real bug found by CI and fixed (`75bb1f6`; verified locally and CI passed all 30 checks):** the signing, key-generation and refresh drivers could drop a party's
+last protocol message when it finished, leaving its partner waiting for ever. It appeared only under load (most often
+in restore-then-sign) and could not produce a wrong signature; a retry worked. A regression test pins it. Staging and
+the registry images do not contain the fix until it is merged and redeployed.
+
+**Still not shown.** Separate hosts; hardware HSM (deferred, see step 7 below).
 
 ## Compliance and governance update, 2026-10-11 (evening)
 
@@ -336,9 +364,8 @@ Competitive note: Absa launched a bank-led digital-asset custody service (with R
 
 Any mainnet transfer, the TRISA link on the live network, the custody
 executor against anything but a stand-in, Stripe with a real key, signing
-parties on isolated hosts, a restore of the **whole platform** from the off-site
-backup into a fresh cluster (the database and key shares were restored into
-scratch copies and matched), the nightly backup job, AI-agent payments on a
+parties on isolated hosts, restoring **every** key after a rebuild at once (one key was restored on a fresh
+server; the nightly checksums are not kept off the cluster), AI-agent payments on a
 public network, the AWS baseline on the real account, and an independent
 human-led pentest or cryptographic audit. The token contract is unaudited.
 (A real cluster with public HTTPS, a real external AI-driven pentest with its
@@ -357,10 +384,10 @@ from here once you say go.
 | 1 | Merge this branch into the default branch (open a pull request) | 10 min | You | Images are built from the default branch, and it lacks the gate repair, the backup fixes and the evidence |
 | 2 | Check the nightly backup ran (a second backup id in the bucket after 02:17 UTC); delete the first, wrong access key in IAM | 5 min | You | The scheduled path has never been seen to run |
 | 3 | Verify the other 13 images' signatures and run the repaired Deploy workflow on a push (add a Snyk token or accept the skipped scan) | 1 hour | You, then Engineering | Supply-chain control is proven for one image only |
-| 4 | **Disaster-recovery rebuild (Part B):** fresh server, `up.sh`, restore database and key shares, stand the parties back up, sign with a restored key and check the address is unchanged, timed | half a day, a second instance for a day | You, with Engineering writing the commands | Gives the measured recovery time; the biggest open item in the backup story |
+| 4 | **Done 2026-10-18 (41 min 42 s; one key restored).** Disaster-recovery rebuild (Part B): fresh server, `up.sh`, restore database and key shares, stand the parties back up, sign with a restored key and check the address is unchanged, timed | half a day, a second instance for a day | You, with Engineering writing the commands | Gives the measured recovery time; the biggest open item in the backup story |
 | 5 | Redeploy staging with the 409 fix; try the two untried paths (a recipient with no token account; unfreeze in the console) | 1 hour | You | Closes the small gaps above |
 | 6 | **Signing parties on separate hosts** (three operators, three AWS accounts), then a new key generated on them | 1-2 weeks | Three people | The step between bounded pilots and real money |
-| 7 | **CloudHSM** for the single-key signer (check the hourly price first) | about a week | You | Hardware key custody for that path; the 2-of-3 shares are not covered by it |
+| 7 | **CloudHSM** for the single-key signer. **Deferred, 2026-10-18:** about US$1,100 a month for one HSM and about US$2,200 for the two that high availability needs (hourly, so billed whether or not it is used; confirm the figure for the region on AWS's pricing page). It covers only the single-key path, not the 2-of-3 shares. The signing code already passes against SoftHSM2 in CI. Revisit when a customer or auditor requires FIPS 140-2 Level 3 custody, or once revenue covers it; a one-afternoon test (one HSM, then deleted) would cost a few dollars | about a week | You | Hardware key custody for that path; the 2-of-3 shares are not covered by it |
 | 8 | **Pentest round 4** (Shannon), then commission the independent human-led test | 1-2 days, plus a vendor | You | Most useful on the final shape of the system (after 6 and 7) |
 | 9 | Re-run the AWS baseline check once the AWS connector is re-authorised | 30 min | You | New resources exist in the account |
 | 10 | Stripe test key as a repository secret | 5 min | You | Lets CI run the billing test |
