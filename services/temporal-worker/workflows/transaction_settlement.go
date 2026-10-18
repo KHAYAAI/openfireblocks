@@ -51,20 +51,37 @@ func TransactionSettlementWorkflow(ctx workflow.Context, req TransactionRequest)
 		}, nil
 	}
 
-	// Step 1b: high-value transactions wait for a human approval signal before
-	// signing. The api-gateway/admin sends an "approval" signal; if none arrives
-	// within the window the workflow ends as denied.
+	// Step 1b: transactions the policy flags wait for people to approve
+	// them. Workflows started before approvals had segregation of duties
+	// keep the single-signal behaviour they were started with; Temporal
+	// replays history against this code, and changing what an in-flight
+	// workflow waits for would break it.
 	if policy.RequiresApproval {
-		approved, err := waitForApproval(ctx)
-		if err != nil {
-			return nil, err
-		}
-		if !approved {
-			return &TransactionResult{
-				RequestID: requestID,
-				Status:    "denied",
-				Reason:    "manual approval not granted within window",
-			}, nil
+		v := workflow.GetVersion(ctx, "segregation-of-duties", workflow.DefaultVersion, 1)
+		if v == workflow.DefaultVersion {
+			approved, err := waitForApproval(ctx)
+			if err != nil {
+				return nil, err
+			}
+			if !approved {
+				return &TransactionResult{
+					RequestID: requestID,
+					Status:    "denied",
+					Reason:    "manual approval not granted within window",
+				}, nil
+			}
+		} else {
+			outcome, err := awaitApprovals(ctx, req, policy.ApprovalReasons)
+			if err != nil {
+				return nil, err
+			}
+			if outcome != "approved" {
+				return &TransactionResult{
+					RequestID: requestID,
+					Status:    "denied",
+					Reason:    "approval " + outcome,
+				}, nil
+			}
 		}
 	}
 
@@ -109,8 +126,9 @@ func TransactionSettlementWorkflow(ctx workflow.Context, req TransactionRequest)
 	}, nil
 }
 
-// waitForApproval blocks until an "approval" signal arrives or the approval
-// window elapses. The signal payload is a bool (true = approve, false = reject).
+// waitForApproval is the approval step for workflows started before
+// segregation of duties (see awaitApprovals). Kept only so those can
+// replay; nothing new reaches it.
 func waitForApproval(ctx workflow.Context) (bool, error) {
 	const approvalWindow = time.Hour
 

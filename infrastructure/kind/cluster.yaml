@@ -1,0 +1,20 @@
+# A four-node cluster: one control plane and three workers.
+#
+# Three workers specifically, because .Values.mpcParty.spreadAcrossNodes
+# defaults to "required" -- each MPC party must land on its own node. On a
+# single-node cluster those pods stay Pending forever, which is the correct
+# and deliberate behaviour: three party pods sharing one kubelet are not
+# three failure domains, and the chart refuses to pretend otherwise.
+#
+# They are still all containers on one host, so this is not a real
+# multi-machine deployment. What it does prove is that the scheduling
+# constraint is expressible and satisfied, that the parties reach each
+# other across node boundaries rather than over loopback, and that a node
+# can be drained without taking the whole committee with it.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+  - role: worker
+  - role: worker
+  - role: worker

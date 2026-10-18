@@ -1,9 +1,9 @@
 import { Module } from '@nestjs/common';
 import Redis from 'ioredis';
 import { RiskService } from './risk.service';
+import { REDIS_CLIENT } from './redis-client.token';
 
-// Token for the (optional) Redis client backing velocity limits.
-export const REDIS_CLIENT = 'REDIS_CLIENT';
+export { REDIS_CLIENT };
 
 // Velocity / risk controls. The Redis client is created from REDIS_URL, or null
 // when unset (velocity limiting disabled). Injecting it keeps RiskService

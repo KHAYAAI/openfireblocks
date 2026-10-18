@@ -1,0 +1,144 @@
+#!/bin/bash
+# First boot of MPC party ${party_id}. Rendered by Terraform's templatefile;
+# shell variables are written without braces so they are not taken for
+# template interpolations.
+set -euo pipefail
+exec > >(tee -a /var/log/ofb-party-bootstrap.log) 2>&1
+
+dnf install -y docker jq
+systemctl enable --now docker
+
+REGION=${region}
+OFB=/etc/ofb
+mkdir -p $OFB/tls /var/lib/ofb
+chmod 700 $OFB
+
+# --- The Vault data volume (sealed key shares live here) -------------------
+# Attached after the instance starts; wait for it rather than race it.
+DEV=""
+for _ in $(seq 1 60); do
+  for candidate in /dev/sdf /dev/nvme1n1; do
+    if [ -b "$candidate" ]; then DEV=$candidate; break; fi
+  done
+  [ -n "$DEV" ] && break
+  sleep 5
+done
+[ -n "$DEV" ] || { echo "vault data volume never attached"; exit 1; }
+# Format only if empty: a replaced host must mount the existing shares,
+# never wipe them.
+if ! blkid "$DEV" >/dev/null 2>&1; then mkfs.xfs "$DEV"; fi
+mkdir -p /var/lib/ofb/vault
+grep -q "/var/lib/ofb/vault" /etc/fstab || echo "$DEV /var/lib/ofb/vault xfs defaults,nofail 0 2" >> /etc/fstab
+mount -a
+chown -R 100:1000 /var/lib/ofb/vault   # the vault image's uid
+
+# --- This party's own Vault ---------------------------------------------
+# Listens on loopback only. Nothing off this host can reach it, including
+# the other parties: a share is only ever read by the party beside it.
+cat > $OFB/vault.hcl <<VAULT
+storage "raft" {
+  path    = "/vault/data"
+  node_id = "party-${party_id}"
+}
+listener "tcp" {
+  address     = "127.0.0.1:8200"
+  tls_disable = true
+}
+seal "awskms" {
+  region     = "$REGION"
+  kms_key_id = "${seal_key_id}"
+}
+api_addr     = "http://127.0.0.1:8200"
+cluster_addr = "http://127.0.0.1:8201"
+ui           = false
+VAULT
+
+docker run -d --name vault --restart always --network host --cap-add IPC_LOCK \
+  -v /var/lib/ofb/vault:/vault/data -v $OFB/vault.hcl:/vault/config/vault.hcl:ro \
+  ${vault_image} server -config=/vault/config/vault.hcl
+
+# --- The party ----------------------------------------------------------
+# Starts once its Vault has been initialised and its token stored (see
+# party-bootstrap.sh); until then the unit fails fast and retries.
+cat > /usr/local/bin/ofb-party-start <<START
+#!/bin/bash
+set -euo pipefail
+secret() { aws secretsmanager get-secret-value --region $REGION --secret-id "\$1" --query SecretString --output text; }
+TLS=\$(secret ${tls_secret_arn})
+echo "\$TLS" | jq -er .cert > $OFB/tls/party.crt
+echo "\$TLS" | jq -er .key  > $OFB/tls/party.key
+echo "\$TLS" | jq -er .ca   > $OFB/tls/ca.crt
+chmod 600 $OFB/tls/party.key
+TOKEN=\$(secret ${vault_token_secret_arn})
+[ -n "\$TOKEN" ] || { echo "vault token not stored yet; run party-bootstrap.sh"; exit 1; }
+IMAGE='${party_image}'
+case "\$IMAGE" in
+  *.dkr.ecr.*)
+    aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin "\$(echo "\$IMAGE" | cut -d/ -f1)" >/dev/null ;;
+esac
+docker rm -f mpc-party >/dev/null 2>&1 || true
+exec docker run --name mpc-party --network host \
+  -e APP_ENV=production \
+  -e PARTY_ID=${party_id} \
+  -e PORT=${ceremony_port} \
+  -e HEALTH_PORT=${health_port} \
+  -e VAULT_ADDR=http://127.0.0.1:8200 \
+  -e VAULT_TOKEN="\$TOKEN" \
+  -e MTLS_CERT_FILE=/tls/party.crt -e MTLS_KEY_FILE=/tls/party.key -e MTLS_CA_FILE=/tls/ca.crt \
+  -e CEREMONY_AUTHORIZER_PUBKEY='${ceremony_authorizer_pubkey}' \
+  -v $OFB/tls:/tls:ro \
+  "\$IMAGE"
+START
+chmod 700 /usr/local/bin/ofb-party-start
+
+cat > /etc/systemd/system/ofb-party.service <<UNIT
+[Unit]
+Description=OpenFireblocks MPC party ${party_id}
+After=docker.service
+Requires=docker.service
+
+[Service]
+ExecStart=/usr/local/bin/ofb-party-start
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+# The party's Vault token is periodic (party-bootstrap.sh): it lives as
+# long as it is renewed within its period, and the party itself does not
+# renew it. Renew daily, so a token never lapses while the party runs --
+# a lapsed token is a party that cannot read its own share.
+cat > /usr/local/bin/ofb-vault-renew <<RENEW
+#!/bin/bash
+set -euo pipefail
+TOKEN=\$(aws secretsmanager get-secret-value --region $REGION --secret-id ${vault_token_secret_arn} --query SecretString --output text)
+[ -n "\$TOKEN" ] || exit 0
+docker exec -e VAULT_ADDR=http://127.0.0.1:8200 -e VAULT_TOKEN="\$TOKEN" vault vault token renew >/dev/null
+RENEW
+chmod 700 /usr/local/bin/ofb-vault-renew
+
+cat > /etc/systemd/system/ofb-vault-renew.service <<UNIT
+[Unit]
+Description=Renew MPC party ${party_id}'s Vault token
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/ofb-vault-renew
+UNIT
+
+cat > /etc/systemd/system/ofb-vault-renew.timer <<UNIT
+[Unit]
+Description=Daily renewal of MPC party ${party_id}'s Vault token
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=1d
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+UNIT
+
+systemctl daemon-reload
+systemctl enable --now ofb-party.service ofb-vault-renew.timer

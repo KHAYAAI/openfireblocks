@@ -1,0 +1,78 @@
+# A Bitcoin Core node on the PUBLIC testnet4 network, for the one chain that has so far only been driven
+# against a private regtest node.
+#
+# Why our own node: the signer finds a key's coins with `scantxoutset` and reads fees with
+# `estimatesmartfee`. Public RPC providers do not expose `scantxoutset`, so a hosted endpoint cannot be used.
+#
+# testnet4 needs Bitcoin Core 28 or later (the -testnet4 flag). The image tag is a variable so it can be
+# changed without editing this file: IMAGE=... ./bitcoin-testnet4-setup.sh. Verify the tag exists before use.
+#
+# Pruned (-prune=2000, about 2 GB of blocks): scantxoutset reads the UTXO set, which a pruned node keeps in
+# full, so the signer does not need the history. First sync still downloads and validates the whole chain.
+# The RPC password is taken from the cluster secret at setup time; it is never in this file.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bitcoind-testnet4
+  namespace: openfireblocks
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app: bitcoind-testnet4 }
+  template:
+    metadata:
+      labels: { app: bitcoind-testnet4 }
+    spec:
+      containers:
+        - name: bitcoind
+          image: __IMAGE__
+          env:
+            - name: RPC_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: bitcoind-testnet4-rpc, key: password }
+          args:
+            - -testnet4
+            - -server
+            - -datadir=/data
+            - -prune=2000
+            - -rpcbind=0.0.0.0
+            - -rpcallowip=10.0.0.0/8
+            - -rpcallowip=172.16.0.0/12
+            - -rpcuser=ofb
+            - -rpcpassword=$(RPC_PASSWORD)
+            - -fallbackfee=0.00002
+            - -printtoconsole
+          ports:
+            - { name: rpc, containerPort: 48332 }
+          readinessProbe:
+            tcpSocket: { port: rpc }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          volumeMounts:
+            - { name: data, mountPath: /data }
+          resources:
+            requests: { cpu: 250m, memory: 512Mi }
+      volumes:
+        - name: data
+          persistentVolumeClaim: { claimName: bitcoind-testnet4-data }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: bitcoind-testnet4-data
+  namespace: openfireblocks
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests: { storage: 8Gi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bitcoind-testnet4
+  namespace: openfireblocks
+spec:
+  selector: { app: bitcoind-testnet4 }
+  ports:
+    - { name: rpc, port: 48332, targetPort: rpc }

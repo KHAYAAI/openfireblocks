@@ -1,0 +1,45 @@
+# Reverse proxy for a single-VM deployment (see
+# docs/deployment/STAGING-AWS-AND-SOLANA-DEVNET.md Part G). Replace
+# staging.example.com with the real hostname before use.
+#
+# What this does and does not protect against: this is a reverse proxy, not
+# a WAF. A pentest against a deployment running an earlier version of this
+# file found SQL-injection payloads, known-bad-input probes and a
+# 200-request flood all reaching the origin application unfiltered -- the
+# admin/metrics block below was the only filtering happening at this edge
+# at all. infrastructure/terraform/waf.tf defines real AWS WAF rules for
+# exactly this (rate limiting, managed SQLi/known-bad-input rule sets, IP
+# reputation), but they only protect a deployment that sits behind an AWS
+# ALB; this single-VM Caddy deployment does not, and cannot attach to them.
+#
+# Real options for this deployment shape, in order of effort:
+#   1. Put a proxying CDN in front (e.g. Cloudflare, proxied DNS, not just
+#      a tunnel): its free tier includes basic DDoS mitigation and request
+#      rate limiting at the edge, in front of this box entirely.
+#   2. Build Caddy with github.com/mholt/caddy-ratelimit (via xcaddy) to
+#      get the rate_limit directive below working -- the stock
+#      `apt install caddy` package this doc uses does NOT include it, so
+#      the directive is commented out rather than present and silently
+#      inert.
+#   3. Move this workload behind a real AWS ALB so waf.tf's Web ACLs (rate
+#      limiting + managed rule sets) can actually attach via
+#      aws_wafv2_web_acl_association (var.alb_arn in variables.tf).
+
+staging.example.com {
+    @internal path /admin* /metrics*
+    respond @internal 404
+
+    # Requires a Caddy build with github.com/mholt/caddy-ratelimit (xcaddy
+    # build --with github.com/mholt/caddy-ratelimit). Uncomment once that
+    # binary is installed; left inactive here because the directive is a
+    # config error on a plugin-less Caddy build.
+    # rate_limit {
+    #     zone dynamic {
+    #         key    {remote_host}
+    #         events 300
+    #         window 1m
+    #     }
+    # }
+
+    reverse_proxy 127.0.0.1:3000
+}
