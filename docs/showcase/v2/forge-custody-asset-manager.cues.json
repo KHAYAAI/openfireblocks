@@ -1,0 +1,251 @@
+{
+ "video": "forge-custody-asset-manager.webm",
+ "cues": [
+  {
+   "t": 0.3,
+   "kind": "card",
+   "text": "Fund assets across chains, one set of controls. Kestrel Asset Management (fictional) holds fund assets on several chains. Its portfolio system connects through the API; the investment committee approves large moves; an AI treasury agent pays routine fund expenses.",
+   "title": "Asset manager · recorded on the running platform"
+  },
+  {
+   "t": 14.3,
+   "kind": "diagram",
+   "text": "Per-fund keys on every chain, governed the same way. One platform for Ethereum, Bitcoin, Solana and Cosmos keys. Multi-custodian orchestration and tokenisation are built (tested in CI) and not shown here.",
+   "title": "How it fits"
+  },
+  {
+   "t": 30.3,
+   "kind": "card",
+   "text": "Connecting the portfolio system. The portfolio system creates a key per fund on each chain it needs. Each is a 2-of-3 key from its own ceremony: secp256k1 for Ethereum and Bitcoin, Ed25519 for Solana.",
+   "title": "Chapter 1"
+  },
+  {
+   "t": 42.6,
+   "kind": "stage",
+   "text": "Keys for Fund I on three chains. The same call for each chain. The platform runs the right ceremony for each signature scheme.",
+   "title": "Your application"
+  },
+  {
+   "t": 51,
+   "kind": "caption",
+   "text": "Three key ceremonies run at once across the same three parties: two ECDSA, one EdDSA.",
+   "title": "Three ceremonies"
+  },
+  {
+   "t": 116.3,
+   "kind": "caption",
+   "text": "Each fund now has deposit addresses on three chains. Bitcoin and Solana spends are proven separately on public test networks.",
+   "title": "Addresses"
+  },
+  {
+   "t": 123.8,
+   "kind": "caption",
+   "text": "A 30 ETH rebalancing move: over the threshold, so the portfolio manager and risk must both approve.",
+   "title": "Held for the committee"
+  },
+  {
+   "t": 130.8,
+   "kind": "card",
+   "text": "The investment committee approves. Alice is the portfolio manager and Bob is risk. Both must approve with a fresh one-time code; neither asked for the move.",
+   "title": "Chapter 2"
+  },
+  {
+   "t": 140.3,
+   "kind": "caption",
+   "text": "The portfolio manager reviews the move.",
+   "title": "Sign in"
+  },
+  {
+   "t": 144.8,
+   "kind": "caption",
+   "text": "A one-time code from the person’s authenticator app. Every sign-in and every approval needs a fresh one.",
+   "title": "Second factor"
+  },
+  {
+   "t": 153.6,
+   "kind": "caption",
+   "text": "Amount, destination, the reason it was held and the Travel Rule details for the prime broker.",
+   "title": "The request"
+  },
+  {
+   "t": 159.6,
+   "kind": "caption",
+   "text": "Portfolio manager: approved.",
+   "title": "Approval"
+  },
+  {
+   "t": 168.7,
+   "kind": "caption",
+   "text": "Risk reviews the same request.",
+   "title": "Sign in"
+  },
+  {
+   "t": 173.2,
+   "kind": "caption",
+   "text": "A one-time code from the person’s authenticator app. Every sign-in and every approval needs a fresh one.",
+   "title": "Second factor"
+  },
+  {
+   "t": 182,
+   "kind": "caption",
+   "text": "Risk: approved. The quorum is met.",
+   "title": "Approval"
+  },
+  {
+   "t": 197.8,
+   "kind": "caption",
+   "text": "The rebalancing move ran once: two of three parties signed and the chain accepted it.",
+   "title": "Result"
+  },
+  {
+   "t": 206.3,
+   "kind": "caption",
+   "text": "Fund I on Ethereum, Bitcoin and Solana, beside the treasury key, all under the same policy.",
+   "title": "Keys"
+  },
+  {
+   "t": 213.6,
+   "kind": "card",
+   "text": "Reconciliation. The fund administrator needs the books to match the chain. The platform checks every signed transfer against the chain and keeps the result as evidence.",
+   "title": "Chapter 3"
+  },
+  {
+   "t": 223.1,
+   "kind": "caption",
+   "text": "The operations administrator runs a reconciliation.",
+   "title": "Sign in"
+  },
+  {
+   "t": 227.6,
+   "kind": "caption",
+   "text": "A one-time code from the person’s authenticator app. Every sign-in and every approval needs a fresh one.",
+   "title": "Second factor"
+  },
+  {
+   "t": 234,
+   "kind": "caption",
+   "text": "The platform’s own ledger is compared with the chain. A transfer the chain does not show, or one the ledger does not know, is flagged.",
+   "title": "Reconciliation"
+  },
+  {
+   "t": 243.1,
+   "kind": "caption",
+   "text": "Each signed transfer was looked up on the chain by its hash. The result is stored, with who ran it and when, as evidence.",
+   "title": "Reconciliation"
+  },
+  {
+   "t": 251.9,
+   "kind": "card",
+   "text": "An AI treasury agent. Routine fund expenses (audit, administration, data fees) are paid by an AI agent, only to the fund’s two approved service providers, within a monthly budget.",
+   "title": "Chapter 4"
+  },
+  {
+   "t": 264.5,
+   "kind": "caption",
+   "text": "An agent is a credential that can only pay, within limits a person sets. It is issued here, by an admin.",
+   "title": "Agents"
+  },
+  {
+   "t": 272.3,
+   "kind": "caption",
+   "text": "The fund administrator and the auditor only; R10,000 a payment, R30,000 a day, thirty days.",
+   "title": "Its terms"
+  },
+  {
+   "t": 281,
+   "kind": "caption",
+   "text": "The agent key is displayed this one time and stored only as a hash. It goes into the AI client’s secret configuration, never into a prompt. (Masked here.)",
+   "title": "Shown once"
+  },
+  {
+   "t": 291.2,
+   "kind": "stage",
+   "text": "Connecting an AI client. The MCP server is a small process the AI client starts. It holds only the agent key (and, for Travel Rule payments, the organisation’s own details) and calls the same gateway.",
+   "title": "Your application"
+  },
+  {
+   "t": 303.8,
+   "kind": "caption",
+   "text": "MCP is how AI assistants discover and call tools. The server exposes five; only one can move money, and only within the agent’s terms.",
+   "title": "Model Context Protocol"
+  },
+  {
+   "t": 312.6,
+   "kind": "chat",
+   "text": "Pay the fund administrator’s October fee, R8,200 (invoice FA-1010), and the auditor’s interim fee, R4,800 (AU-559).",
+   "speaker": "user"
+  },
+  {
+   "t": 315.8,
+   "kind": "tool",
+   "text": "→ get_spending_status()"
+  },
+  {
+   "t": 321.6,
+   "kind": "tool",
+   "text": "→ send_payment({\"token\":\"tZAR\",\"recipient\":\"0x4d48134E996AebE95E681a027DaEfEAF6e5C4492\",\"amount\":\"8200\",\"chain_id\":1337,\"purpose\":\"Fund administration fee, October, FA-1010\",\"idempotency_key\":\"fa-1010-oct\"})"
+  },
+  {
+   "t": 327.4,
+   "kind": "chat",
+   "text": "The platform needs the recipient identified first: R8,200 is above the Travel Rule threshold. Invoice FA-1010 names the payee: Apex Fund Services (Pty) Ltd, which holds its own wallet. Retrying with the same idempotency key.",
+   "speaker": "agent"
+  },
+  {
+   "t": 333.4,
+   "kind": "tool",
+   "text": "→ send_payment({\"token\":\"tZAR\",\"recipient\":\"0x4d48134E996AebE95E681a027DaEfEAF6e5C4492\",\"amount\":\"8200\",\"chain_id\":1337,\"purpose\":\"Fund administration fee, October, FA-1010\",\"idempotency_key\":\"fa-1010-oct\",\"beneficiary\":{\"name\":\"Apex Fund Services (Pty) Ltd\"}})"
+  },
+  {
+   "t": 339.7,
+   "kind": "tool",
+   "text": "→ send_payment({\"token\":\"tZAR\",\"recipient\":\"0xf5F258aB3c56052C7f1A6EAD23A0d9F98D68e3F8\",\"amount\":\"4800\",\"chain_id\":1337,\"purpose\":\"Interim audit fee, AU-559\",\"idempotency_key\":\"au-559-interim\"})"
+  },
+  {
+   "t": 346.4,
+   "kind": "tool",
+   "text": "→ list_payments({\"limit\":5})"
+  },
+  {
+   "t": 352.1,
+   "kind": "chat",
+   "text": "Both paid: R8,200 to the administrator, with a Travel Rule record, and R4,800 to the auditor, below the threshold. Each has its invoice reference on the record. R17,000 of today’s R30,000 remains.",
+   "speaker": "agent"
+  },
+  {
+   "t": 363.7,
+   "kind": "chat",
+   "text": "Retry the administrator’s fee in case it failed.",
+   "speaker": "user"
+  },
+  {
+   "t": 366.9,
+   "kind": "tool",
+   "text": "→ send_payment({\"token\":\"tZAR\",\"recipient\":\"0x4d48134E996AebE95E681a027DaEfEAF6e5C4492\",\"amount\":\"8200\",\"chain_id\":1337,\"purpose\":\"Fund administration fee, October, FA-1010\",\"idempotency_key\":\"fa-1010-oct\",\"beneficiary\":{\"name\":\"Apex Fund Services (Pty) Ltd\"}})"
+  },
+  {
+   "t": 372.6,
+   "kind": "chat",
+   "text": "It had not failed: the platform recognised the same payment and did not pay it twice.",
+   "speaker": "agent"
+  },
+  {
+   "t": 381.8,
+   "kind": "caption",
+   "text": "A one-time code from the person’s authenticator app. Every sign-in and every approval needs a fresh one.",
+   "title": "Second factor"
+  },
+  {
+   "t": 389.6,
+   "kind": "caption",
+   "text": "Two payments, the budget used and what remains: the fund administrator can read exactly what the agent did.",
+   "title": "The agent’s record"
+  },
+  {
+   "t": 396.3,
+   "kind": "card",
+   "text": "Real platform, local chain.",
+   "title": "What this recording is"
+  }
+ ]
+}

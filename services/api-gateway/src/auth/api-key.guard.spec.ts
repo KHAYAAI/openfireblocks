@@ -15,13 +15,14 @@ function ctxWith(headers: Record<string, string>): {
 }
 
 const activeCustomer: Customer = {
-  id: 1,
   customer_id: 'demo',
+  name: 'demo',
   email: 'demo@x.io',
   api_key: 'hash',
   status: 'active',
   tier: 'pro',
   policies: {},
+  raw_digest_signing_enabled: true, arbitrary_contract_calls_enabled: false,
 };
 
 describe('ApiKeyGuard', () => {

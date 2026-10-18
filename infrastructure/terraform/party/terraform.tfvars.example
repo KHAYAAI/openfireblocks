@@ -1,0 +1,14 @@
+# Party 2, operated by <name/organisation>, in its own AWS account.
+region              = "af-south-1"
+expected_account_id = "444455556666"
+party_id            = 2
+party_image         = "444455556666.dkr.ecr.af-south-1.amazonaws.com/mpc-party@sha256:<digest>"
+
+# Filled in from the other operators' public_ip outputs.
+peer_party_cidrs = ["203.0.113.10/32", "198.51.100.30/32"]
+
+# The platform's egress addresses: the orchestrator (temporal-worker) and
+# the gateway's health prober.
+platform_cidrs = ["192.0.2.50/32"]
+
+ceremony_authorizer_pubkey = "04<uncompressed secp256k1 public key hex>"

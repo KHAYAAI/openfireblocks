@@ -1,0 +1,125 @@
+name: Compliance evidence
+
+# Weekly, repository-level evidence for SOC 2 / ISO 27001 (docs/compliance/isms/):
+# the route inventory, dependency advisories, GitHub settings and, when a
+# read-only audit role is configured, the AWS baseline. Findings never fail
+# this workflow: the CI gates already block bad changes, and this job's
+# purpose is a dated record. Its outputs are artifacts; a failing check is
+# entered in docs/compliance/isms/08-corrective-actions.md.
+#
+# Artifacts are kept for 90 days (the maximum for a public repository). Pull
+# them into Sprinto, or save each month's into the evidence store, to cover
+# a SOC 2 Type II window.
+
+on:
+  schedule:
+    - cron: "17 5 * * 1" # Mondays 05:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: read # Dependabot and code-scanning alerts, where the token may read them
+
+jobs:
+  repository:
+    name: Repository evidence
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          check-latest: true
+      - name: Collect
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          out=evidence/$(date -u +%Y-%m-%d)
+          mkdir -p "$out"
+          {
+            echo "# Compliance evidence, $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo
+            echo "Commit: \`$GITHUB_SHA\` on \`$GITHUB_REF_NAME\`; run $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo
+          } > "$out/SUMMARY.md"
+
+          # Route inventory: every gateway route guarded or deliberately public, and the doc current.
+          (cd services/api-gateway && node scripts/route-inventory.js --check) > "$out/route-inventory-check.txt" 2>&1
+          rc_routes=$?
+          (cd services/api-gateway && node scripts/route-inventory.js) > "$out/ROUTE-INVENTORY.md"
+          diff -q "$out/ROUTE-INVENTORY.md" docs/assurance/ROUTE-INVENTORY.md > /dev/null; rc_doc=$?
+
+          # Dependency advisories.
+          for pkg in services/api-gateway services/mcp-server; do
+            name=$(basename "$pkg")
+            (cd "$pkg" && npm audit --omit=dev --json) > "$out/npm-audit-$name.json" 2>/dev/null
+          done
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          python3 scripts/govulncheck-gate.py > "$out/govulncheck.txt" 2>&1; rc_vuln=$?
+
+          # GitHub settings.
+          scripts/compliance/github-controls-check.sh "$GITHUB_REPOSITORY" --json "$out/github-controls.json" --no-fail \
+            > "$out/github-controls.txt" 2>&1
+
+          {
+            echo "| Check | Result |"
+            echo "|---|---|"
+            echo "| Route inventory guarded | $([ $rc_routes = 0 ] && echo PASS || echo FAIL) |"
+            echo "| Route inventory document current | $([ $rc_doc = 0 ] && echo PASS || echo 'FAIL (regenerate docs/assurance/ROUTE-INVENTORY.md)') |"
+            for f in "$out"/npm-audit-*.json; do
+              n=$(basename "$f" .json)
+              echo "| $n (high+critical, production) | $(jq -r '((.metadata.vulnerabilities.high // 0) + (.metadata.vulnerabilities.critical // 0)) | tostring' "$f" 2>/dev/null || echo '?') |"
+            done
+            echo "| govulncheck gate | $([ $rc_vuln = 0 ] && echo PASS || echo FAIL) |"
+            jq -r '"| GitHub controls | \([.results[]|select(.status=="PASS")]|length) PASS, \([.results[]|select(.status=="FAIL")]|length) FAIL, \([.results[]|select(.status=="WARN")]|length) WARN, \([.results[]|select(.status=="UNKNOWN")]|length) UNKNOWN |"' "$out/github-controls.json"
+            echo
+            echo "### GitHub findings"
+            echo
+            jq -r '.results[] | select(.status != "PASS") | "- **\(.status)** `\(.id)`: \(.message)"' "$out/github-controls.json"
+          } >> "$out/SUMMARY.md"
+          (cd evidence && sha256sum -- */* > SHA256SUMS)
+          cat "$out/SUMMARY.md" >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: compliance-evidence-${{ github.run_id }}
+          path: evidence/
+          retention-days: 90
+
+  aws:
+    name: AWS baseline
+    # Runs only when a read-only audit role is configured: an IAM role with the
+    # AWS-managed SecurityAudit policy, trusting this repository through GitHub OIDC.
+    if: vars.AWS_AUDIT_ROLE_ARN != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
+        with:
+          role-to-assume: ${{ vars.AWS_AUDIT_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_AUDIT_REGION || 'af-south-1' }}
+      - name: Check
+        env:
+          AWS_CHECK_REGIONS: ${{ vars.AWS_CHECK_REGIONS || 'af-south-1 eu-west-1 us-east-1' }}
+        run: |
+          out=evidence/$(date -u +%Y-%m-%d)
+          mkdir -p "$out"
+          scripts/compliance/aws-baseline-check.sh --json "$out/aws-baseline.json" --no-fail | tee "$out/aws-baseline.txt"
+          {
+            echo "### AWS baseline"
+            echo
+            jq -r '.results[] | select(.status != "PASS") | "- **\(.status)** `\(.id)`: \(.message)"' "$out/aws-baseline.json"
+          } >> "$GITHUB_STEP_SUMMARY"
+          (cd evidence && sha256sum -- */* > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: compliance-evidence-aws-${{ github.run_id }}
+          path: evidence/
+          retention-days: 90

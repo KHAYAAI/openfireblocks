@@ -1,0 +1,217 @@
+groups:
+  - name: openfireblocks_alerts
+    interval: 30s
+    rules:
+      # Infrastructure Alerts
+      - alert: InstanceDown
+        expr: up{job!="pushgateway"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Instance {{ $labels.instance }} down"
+          description: "{{ $labels.instance }} has been down for more than 2 minutes"
+
+      - alert: HighCPUUsage
+        expr: node_cpu_usage > 0.85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High CPU usage on {{ $labels.instance }}"
+          description: "CPU usage is {{ $value | humanizePercentage }} for 5 minutes"
+
+      - alert: HighMemoryUsage
+        expr: node_memory_used_percent > 0.90
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage on {{ $labels.instance }}"
+          description: "Memory usage is {{ $value | humanizePercentage }} for 5 minutes"
+
+      - alert: DiskSpaceRunningOut
+        expr: node_disk_available_percent < 0.10
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Disk space running out on {{ $labels.instance }}"
+          description: "Only {{ $value | humanizePercentage }} disk space remaining"
+
+      # Database Alerts
+      - alert: RDSHighConnections
+        expr: rds_db_connections > 200
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High database connections on {{ $labels.db_instance_identifier }}"
+          description: "{{ $value }} connections active (threshold: 200)"
+
+      - alert: RDSHighLatency
+        expr: rds_db_query_duration_seconds_p95 > 1.0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High query latency on {{ $labels.db_instance_identifier }}"
+          description: "p95 query latency is {{ $value }}s (threshold: 1s)"
+
+      - alert: RDSReplicationLagged
+        expr: rds_replication_lag_seconds > 60
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "RDS replication lag too high"
+          description: "Replication lag is {{ $value }}s (threshold: 60s)"
+
+      - alert: RDSBackupFailed
+        expr: rds_backup_status == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "RDS backup failed for {{ $labels.db_instance_identifier }}"
+          description: "Last backup did not complete successfully"
+
+      # Vault Alerts
+      - alert: VaultSealed
+        expr: vault_core_unsealed == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Vault is sealed"
+          description: "Vault instance is sealed and cannot serve requests"
+
+      - alert: VaultHighLeaseCounts
+        expr: vault_core_lease_count > 10000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High number of active leases in Vault"
+          description: "{{ $value }} active leases (threshold: 10000)"
+
+      - alert: VaultAuditLogFull
+        expr: vault_audit_log_request_count > 1000000
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "Vault audit logs approaching limit"
+          description: "{{ $value }} audit log entries"
+
+      # Application Alerts
+      - alert: APIHighErrorRate
+        expr: rate(http_requests_total{status=~"5.."}[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High error rate on API"
+          description: "Error rate is {{ $value | humanizePercentage }} (threshold: 5%)"
+
+      - alert: APIHighLatency
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 1.0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High API latency"
+          description: "p95 latency is {{ $value }}s (threshold: 1s)"
+
+      - alert: SigningOperationTimeout
+        expr: signing_operation_timeout_total > 10
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Signing operations timing out"
+          description: "{{ $value }} timeout errors in last 5 minutes"
+
+      - alert: DKGCeremonyFailed
+        expr: dkg_ceremony_failed_total > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "DKG ceremony failed"
+          description: "{{ $value }} DKG ceremony failures"
+
+      # Compliance Alerts
+      - alert: ComplianceChecksFailing
+        expr: compliance_checks_passing < 0.95
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Compliance checks failing"
+          description: "{{ $value | humanizePercentage }} of checks passing (threshold: 95%)"
+
+      - alert: AMLKYCVerificationBacklog
+        expr: aml_kyc_pending_count > 100
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "AML/KYC verification backlog building up"
+          description: "{{ $value }} pending verifications (SLA: process within 24h)"
+
+      - alert: SecurityIncidentDetected
+        expr: security_incident_detected > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Security incident detected"
+          description: "Incident response procedures initiated"
+
+      - alert: UnauthorizedAccessAttempt
+        expr: unauthorized_access_attempts > 10
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Excessive unauthorized access attempts"
+          description: "{{ $value }} unauthorized attempts (threshold: 10)"
+
+      # Backup & DR Alerts
+      - alert: BackupFailed
+        expr: backup_status == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Backup job failed"
+          description: "Backup for {{ $labels.component }} failed"
+
+      - alert: BackupOlderThan24Hours
+        expr: (time() - backup_last_successful_timestamp) > 86400
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "No successful backup in 24 hours"
+          description: "Last successful backup was {{ $value }}s ago"
+
+      - alert: CrossRegionReplicationLagged
+        expr: replication_lag_seconds > 3600
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Cross-region replication is lagged"
+          description: "Replication lag is {{ $value }}s (threshold: 3600s)"
+
+      # Alert Fatigue Prevention
+      - alert: AlertmanagerProcessingErrors
+        expr: increase(alertmanager_alerts_received_total[1h]) - increase(alertmanager_alerts_processed_total[1h]) > 100
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Alertmanager has processing errors"
+          description: "{{ $value }} unprocessed alerts in the last hour"
