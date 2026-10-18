@@ -165,6 +165,20 @@ parties coming back and signing would pass in the case where nothing was
 ever destroyed — which is precisely the case it exists to catch. And a
 recovery that produces a different address has recovered nothing.
 
+To restore **every** active key on every party after a rebuild or a restart, one
+command reads the keys from the database, restores each ceremony on each party
+and checks every party reports the address the database holds:
+
+```bash
+./infrastructure/kind/restore-all-keys.sh --dry-run   # list what would be restored
+./infrastructure/kind/restore-all-keys.sh             # restore; safe to run again
+```
+
+A party that already holds a ceremony is skipped, and a key that cannot be
+restored (for instance a share retired on purpose) is reported without stopping
+the others. It does not sign: follow it with `recovery-drill.sh --restore-only` on
+one key, or `smoke-test.sh`, to prove signing.
+
 The restore is an explicit operator action, not something a party does on
 startup: `POST /tss/keygen/restore` with the ceremony id and the peer map.
 A party that restarts does not silently rearm itself with a key, because

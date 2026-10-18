@@ -287,9 +287,9 @@ The test tenant can stay; it holds no funds.
 
 ## What this does not prove
 
-- Only **one** key was restored. A rebuilt platform needs every active ceremony restored on every party
-  (`POST /tss/keygen/restore` per ceremony, with an authorisation signature when the ceremony authoriser is on).
-  There is no single command for all keys yet. Count them: `SELECT count(*) FROM key_pairs WHERE status = 'active'`.
+- Only **one** key was restored in the first run. A rebuilt platform needs every active ceremony restored on every
+  party. `infrastructure/kind/restore-all-keys.sh` now does that in one command (tested against a simulated cluster; its
+  first real run is still to come). Run it after Phase 5 and before Phase 6, then prove signing with the drill.
 - The authorising key (`ceremonyAuthorizer`) on this staging profile is the development key in
   `infrastructure/kind/dependencies.yaml`, so the new cluster had it automatically. In production it is held
   outside the cluster and must be one of the things you can still reach in a disaster.
