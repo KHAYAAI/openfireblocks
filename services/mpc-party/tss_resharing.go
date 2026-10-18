@@ -310,6 +310,14 @@ func driveResharing[S any](
 		case <-oldEnd:
 			// The old role finished. Not the answer; keep going.
 		case save := <-newEnd:
+			// Send what this party still owes its peers before finishing:
+			// see relayPending.
+			if err := relayPending(outCh, func(msg tsscommon.Message) error {
+				return m.relayReshareMessage(reshareID, ceremony, msg)
+			}); err != nil {
+				m.failResharing(reshareID, fmt.Errorf("failed to relay message: %w", err))
+				return
+			}
 			m.completeResharing(reshareID, ceremony, wrap(save))
 			return
 		}
