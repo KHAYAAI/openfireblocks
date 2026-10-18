@@ -201,12 +201,14 @@ party_url() {
 
 # The peers map a restored party needs in order to rebuild its committee.
 # In-cluster service DNS, because the parties talk to each other, not
-# through the drill's tunnels.
+# through the drill's tunnels. The full name, not "party-N": the parties'
+# certificates are issued for party-N.internal and
+# party-N.<namespace>.svc.cluster.local, and TLS verifies the name dialled.
 peers_json() {
   local out="" id
   for id in $(seq 1 "${PARTY_COUNT}"); do
     [[ -n "${out}" ]] && out="${out},"
-    out="${out}\"${id}\":\"https://party-${id}:${PARTY_PORT}\""
+    out="${out}\"${id}\":\"https://party-${id}.${NS}.svc.cluster.local:${PARTY_PORT}\""
   done
   [[ "${MTLS}" == "1" ]] || out="${out//https:/http:}"
   echo "{${out}}"
