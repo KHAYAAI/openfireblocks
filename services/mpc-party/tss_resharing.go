@@ -7,6 +7,7 @@ import (
 	"log"
 	"math/big"
 	"os"
+	"strings"
 	"sync"
 
 	ecdsakeygen "github.com/bnb-chain/tss-lib/v2/ecdsa/keygen"
@@ -427,12 +428,21 @@ func (m *TSSPartyManager) completeResharing(
 		return
 	}
 
-	if publicKey != ceremony.expectedPublicKey || address != ceremony.expectedAddress {
+	// Compared by public key. The address the key was created with is the one
+	// written for its chain (a Cosmos key is "cosmos1..."), while PublicKey()
+	// derives the curve's default form, so comparing addresses would refuse a
+	// correct refresh of any key whose chain writes addresses its own way. The
+	// public key determines every address the key can have.
+	if publicKey != ceremony.expectedPublicKey {
 		m.failResharing(reshareID, fmt.Errorf(
 			"refusing the refreshed share: it controls %s, but the key being refreshed is %s. "+
 				"A refresh must not change the key; the existing share has been left untouched",
-			address, ceremony.expectedAddress))
+			publicKey, ceremony.expectedPublicKey))
 		return
+	}
+	// Keep reporting and sealing the address the key was created with.
+	if ceremony.expectedAddress != "" {
+		address = ceremony.expectedAddress
 	}
 
 	ceremony.mu.Lock()
@@ -734,14 +744,34 @@ func (m *TSSPartyManager) RestoreCeremony(ceremonyID string, peers map[int]strin
 		return fmt.Errorf("this party (%d) is not among the supplied endpoints", m.partyID)
 	}
 
-	// The restored share must control the address it was sealed against.
-	// A mismatch means the sealed material and the context disagree, and
+	// The restored share must control the key it was sealed against. A
+	// mismatch means the sealed material and the context disagree, and
 	// signing with it would produce valid signatures for the wrong key.
+	//
+	// Compared by public key, not by address. The address a ceremony seals is
+	// the one written for its chain (a Cosmos key is bech32, "cosmos1..."),
+	// while PublicKey() derives the curve's default form (an Ethereum-style
+	// 0x... address for secp256k1), so comparing addresses refused every
+	// Cosmos key even though the share was exactly right. The public key
+	// determines every address the key can have, so this is the stronger
+	// check as well as the one that matches.
 	pubKeyHex, address, err := share.PublicKey()
 	if err != nil {
 		return fmt.Errorf("the restored share has no usable public key: %w", err)
 	}
-	if cc.Address != "" && address != cc.Address {
+	if cc.PublicKeyHex != "" {
+		if !strings.EqualFold(pubKeyHex, cc.PublicKeyHex) {
+			return fmt.Errorf("the restored share controls public key %s but was sealed against %s; "+
+				"refusing to load it", pubKeyHex, cc.PublicKeyHex)
+		}
+		// Report the address the key was created with, in the form its chain
+		// writes it, not the default form.
+		if cc.Address != "" {
+			address = cc.Address
+		}
+	} else if cc.Address != "" && address != cc.Address {
+		// A context sealed without its public key can only be checked by
+		// address, which is exact for the curves' default forms.
 		return fmt.Errorf("the restored share controls %s but was sealed against %s; "+
 			"refusing to load it", address, cc.Address)
 	}

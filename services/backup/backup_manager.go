@@ -201,6 +201,7 @@ func (b *BackupManager) copyOffsite(ctx context.Context, meta, pg, vault *Backup
 		return err
 	}
 	tmp.Close()
+	receipts := ChecksumRecord{BackupID: meta.ID, Files: map[string]OffsiteReceipt{}}
 	for _, part := range []struct{ name, path string }{
 		{"postgres", pg.Destination}, {"vault", vault.Destination}, {"manifest", tmp.Name()},
 	} {
@@ -210,6 +211,12 @@ func (b *BackupManager) copyOffsite(ctx context.Context, meta, pg, vault *Backup
 		}
 		meta.Tags["offsite_"+part.name+"_key"] = rec.Key
 		meta.Tags["offsite_"+part.name+"_sha256"] = rec.PlaintextSHA256
+		receipts.Files[part.name] = *rec
+	}
+	// The receipts go into the bucket as well, so the backup can be fetched
+	// after the cluster that recorded them is gone. See offsite_checksums.go.
+	if err := b.offsite.PutChecksums(ctx, receipts); err != nil {
+		return fmt.Errorf("checksums: %w", err)
 	}
 	return nil
 }
@@ -223,9 +230,29 @@ func (b *BackupManager) FetchOffsite(ctx context.Context, backupID string, tags 
 		return nil, fmt.Errorf("no off-site store is configured")
 	}
 	out := map[string]string{}
-	for _, name := range []string{"postgres", "vault", "manifest"} {
+
+	// Checksums the caller supplied win. Without them, use the ones stored in
+	// the bucket beside the files; a backup made before those existed has none
+	// and still needs the caller's.
+	var stored *ChecksumRecord
+	for _, name := range backupFileNames {
+		if tags["offsite_"+name+"_sha256"] != "" {
+			continue
+		}
+		rec, err := b.offsite.GetChecksums(ctx, backupID)
+		if err != nil {
+			return nil, fmt.Errorf("no checksum for %s was supplied and the stored ones could not be used: %w; refusing to restore something that cannot be checked", name, err)
+		}
+		stored = rec
+		break
+	}
+
+	for _, name := range backupFileNames {
 		dest := filepath.Join(dir, backupID, name)
 		want := &OffsiteReceipt{PlaintextSHA256: tags["offsite_"+name+"_sha256"]}
+		if want.PlaintextSHA256 == "" && stored != nil {
+			want.PlaintextSHA256 = stored.Files[name].PlaintextSHA256
+		}
 		if want.PlaintextSHA256 == "" {
 			return nil, fmt.Errorf("no checksum recorded for %s; refusing to restore something that cannot be checked", name)
 		}

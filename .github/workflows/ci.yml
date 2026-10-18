@@ -83,7 +83,7 @@ jobs:
         # -race.
         run: |
           if [ "${{ matrix.module }}" = "services/mpc-party" ]; then
-            heavy='TestRealMultiPartyKeygenOverHTTP|TestRealMultiPartySigningOverHTTP|TestSigningWithEveryCommittee|TestSealAndLoadKeyShareRoundTrip|TestCosmosKeygenAndSignatureByChainName'
+            heavy='TestRealMultiPartyKeygenOverHTTP|TestRealMultiPartySigningOverHTTP|TestSigningWithEveryCommittee|TestSealAndLoadKeyShareRoundTrip|TestCosmosKeygenAndSignatureByChainName|TestACosmosKeyCanBeRefreshedAndRestored'
             go test -race ./... -count=1 -timeout 40m -skip "^($heavy)\$"
             go test ./... -count=1 -timeout 40m -run "^($heavy)\$"
           else

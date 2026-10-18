@@ -70,6 +70,17 @@ on the running gateway, and the token-account creation path that the first run d
      what is still queued before finishing.
   - Effect: an intermittent signing or key-generation request could hang and time out. It could not produce a wrong
     signature and no funds were at risk; a retry worked. Staging runs the unfixed images until the next deploy.
+- **Merged and redeployed.** The fix was merged as `c585a2e` (pull request #47, all 60 checks green). The Deploy
+  workflow's Security Scanning, Run Tests and all 14 Build jobs passed on that commit. Staging was moved to that
+  commit and the three signing parties were rebuilt and restarted one at a time with
+  `infrastructure/kind/reload-image.sh mpc-party party-N`; `infrastructure/kind/smoke-test.sh` then **passed**: a new
+  key from a real DKG across three pods, shares sealed by all three, raw-digest signing refused until granted, an
+  over-limit request denied, another tenant refused (404), and a 2-of-3 signature from the public API recovered to the
+  key's address. Restarting the parties drops every earlier key from their memory (the shares stay sealed in Vault), so
+  the older test keys on staging need a restore before they sign again.
+- **Signed images from the merged commit:** `~/verify-images.sh c585a2e60fce2a2283e6f194057bc665107f2503` in CloudShell
+  printed **14 PASS, problems: 0** (signature and SBOM attestation against the deploy workflow's identity).
+- Not shown: that the earlier test keys were restored.
 
 ## Old backup access key
 - The first (wrong) IAM access key for the backup writer is gone: the user has one working key.
@@ -91,5 +102,20 @@ on the running gateway, and the token-account creation path that the first run d
 - Not shown by this run: signing from the wallet's key after the unfreeze; a console screen (none exists); an admin with
   a second factor enrolled.
 
+## First real run of `restore-all-keys.sh`
+- On staging, after the party restart, the script found **23 active keys** and restored **21** of them on all three
+  parties, including the Solana keys, the Bitcoin keys and the user-wallet keys. A few had already been restored by the
+  earlier smoke test and were skipped.
+- **The two Cosmos keys were refused by every party**, with "the restored share controls 0x69... but was sealed against
+  cosmos1...; refusing to load it". Cause: at key generation the party seals the address written for the key's chain
+  (bech32 for Cosmos), but the restore re-derived the curve's default (Ethereum-style) address and compared the two, so a
+  Cosmos key could never match its own sealed address. The refusal was the safe outcome and no share was exposed.
+  **A proactive refresh of a Cosmos key had the same flaw** and would have been refused (confirmed by a test that reverts
+  only that half). Both now compare the public key, which determines every address the key can have, and keep the
+  address the key was created with. New test `TestACosmosKeyCanBeRefreshedAndRestored` (a real Cosmos DKG, a restore, a
+  refresh, a restore after the refresh); without the fix it fails with the production error.
+- Not shown: the two Cosmos keys restored on staging (its parties run the unfixed image until the next deploy), and a
+  signature from a Cosmos key after a restore.
+
 ## Not done
-- The rebuild on a fresh server (Part B of the disaster-recovery test).
+- The two Cosmos keys on staging (see above).

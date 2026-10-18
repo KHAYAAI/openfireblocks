@@ -124,8 +124,15 @@ key was restored, not all 24; the checksums needed to fetch a backup exist only 
 
 **A real bug found by CI and fixed (`75bb1f6`; verified locally and CI passed all 30 checks):** the signing, key-generation and refresh drivers could drop a party's
 last protocol message when it finished, leaving its partner waiting for ever. It appeared only under load (most often
-in restore-then-sign) and could not produce a wrong signature; a retry worked. A regression test pins it. Staging and
-the registry images do not contain the fix until it is merged and redeployed.
+in restore-then-sign) and could not produce a wrong signature; a retry worked. A regression test pins it. It is merged (`c585a2e`, pull request #47) and staging has been
+rebuilt with it: the smoke test (real key generation, 2-of-3 signature) passed afterwards.
+
+**Dependency updates:** of the 16 open Dependabot pull requests, seven were rebased onto current code, re-tested (60 of 60
+checks each) and merged: `actions/checkout`, `setup-node`, `setup-python`, `setup-go`, jest, testify and the Prometheus
+client. Their earlier `mpc-party` failures were the signing-driver hang above, not the bumps. Not touched yet, each
+needing its own review: the Vault client, immudb, the Temporal SDK, OPA 1
+(a major version that can break the screening policies), NestJS 11 and TypeScript 6 and 7. Dependabot's own branches were
+blocked by the repository ruleset until `dependabot/**` was excluded.
 
 **Still not shown.** Separate hosts; hardware HSM (deferred, see step 7 below).
 
@@ -374,19 +381,22 @@ four chains, an SPL token and a user-wallet transfer on devnet, signed images in
 a real registry, and an off-site backup in a real locked bucket are no longer on
 this list.)
 
-## What is needed next (2026-10-17)
+## What is needed next (updated 2026-10-18)
 
 In the order to do them. "You" means it needs a person with access or authority; "Engineering" can be done
 from here once you say go.
 
 | # | Step | Effort | Who | Why now |
 |---|---|---|---|---|
-| 1 | Merge this branch into the default branch (open a pull request) | 10 min | You | Images are built from the default branch, and it lacks the gate repair, the backup fixes and the evidence |
-| 2 | Check the nightly backup ran (a second backup id in the bucket after 02:17 UTC); delete the first, wrong access key in IAM | 5 min | You | The scheduled path has never been seen to run |
-| 3 | Verify the other 13 images' signatures and run the repaired Deploy workflow on a push (add a Snyk token or accept the skipped scan) | 1 hour | You, then Engineering | Supply-chain control is proven for one image only |
+| 1 | ~~Merge this branch into the default branch~~ **Done** (#44, #46, #47) | | | |
+| 2 | ~~Check the nightly backup ran; delete the wrong access key~~ **Done 2026-10-18** | | | |
+| 3 | ~~Verify all 14 images' signatures; run the repaired Deploy workflow~~ **Done 2026-10-18** (14 of 14 for both `2571281` and `c585a2e`). Still open: the run's "Deploy to Staging" job fails at its AWS credentials step | | | |
 | 4 | **Done 2026-10-18 (41 min 42 s; one key restored).** Disaster-recovery rebuild (Part B): fresh server, `up.sh`, restore database and key shares, stand the parties back up, sign with a restored key and check the address is unchanged, timed | half a day, a second instance for a day | You, with Engineering writing the commands | Gives the measured recovery time; the biggest open item in the backup story |
-| 5 | Redeploy staging with the 409 fix; try the two untried paths (a recipient with no token account; unfreeze in the console) | 1 hour | You | Closes the small gaps above |
-| 6 | **Signing parties on separate hosts** (three operators, three AWS accounts), then a new key generated on them | 1-2 weeks | Three people | The step between bounded pilots and real money |
+| 5 | ~~Redeploy staging; recipient with no token account; unfreeze~~ **Done 2026-10-18** (staging runs the signing-driver fix) | | | |
+| 5b | ~~Keep the backup checksums off the cluster~~ **Built 2026-10-18:** each backup now stores `checksums.enc` in the bucket; tested (missing, altered, wrong-backup, wrong-key, swapped file). Takes effect for backups taken after the next deploy; not yet proven against the real bucket | | | |
+| 5c | **Restore every key after a rebuild:** `restore-all-keys.sh` ran on staging: **21 of 23 keys restored**; the 2 Cosmos keys were refused because of a bug (restore and refresh compared addresses in different forms), now fixed with a regression test. To do: deploy the fix and run the script again | 30 min | You, with Engineering | The rebuild restored one key of 24; the party restart left the older staging keys unable to sign |
+| 5d | Review the remaining Dependabot pull requests one at a time (OPA 1, NestJS 11, TypeScript, Vault client, immudb, Temporal) and the `checkout` bump | 1-2 days | You, with Engineering | Old dependencies; OPA 1 and NestJS 11 are major versions |
+| 6 | **Signing parties on separate hosts** (three operators, three AWS accounts), then a new key generated on them. Playbook written: `docs/deployment/SEPARATE-HOSTS-PLAYBOOK.md` (track A: a rehearsal by you alone, 1-2 days, which proves the Terraform but not the separation; track B: three operators, 1-2 weeks). Nothing has been applied to real AWS yet | 1-2 weeks | Three people | The step between bounded pilots and real money |
 | 7 | **CloudHSM** for the single-key signer. **Deferred, 2026-10-18:** about US$1,100 a month for one HSM and about US$2,200 for the two that high availability needs (hourly, so billed whether or not it is used; confirm the figure for the region on AWS's pricing page). It covers only the single-key path, not the 2-of-3 shares. The signing code already passes against SoftHSM2 in CI. Revisit when a customer or auditor requires FIPS 140-2 Level 3 custody, or once revenue covers it; a one-afternoon test (one HSM, then deleted) would cost a few dollars | about a week | You | Hardware key custody for that path; the 2-of-3 shares are not covered by it |
 | 8 | **Pentest round 4** (Shannon), then commission the independent human-led test | 1-2 days, plus a vendor | You | Most useful on the final shape of the system (after 6 and 7) |
 | 9 | Re-run the AWS baseline check once the AWS connector is re-authorised | 30 min | You | New resources exist in the account |

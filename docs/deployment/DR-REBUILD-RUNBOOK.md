@@ -23,14 +23,14 @@ The old server is treated as lost. The new server may use only what a real opera
 The old server stays running only so its numbers can be compared; nothing is read from it by the new server
 except the files copied through your laptop.
 
-## Finding to confirm: the checksums are only on the cluster
+## The checksums
 
-`POST /offsite/fetch` refuses to fetch anything without the SHA-256 of all three files, and for a nightly backup
-those values are recorded only in the backup volume **inside the cluster** (`services/backup/backup_manager.go`,
-`FetchOffsite`). If the whole cluster is lost, the bucket's contents can't be fetched through the service without
-a copy of those checksums made earlier. This runbook uses a manual backup whose checksums you save off-server. Record
-the gap in the evidence and fix it (for example by keeping the checksums beside the objects, or by saving them off
-the cluster after every run).
+`POST /offsite/fetch` refuses to fetch anything it cannot check against the SHA-256 of each file. Until 2026-10-18
+those values were recorded only in the backup volume **inside the cluster**, so after a total loss a backup could be
+fetched only if its checksums had been copied off the server by hand (this runbook's first run did that). Backups taken
+since the fix also store the checksums in the bucket beside the files (`checksums.enc`, encrypted with the backup key),
+so `POST /offsite/fetch {"backup_id": "..."}` is enough, and Phase 1's copy of `dr-backup-B.json` is only needed for
+older backups. Both routes still work, and checksums you pass explicitly take precedence.
 
 ## Phase 1: prepare, on the OLD server (about 20 minutes)
 
@@ -287,9 +287,9 @@ The test tenant can stay; it holds no funds.
 
 ## What this does not prove
 
-- Only **one** key was restored. A rebuilt platform needs every active ceremony restored on every party
-  (`POST /tss/keygen/restore` per ceremony, with an authorisation signature when the ceremony authoriser is on).
-  There is no single command for all keys yet. Count them: `SELECT count(*) FROM key_pairs WHERE status = 'active'`.
+- Only **one** key was restored in the first run. A rebuilt platform needs every active ceremony restored on every
+  party. `infrastructure/kind/restore-all-keys.sh` now does that in one command (tested against a simulated cluster; its
+  first real run is still to come). Run it after Phase 5 and before Phase 6, then prove signing with the drill.
 - The authorising key (`ceremonyAuthorizer`) on this staging profile is the development key in
   `infrastructure/kind/dependencies.yaml`, so the new cluster had it automatically. In production it is held
   outside the cluster and must be one of the things you can still reach in a disaster.

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -302,4 +303,88 @@ func requireVault(t *testing.T) {
 		return
 	}
 	startFakeVault(t)
+}
+
+// A key whose chain writes addresses its own way -- Cosmos is bech32, not the
+// 0x... form a secp256k1 key has by default -- has to survive the same two
+// operations. Both used to compare the share's default-form address with the
+// chain-form one the ceremony had sealed, so every Cosmos key was refused on
+// restore ("the restored share controls 0x69... but was sealed against
+// cosmos1..."), and a refresh of one would have been refused too. Found by
+// the first run of restore-all-keys.sh against a real cluster: 21 keys of 23
+// restored, and the two Cosmos keys did not.
+func TestACosmosKeyCanBeRefreshedAndRestored(t *testing.T) {
+	t.Setenv("TSS_ALLOW_UNAUTHENTICATED_PEERS", "1")
+	if testing.Short() {
+		t.Skip("secp256k1 DKG; skipped in -short")
+	}
+	requireVault(t)
+
+	key := runKeygenOverHTTPFor(t, CurveSecp256k1, "cosmos")
+	if !strings.HasPrefix(key.address, "cosmos1") {
+		t.Fatalf("address %q is not a cosmos address", key.address)
+	}
+
+	restore := func(label string) {
+		t.Helper()
+		peers := make(map[int]string, len(key.managers))
+		fresh := make(map[int]*TSSPartyManager, len(key.managers))
+		for id := range key.managers {
+			mgr := NewTSSPartyManager(id, &http.Client{Timeout: 90 * time.Second})
+			fresh[id] = mgr
+			router := mux.NewRouter()
+			ps := &PartyServer{partyID: id, tssManager: mgr}
+			router.HandleFunc("/tss/sign/message", ps.HandleTSSSignMessage).Methods(http.MethodPost)
+			server := httptest.NewServer(router)
+			t.Cleanup(server.Close)
+			peers[id] = server.URL
+		}
+		for id, mgr := range fresh {
+			if err := mgr.RestoreCeremony(key.ceremonyID, peers); err != nil {
+				t.Fatalf("%s: party %d could not restore a cosmos key: %v", label, id, err)
+			}
+			status, err := mgr.GetStatus(key.ceremonyID)
+			if err != nil {
+				t.Fatalf("%s: party %d: GetStatus: %v", label, id, err)
+			}
+			if status.Address != key.address {
+				t.Fatalf("%s: party %d restored to %s, want the address the key was created with, %s",
+					label, id, status.Address, key.address)
+			}
+		}
+	}
+
+	restore("after the DKG")
+
+	const reshareID = "cosmos-refresh"
+	for id, mgr := range key.managers {
+		if err := mgr.StartResharing(reshareID, key.ceremonyID, key.peers); err != nil {
+			t.Fatalf("party %d: StartResharing failed: %v", id, err)
+		}
+	}
+	done := map[int]bool{}
+	deadline := time.Now().Add(3 * time.Minute)
+	for len(done) < len(key.managers) && time.Now().Before(deadline) {
+		for id, mgr := range key.managers {
+			if done[id] {
+				continue
+			}
+			status, err := mgr.GetResharingStatus(reshareID)
+			if err != nil {
+				t.Fatalf("party %d: GetResharingStatus: %v", id, err)
+			}
+			switch status.Status {
+			case string(ceremonyCompleted):
+				done[id] = true
+			case string(ceremonyFailed):
+				t.Fatalf("party %d: refreshing a cosmos key failed: %s", id, status.Error)
+			}
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	if len(done) < len(key.managers) {
+		t.Fatalf("only %d of %d parties finished refreshing a cosmos key", len(done), len(key.managers))
+	}
+
+	restore("after a refresh")
 }
