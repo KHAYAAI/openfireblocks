@@ -1,5 +1,8 @@
 # Running the signing parties on separate hosts
 
+> **Step-by-step version: [SEPARATE-HOSTS-PLAYBOOK.md](SEPARATE-HOSTS-PLAYBOOK.md)** (a rehearsal track and a real
+> three-operator track, with checkpoints). This document is the design and what was tested.
+
 The procedure for moving from three parties in one cluster (`simulated`)
 to three parties in three cloud accounts run by three different people
 (`multi-account`). This is the step that stands between the platform and

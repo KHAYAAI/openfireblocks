@@ -11,4 +11,6 @@ peer_party_cidrs = ["203.0.113.10/32", "198.51.100.30/32"]
 # the gateway's health prober.
 platform_cidrs = ["192.0.2.50/32"]
 
-ceremony_authorizer_pubkey = "04<uncompressed secp256k1 public key hex>"
+# An ed25519 public key: 32 bytes as 64 hex characters (the party refuses secp256k1 for this key by design).
+# See docs/deployment/SEPARATE-HOSTS-PLAYBOOK.md, phase 2, for how to make one.
+ceremony_authorizer_pubkey = "<64 hex characters>"
