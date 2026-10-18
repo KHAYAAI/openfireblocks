@@ -50,7 +50,12 @@ on the running gateway, and the token-account creation path that the first run d
   and the rest of that job was skipped. It targets a cluster setup that the single-server staging does not use;
   the cause has not been investigated. The push-event CI run of the merged commit also had one failure,
   `TestParticipantsCanBeRestoredFromSealedMaterialAndStillSign` ("timed out signing with restored shares"); the
-  pull-request run of the same commit passed it. Treated as a flake, not yet explained.
+  pull-request run of the same commit passed it. The push-event run for the merge commit itself then failed a different heavy test in the same package,
+  `TestSealAndLoadKeyShareRoundTrip` ("timed out waiting for keygen to complete"), with logs showing the Paillier
+  pre-parameter (safe-prime) generation timing out and retrying: both failures are key-generation timing under CI load,
+  and both happened only in push-event runs while the pull-request runs of the same commits passed. Not a logic failure
+  as far as the logs show, but the package's heavy tests are timing-sensitive and have now failed in two of three
+  push runs; worth a deterministic fix (pre-generated pre-parameters in tests, or a looser timeout).
 
 ## Old backup access key
 - The first (wrong) IAM access key for the backup writer is gone: the user has one working key.
