@@ -80,7 +80,7 @@ POST /keys/:keyId/solana-transactions
   `token`, `amount` is lamports as before.
 - **`destination` is the recipient's wallet address, not their token account.** The platform derives both
   token accounts. If the recipient doesn't have a token account for this token yet, the platform creates
-  it, and your key pays its rent (about 0.002 SOL).
+  it, and your key pays its rent. The amount is read from the network each time (on devnet on 2026-10-18 it was 1,488,440 lamports, about 0.0015 SOL; on mainnet it has been about 0.002 SOL).
 - **`/transfers` and `/wallets/:id/transfers` accept the same `token` field.** An approver sees the
   parked transfer as the token ("2.5 USDC"), not as SOL.
 - **`GET /keys/:keyId/balances` on a Solana key** lists SOL and every verified Solana token.
@@ -114,5 +114,6 @@ These all fail after the parties have signed, so they are checked before the key
 - **The two-instruction message** (CreateIdempotent, then TransferChecked) decompiles to instructions
   identical to those from spl-token's own instruction builders: the same accounts, signer and writable
   flags, and data. The vectors are in `services/mpc-signer/chains/solana_spl_test.go`.
-- **Not yet:** a token transfer on Solana devnet. The environment that built this couldn't reach a Solana
-  node. That run is the next step, and it is the one that proves the feature on a public network.
+- **On devnet:** token transfers ran on Solana devnet on 2026-10-17 and 2026-10-18, including one to a recipient with
+  no token account, where the platform created it and the sending key paid the rent
+  (`docs/evidence/2026-10-18-staging-checks.md`).
