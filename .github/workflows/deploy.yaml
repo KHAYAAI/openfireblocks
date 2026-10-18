@@ -26,7 +26,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
+      # Needs a SNYK_TOKEN secret. Without one this step is skipped, loudly,
+      # instead of failing the whole pipeline; Semgrep, gitleaks and the CI
+      # dependency audit and govulncheck jobs still run. Add the token to turn
+      # this scan on.
+      - name: Snyk scan skipped (no SNYK_TOKEN)
+        if: ${{ env.SNYK_TOKEN == '' }}
+        run: echo "::warning::SNYK_TOKEN is not set, so the Snyk scan did not run"
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+
       - name: Run Snyk Vulnerability Scan
+        if: ${{ env.SNYK_TOKEN != '' }}
         uses: snyk/actions/golang@11b673cfb4b0dc0d860a1323caa199d54950dcce # master as of 2026-10-12
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
@@ -43,51 +54,38 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  # The tests that gate a release: the signer's Go tests and the gateway's
+  # unit tests. The full suite, with real Postgres and the other services, is
+  # ci.yml; this job exists so that a release cannot go out when the two
+  # services that move money do not pass their own tests. (It used to run
+  # `go test -coverage ./...` at the repository root, which is not a valid
+  # flag and has no Go module there, so it could never pass.)
   test:
     name: Run Tests
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:15
-        env:
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: openfireblocks_test
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 5432:5432
-      
-      redis:
-        image: redis:7
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 6379:6379
-    
     steps:
       - uses: actions/checkout@v4
-      
-      - name: Set up Go
-        uses: actions/setup-go@v4
+
+      - uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
-      
-      - name: Run unit tests
-        run: go test -v -race -coverage ./...
-        env:
-          DATABASE_URL: postgres://postgres:postgres@localhost/openfireblocks_test
-          REDIS_URL: redis://localhost:6379
-      
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@ab904c41d6ece82784817410c45d8b8c02684457 # v3
+          go-version: "1.26"
+          check-latest: true
+
+      - name: Signer tests
+        working-directory: services/mpc-signer
+        run: go test ./...
+
+      - uses: actions/setup-node@v4
         with:
-          files: ./coverage.out
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: services/api-gateway/package-lock.json
+
+      - name: Gateway unit tests
+        working-directory: services/api-gateway
+        run: |
+          npm ci
+          npx jest
 
   # The image list comes from scripts/build-images.sh --list, the same list
   # the chart and the kind cluster use. This job used to hand-write three

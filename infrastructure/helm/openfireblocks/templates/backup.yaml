@@ -69,13 +69,16 @@ spec:
                   name: {{ .Values.backup.standbyDatabaseUrlSecret }}
                   key: standby-database-url
             {{- end }}
-            {{- if .Values.mpcSigner.vault.addr }}
+            {{- /* The Vault to back up: backup.vault if set, else the signer's. They differ when the key shares sit in a Vault the signer does not use. */}}
+            {{- $vaultAddr := default .Values.mpcSigner.vault.addr .Values.backup.vault.addr }}
+            {{- $vaultTokenSecret := default .Values.mpcSigner.vault.tokenSecret .Values.backup.vault.tokenSecret }}
+            {{- if $vaultAddr }}
             - name: VAULT_ADDR
-              value: {{ .Values.mpcSigner.vault.addr | quote }}
+              value: {{ $vaultAddr | quote }}
             - name: VAULT_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.mpcSigner.vault.tokenSecret }}
+                  name: {{ $vaultTokenSecret }}
                   key: vault-token
             {{- end }}
             {{- if .Values.backup.offsite.enabled }}

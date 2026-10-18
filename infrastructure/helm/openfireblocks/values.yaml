@@ -544,6 +544,12 @@ backup:
   port: 8088
   apiTokenSecret: openfireblocks-secrets # secret holding key "backup-api-token"
   standbyDatabaseUrlSecret: "" # secret holding "standby-database-url", enables Postgres failover
+  # The Vault whose key-share KV tree is backed up. Empty falls back to
+  # mpcSigner.vault, which is empty when the signer does not use Vault -- and
+  # then a full backup fails on its Vault step rather than skipping it.
+  vault:
+    addr: ""        # e.g. http://vault:8200
+    tokenSecret: "" # secret holding "vault-token"; empty falls back to mpcSigner.vault.tokenSecret
   storage:
     size: 50Gi
     className: ""

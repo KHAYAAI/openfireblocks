@@ -28,6 +28,13 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags='-s -w' -o /out/backup-
 # change it with the server, not separately.
 FROM postgres:16-bookworm
 
+# The CA bundle, which the Postgres image does not ship: without it the S3 client
+# cannot verify Amazon's certificate ("x509: certificate signed by unknown
+# authority") and every off-site upload fails.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
 COPY --from=build /out/backup-server /usr/local/bin/backup-server
 
 # Not root, and the same uid the chart runs every workload as (1000). The dump

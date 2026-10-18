@@ -41,6 +41,7 @@ plaintext is recorded in the backup's metadata and checked on the way back.
 
 Tested: the encryption format (every size around the chunk boundary, tampering,
 truncation, reordering, wrong key), the manager flow, and the S3 client against
-a local S3-compatible server. **Not tested:** a real bucket, a real restore
+a local S3-compatible server. **Run once against a real bucket** on 2026-10-17
+(`docs/evidence/2026-10-17-offsite-backup-s3.md`): the upload, the lock and the refused delete. **Not tested:** a real restore
 into a fresh cluster. Do that drill before relying on it; it is the only
 test that counts for a backup.

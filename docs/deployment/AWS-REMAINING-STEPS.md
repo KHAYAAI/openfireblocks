@@ -163,6 +163,13 @@ Follow `docs/compliance/isms/exercises/DR-TEST.md`. In short:
 7. **Fill in the record table in `DR-TEST.md`**, including the RPO and RTO you achieved.
 8. **Clean up:** terminate the second instance and rotate any secrets used during the test.
 
+> **Order change, 2026-10-17:** do this step **after** items 6 and 7 (separate hosts, CloudHSM). It is most useful on
+> the final shape of the system, and those two change that shape. Our own checks of the new routes ran
+> first and found nothing (`docs/security/PENTEST-ROUND-4-PRECHECKS-2026-10-17.md`); the brief is in
+> `docs/security/PENTEST-ROUND-4-BRIEF.md`. Shannon's setup notes: it takes a source path, a URL and a config
+> file whose `description` field is limited to 500 characters; with DeepSeek, use the Anthropic-compatible
+> endpoint and run `--validate-model` before a scan.
+
 ## 5. Pentest round 4
 
 **Why:**
