@@ -257,6 +257,15 @@ func (m *TSSPartyManager) driveSigning(
 		// check on the channel receive itself is unavoidable without
 		// forking tss-lib's public API; documented there).
 		case sd := <-endCh:
+			// Send what this party still owes its peers before finishing:
+			// see relayPending. Without this the partner can wait for ever
+			// for this party's last message.
+			if err := relayPending(outCh, func(msg tsscommon.Message) error {
+				return m.relaySignMessage(signID, ceremony, msg)
+			}); err != nil {
+				m.failSigning(signID, fmt.Errorf("failed to relay message: %w", err))
+				return
+			}
 			// sd.Signature is the encoding tss-lib itself produced, which
 			// for Ed25519 is the only correct one: R and S are
 			// little-endian there, and assembling them from sd.R/sd.S the
