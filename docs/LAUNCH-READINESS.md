@@ -122,7 +122,7 @@ key was restored, not all 24; the checksums needed to fetch a backup exist only 
 
 **Unfreeze, done:** a signed-in organisation admin unfroze the frozen wallet through the organisation route (the reason was recorded with their email). There is no wallets screen in the console yet.
 
-**A real bug found by CI and fixed (`75bb1f6`, verified locally; its CI result was pending when this was written):** the signing, key-generation and refresh drivers could drop a party's
+**A real bug found by CI and fixed (`75bb1f6`; verified locally and CI passed all 30 checks):** the signing, key-generation and refresh drivers could drop a party's
 last protocol message when it finished, leaving its partner waiting for ever. It appeared only under load (most often
 in restore-then-sign) and could not produce a wrong signature; a retry worked. A regression test pins it. Staging and
 the registry images do not contain the fix until it is merged and redeployed.

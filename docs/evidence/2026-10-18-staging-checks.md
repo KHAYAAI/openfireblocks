@@ -54,7 +54,7 @@ on the running gateway, and the token-account creation path that the first run d
   `TestSealAndLoadKeyShareRoundTrip` ("timed out waiting for keygen to complete"), with logs showing the Paillier
   pre-parameter (safe-prime) generation timing out and retrying: both failures are key-generation timing under CI load,
   and both happened only in push-event runs while the pull-request runs of the same commits passed.
-- **Two causes were found and fixed** (`3192cae`, `75bb1f6`; verified locally, the CI result for `75bb1f6` was still pending when this was written):
+- **Two causes were found and fixed** (`3192cae`, `75bb1f6`; verified locally, and CI on `75bb1f6` passed all 30 checks including the mpc-party job):
   1. *Test timing.* Every party a test built started a background safe-prime search that never stopped, and each
      secp256k1 ceremony paid for an inline search under a fixed deadline. Tests now disable the background search and
      seed their parties from three pre-parameter sets generated once per run. The five heavy tests went from 7-13
