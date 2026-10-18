@@ -201,6 +201,7 @@ func (b *BackupManager) copyOffsite(ctx context.Context, meta, pg, vault *Backup
 		return err
 	}
 	tmp.Close()
+	sums := map[string]string{}
 	for _, part := range []struct{ name, path string }{
 		{"postgres", pg.Destination}, {"vault", vault.Destination}, {"manifest", tmp.Name()},
 	} {
@@ -210,6 +211,12 @@ func (b *BackupManager) copyOffsite(ctx context.Context, meta, pg, vault *Backup
 		}
 		meta.Tags["offsite_"+part.name+"_key"] = rec.Key
 		meta.Tags["offsite_"+part.name+"_sha256"] = rec.PlaintextSHA256
+		sums[part.name] = rec.PlaintextSHA256
+	}
+	// Written last, so a backup whose sidecar exists has all its files. Failing
+	// here fails the run: without it the bucket alone cannot restore the backup.
+	if err := b.offsite.PutChecksums(ctx, meta.ID, sums); err != nil {
+		return fmt.Errorf("checksums: %w", err)
 	}
 	return nil
 }
@@ -218,14 +225,37 @@ func (b *BackupManager) copyOffsite(ctx context.Context, meta, pg, vault *Backup
 // decrypted and checked against the checksums recorded when it was taken. It
 // is the first step of restoring after the cluster that held the local copies
 // is gone.
+//
+// Checksums come from tags when the caller has any offsite_*_sha256 value (the
+// local record, or ones saved elsewhere); that path is unchanged and every file
+// must have one. Otherwise they are read from the encrypted sidecar in the
+// bucket, so the bucket and the key suffice. If neither exists it refuses.
 func (b *BackupManager) FetchOffsite(ctx context.Context, backupID string, tags map[string]string, dir string) (map[string]string, error) {
 	if b.offsite == nil {
 		return nil, fmt.Errorf("no off-site store is configured")
 	}
+	names := []string{"postgres", "vault", "manifest"}
+	sums := map[string]string{}
+	supplied := false
+	for _, name := range names {
+		sums[name] = tags["offsite_"+name+"_sha256"]
+		if sums[name] != "" {
+			supplied = true
+		}
+	}
+	if !supplied {
+		fromBucket, err := b.offsite.GetChecksums(ctx, backupID)
+		if err != nil {
+			return nil, fmt.Errorf("no checksums supplied and none usable in the bucket; refusing to restore something that cannot be checked: %w", err)
+		}
+		for _, name := range names {
+			sums[name] = fromBucket[name]
+		}
+	}
 	out := map[string]string{}
-	for _, name := range []string{"postgres", "vault", "manifest"} {
+	for _, name := range names {
 		dest := filepath.Join(dir, backupID, name)
-		want := &OffsiteReceipt{PlaintextSHA256: tags["offsite_"+name+"_sha256"]}
+		want := &OffsiteReceipt{PlaintextSHA256: sums[name]}
 		if want.PlaintextSHA256 == "" {
 			return nil, fmt.Errorf("no checksum recorded for %s; refusing to restore something that cannot be checked", name)
 		}

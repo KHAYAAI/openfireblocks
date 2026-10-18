@@ -338,7 +338,9 @@ Any mainnet transfer, the TRISA link on the live network, the custody
 executor against anything but a stand-in, Stripe with a real key, signing
 parties on isolated hosts, a restore of the **whole platform** from the off-site
 backup into a fresh cluster (the database and key shares were restored into
-scratch copies and matched), the nightly backup job, AI-agent payments on a
+scratch copies and matched), fetching a backup from the bucket and key alone
+after total cluster loss (the checksum sidecar is unit-tested but not yet run
+against a real bucket; backups taken before it have none), the nightly backup job, AI-agent payments on a
 public network, the AWS baseline on the real account, and an independent
 human-led pentest or cryptographic audit. The token contract is unaudited.
 (A real cluster with public HTTPS, a real external AI-driven pentest with its

@@ -2,6 +2,7 @@ package backup
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
@@ -9,6 +10,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -275,4 +277,82 @@ func (o *OffsiteStore) decrypt(src io.Reader, dst io.Writer) error {
 		}
 		counter++
 	}
+}
+
+// checksumsName is the sidecar object stored beside each backup's files:
+// <prefix>/<backup-id>/checksums.enc.
+//
+// The per-file SHA-256s used to live only in the backup volume inside the
+// cluster, so losing the cluster left a bucket full of objects that FetchOffsite
+// refused to return. The sidecar is the same record, written to the bucket in
+// the same encrypted chunk format under the same key, so the bucket and the key
+// are enough to restore.
+//
+// What the SHA-256 still adds once the sidecar exists. AES-GCM authenticates
+// every chunk under the key, so nobody without the key can alter, reorder or
+// truncate an object. It does not say WHICH well-formed object this is: the
+// nonce prefix is random per object and the chunk AAD carries only position and
+// last-ness, so a writer to the bucket could replace postgres.enc with another
+// valid object made under the same key (an older backup, or another file of the
+// same backup) and it would authenticate. The recorded SHA-256 of the plaintext
+// pins the exact content that was backed up. The sidecar repeats that pin from
+// inside the bucket and names the backup it belongs to (checked on read), which
+// defeats swapping objects between backups. It cannot defeat someone who can
+// rewrite every object of one backup consistently, including the sidecar, using
+// the key; callers who want that pinned independently still supply the
+// checksums out of band, and that path is unchanged and takes precedence.
+const checksumsName = "checksums"
+
+// checksumsRecord is the plaintext of the sidecar.
+type checksumsRecord struct {
+	BackupID string            `json:"backup_id"`
+	SHA256   map[string]string `json:"sha256"` // file name -> hex SHA-256 of the plaintext
+}
+
+// maxChecksumsBytes bounds what is read for a sidecar, which is a few hundred
+// bytes; an object far larger than that is not one.
+const maxChecksumsBytes = 1 << 16
+
+// PutChecksums encrypts and stores the per-file checksums for a backup.
+func (o *OffsiteStore) PutChecksums(ctx context.Context, backupID string, sums map[string]string) error {
+	plain, err := json.Marshal(checksumsRecord{BackupID: backupID, SHA256: sums})
+	if err != nil {
+		return err
+	}
+	nonce := make([]byte, prefixLen)
+	if _, err := rand.Read(nonce); err != nil {
+		return err
+	}
+	var sealed bytes.Buffer
+	if err := o.encrypt(bytes.NewReader(plain), &sealed, nonce); err != nil {
+		return err
+	}
+	key := o.objectKey(backupID, checksumsName+".enc")
+	if err := o.objects.Put(ctx, key, &sealed); err != nil {
+		return fmt.Errorf("uploading %s: %w", key, err)
+	}
+	return nil
+}
+
+// GetChecksums reads and authenticates a backup's sidecar. It fails if the
+// sidecar is missing, altered, made under another key, or belongs to another
+// backup.
+func (o *OffsiteStore) GetChecksums(ctx context.Context, backupID string) (map[string]string, error) {
+	rc, err := o.objects.Get(ctx, o.objectKey(backupID, checksumsName+".enc"))
+	if err != nil {
+		return nil, fmt.Errorf("no checksum record in the bucket: %w", err)
+	}
+	defer rc.Close()
+	var plain bytes.Buffer
+	if err := o.decrypt(io.LimitReader(rc, maxChecksumsBytes), &plain); err != nil {
+		return nil, fmt.Errorf("checksum record: %w", err)
+	}
+	var rec checksumsRecord
+	if err := json.Unmarshal(plain.Bytes(), &rec); err != nil {
+		return nil, fmt.Errorf("checksum record is not valid: %w", err)
+	}
+	if rec.BackupID != backupID {
+		return nil, fmt.Errorf("checksum record belongs to backup %q, not %q", rec.BackupID, backupID)
+	}
+	return rec.SHA256, nil
 }

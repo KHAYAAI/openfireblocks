@@ -226,8 +226,8 @@ func TestACompletedBackupIsCopiedOffsiteAndCanBeFetchedBack(t *testing.T) {
 			t.Errorf("no receipt for %s: %v", name, meta.Tags)
 		}
 	}
-	if len(objs.m) != 3 {
-		t.Fatalf("%d objects uploaded, want 3", len(objs.m))
+	if len(objs.m) != 4 {
+		t.Fatalf("%d objects uploaded, want 3 files and a checksum sidecar", len(objs.m))
 	}
 
 	// The cluster is gone: only the bucket, the key and the checksums remain.
@@ -239,9 +239,113 @@ func TestACompletedBackupIsCopiedOffsiteAndCanBeFetchedBack(t *testing.T) {
 	if string(got) != "contents of postgres" {
 		t.Errorf("restored %q", got)
 	}
-	// Without the recorded checksums it refuses rather than restoring unchecked.
+}
+
+// The whole cluster is gone: no tags, no local record, only the bucket and key.
+func TestFetchWithOnlyTheBucketAndKey(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	mgr := NewBackupManager(&FilesystemBackupStorage{Dir: filepath.Join(dir, "meta")}, fakeDump{"v1", "vault", dir}, fakeDump{"p1", "postgres", dir})
+	objs := newMem()
+	k := key32(t)
+	st, _ := NewOffsiteStore(objs, "ofb", k)
+	mgr.SetOffsite(st)
+	meta, err := mgr.ExecuteFullBackup(ctx, "local")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A fresh manager sharing only the bucket and the key.
+	st2, _ := NewOffsiteStore(objs, "ofb", k)
+	fresh := NewBackupManager(&FilesystemBackupStorage{Dir: filepath.Join(t.TempDir(), "meta")}, fakeDump{"v1", "vault", dir}, fakeDump{"p1", "postgres", dir})
+	fresh.SetOffsite(st2)
+	files, err := fresh.FetchOffsite(ctx, meta.ID, nil, t.TempDir())
+	if err != nil {
+		t.Fatalf("bucket+key fetch: %v", err)
+	}
+	if got, _ := os.ReadFile(files["vault"]); string(got) != "contents of vault" {
+		t.Errorf("restored %q", got)
+	}
+
+	// Supplied tags still win: a wrong one is refused even though the sidecar is fine.
+	bad := map[string]string{"offsite_postgres_sha256": strings.Repeat("0", 64), "offsite_vault_sha256": meta.Tags["offsite_vault_sha256"], "offsite_manifest_sha256": meta.Tags["offsite_manifest_sha256"]}
+	if _, err := fresh.FetchOffsite(ctx, meta.ID, bad, t.TempDir()); err == nil {
+		t.Error("supplied checksums were ignored in favour of the sidecar")
+	}
+	// Partial tags keep the old behaviour: refuse, do not fill in from the bucket.
+	partial := map[string]string{"offsite_postgres_sha256": meta.Tags["offsite_postgres_sha256"]}
+	if _, err := fresh.FetchOffsite(ctx, meta.ID, partial, t.TempDir()); err == nil {
+		t.Error("partial tags were silently completed")
+	}
+}
+
+func TestTamperedOrWrongSidecarIsRefused(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	objs := newMem()
+	k := key32(t)
+	st, _ := NewOffsiteStore(objs, "ofb", k)
+	mgr := NewBackupManager(&FilesystemBackupStorage{Dir: filepath.Join(dir, "meta")}, fakeDump{"v1", "vault", dir}, fakeDump{"p1", "postgres", dir})
+	mgr.SetOffsite(st)
+	meta, err := mgr.ExecuteFullBackup(ctx, "local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sidecar := "ofb/" + meta.ID + "/checksums.enc"
+	orig := append([]byte(nil), objs.m[sidecar]...)
+	fetch := func() error { _, err := mgr.FetchOffsite(ctx, meta.ID, nil, t.TempDir()); return err }
+
+	flipped := append([]byte(nil), orig...)
+	flipped[len(flipped)-1] ^= 1
+	objs.m[sidecar] = flipped
+	if fetch() == nil {
+		t.Error("a tampered sidecar was accepted")
+	}
+
+	// A sidecar made under another key.
+	other, _ := NewOffsiteStore(objs, "ofb", key32(t))
+	if err := other.PutChecksums(ctx, meta.ID, map[string]string{"postgres": strings.Repeat("0", 64)}); err != nil {
+		t.Fatal(err)
+	}
+	if fetch() == nil {
+		t.Error("a sidecar under the wrong key was accepted")
+	}
+
+	// A genuine sidecar of a different backup, copied into place.
+	if err := st.PutChecksums(ctx, "other-backup", map[string]string{"postgres": meta.Tags["offsite_postgres_sha256"]}); err != nil {
+		t.Fatal(err)
+	}
+	objs.m[sidecar] = objs.m["ofb/other-backup/checksums.enc"]
+	if err := fetch(); err == nil || !strings.Contains(err.Error(), "belongs to backup") {
+		t.Errorf("another backup's sidecar was accepted: %v", err)
+	}
+
+	// Restored, it works again.
+	objs.m[sidecar] = orig
+	if err := fetch(); err != nil {
+		t.Errorf("good sidecar refused: %v", err)
+	}
+}
+
+// With no tags and no sidecar there is nothing to check against: refuse.
+func TestMissingSidecarAndNoTagsRefuses(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	objs := newMem()
+	st, _ := NewOffsiteStore(objs, "ofb", key32(t))
+	mgr := NewBackupManager(&FilesystemBackupStorage{Dir: filepath.Join(dir, "meta")}, fakeDump{"v1", "vault", dir}, fakeDump{"p1", "postgres", dir})
+	mgr.SetOffsite(st)
+	meta, err := mgr.ExecuteFullBackup(ctx, "local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	delete(objs.m, "ofb/"+meta.ID+"/checksums.enc")
 	if _, err := mgr.FetchOffsite(ctx, meta.ID, nil, t.TempDir()); err == nil {
 		t.Error("fetched with no checksums to verify against")
+	}
+	// A backup taken before sidecars existed still restores from its tags.
+	if _, err := mgr.FetchOffsite(ctx, meta.ID, meta.Tags, t.TempDir()); err != nil {
+		t.Errorf("tags path broken: %v", err)
 	}
 }
 

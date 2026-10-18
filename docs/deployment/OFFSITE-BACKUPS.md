@@ -22,19 +22,32 @@ is good, so the nightly job going red means "this is not yet safe".
 
 ## What is stored
 
-`<prefix>/<backup-id>/{postgres,vault,manifest}.enc`: AES-256-GCM in 1 MiB
-chunks, each bound to its position and to whether it is the last, so a
+`<prefix>/<backup-id>/{postgres,vault,manifest,checksums}.enc`: AES-256-GCM in
+1 MiB chunks, each bound to its position and to whether it is the last, so a
 reordered, altered or truncated object fails to decrypt. The SHA-256 of each
 plaintext is recorded in the backup's metadata and checked on the way back.
+
+`checksums.enc` is a small sidecar holding those three SHA-256 values and the
+backup id, encrypted in the same format under the same key and written last.
+It exists so the bucket and the key are enough to restore after total cluster
+loss. GCM already stops anyone without the key altering an object; the SHA-256
+adds that it pins *which* content this backup is, since a bucket writer could
+otherwise swap in another valid object made under the same key (an older
+backup's dump). The sidecar names its backup and is rejected for any other.
+Backups taken before the sidecar existed have none; restore those with the
+saved checksums.
 
 ## Restoring when the cluster is gone
 
 1. New cluster, same chart, same key secret, same bucket settings.
-2. `POST /offsite/fetch {"backup_id": "...", "tags": {"offsite_postgres_sha256": "...", ...}}`
-   with the backup token. The `tags` are in the backup's metadata; if the local
-   record is gone as well, use the ones you saved from the run's output.
-   It decrypts and verifies into a staging directory and refuses anything it
-   cannot check.
+2. `POST /offsite/fetch {"backup_id": "..."}` with the backup token. With only
+   the bucket and the key it reads and authenticates `checksums.enc`, then
+   decrypts and verifies each file into a staging directory. To pin the
+   checksums independently of the bucket, also pass
+   `"tags": {"offsite_postgres_sha256": "...", "offsite_vault_sha256": "...", "offsite_manifest_sha256": "..."}`
+   (from the backup's metadata or your saved run output); supplied tags are used
+   instead of the sidecar and must cover all three files. It refuses anything it
+   cannot check, including a missing or altered sidecar with no tags.
 3. Restore from those files with the usual procedure.
 
 ## Honest status
