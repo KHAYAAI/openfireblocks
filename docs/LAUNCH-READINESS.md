@@ -127,10 +127,10 @@ last protocol message when it finished, leaving its partner waiting for ever. It
 in restore-then-sign) and could not produce a wrong signature; a retry worked. A regression test pins it. It is merged (`c585a2e`, pull request #47) and staging has been
 rebuilt with it: the smoke test (real key generation, 2-of-3 signature) passed afterwards.
 
-**Dependency updates:** of the 16 open Dependabot pull requests, six were rebased onto current code, re-tested (60 of 60
-checks each) and merged: `actions/setup-node`, `setup-python`, `setup-go`, jest, testify and the Prometheus client. Their
-earlier `mpc-party` failures were the signing-driver hang above, not the bumps. `actions/checkout` 4 to 7 (#1) is being
-recreated by Dependabot. Not touched yet, each needing its own review: the Vault client, immudb, the Temporal SDK, OPA 1
+**Dependency updates:** of the 16 open Dependabot pull requests, seven were rebased onto current code, re-tested (60 of 60
+checks each) and merged: `actions/checkout`, `setup-node`, `setup-python`, `setup-go`, jest, testify and the Prometheus
+client. Their earlier `mpc-party` failures were the signing-driver hang above, not the bumps. Not touched yet, each
+needing its own review: the Vault client, immudb, the Temporal SDK, OPA 1
 (a major version that can break the screening policies), NestJS 11 and TypeScript 6 and 7. Dependabot's own branches were
 blocked by the repository ruleset until `dependabot/**` was excluded.
 
