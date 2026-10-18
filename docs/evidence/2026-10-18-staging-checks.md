@@ -70,6 +70,16 @@ on the running gateway, and the token-account creation path that the first run d
      what is still queued before finishing.
   - Effect: an intermittent signing or key-generation request could hang and time out. It could not produce a wrong
     signature and no funds were at risk; a retry worked. Staging runs the unfixed images until the next deploy.
+- **Merged and redeployed.** The fix was merged as `c585a2e` (pull request #47, all 60 checks green). The Deploy
+  workflow's Security Scanning, Run Tests and all 14 Build jobs passed on that commit. Staging was moved to that
+  commit and the three signing parties were rebuilt and restarted one at a time with
+  `infrastructure/kind/reload-image.sh mpc-party party-N`; `infrastructure/kind/smoke-test.sh` then **passed**: a new
+  key from a real DKG across three pods, shares sealed by all three, raw-digest signing refused until granted, an
+  over-limit request denied, another tenant refused (404), and a 2-of-3 signature from the public API recovered to the
+  key's address. Restarting the parties drops every earlier key from their memory (the shares stay sealed in Vault), so
+  the older test keys on staging need a restore before they sign again.
+- Not shown: that the registry images built from `c585a2e` verify (the CloudShell signature check was still to be run
+  when this was written), and that the earlier test keys were restored.
 
 ## Old backup access key
 - The first (wrong) IAM access key for the backup writer is gone: the user has one working key.

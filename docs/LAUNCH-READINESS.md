@@ -124,8 +124,8 @@ key was restored, not all 24; the checksums needed to fetch a backup exist only 
 
 **A real bug found by CI and fixed (`75bb1f6`; verified locally and CI passed all 30 checks):** the signing, key-generation and refresh drivers could drop a party's
 last protocol message when it finished, leaving its partner waiting for ever. It appeared only under load (most often
-in restore-then-sign) and could not produce a wrong signature; a retry worked. A regression test pins it. Staging and
-the registry images do not contain the fix until it is merged and redeployed.
+in restore-then-sign) and could not produce a wrong signature; a retry worked. A regression test pins it. It is merged (`c585a2e`, pull request #47) and staging has been
+rebuilt with it: the smoke test (real key generation, 2-of-3 signature) passed afterwards.
 
 **Still not shown.** Separate hosts; hardware HSM (deferred, see step 7 below).
 
