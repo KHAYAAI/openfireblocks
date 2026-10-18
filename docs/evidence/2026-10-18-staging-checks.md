@@ -68,6 +68,7 @@ on the running gateway, and the token-account creation path that the first run d
   first admin (`POST /organisation/first-admin`, allowed once); it signed in (`POST /v1/auth/login`, status `ok`, no
   second factor was enrolled); then `POST /organisations/:id/wallets/:walletId/unfreeze` returned **`active`** with the
   reason recorded as "… (console-admin@example.com)".
+- An API key's attempt to unfreeze answered **404** (the route does not exist for API keys), and the wallet stayed `active`.
 - Not shown by this run: signing from the wallet's key after the unfreeze; a console screen (none exists); an admin with
   a second factor enrolled.
 
