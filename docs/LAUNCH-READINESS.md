@@ -94,7 +94,7 @@ below is evidenced in `docs/evidence/` and `docs/security/`; what it does **not*
 | GitHub | The default branch is `claude/openfireblocks-main`; pull request #19 merged to it. The ruleset now has a bypass actor | |
 
 **What this does not show.**
-- *(Closed on 2026-10-18, see the update below: the 409 fix is live, a recipient's token account was created on devnet, one transaction was checked on the explorer, and all 14 signatures were verified for the first tag.)* Still open from this list: the unfreeze of a wallet through the console was not tried, and a normal push to the default branch still needs a Snyk token (or that step stays skipped with a warning).
+- *(Closed on 2026-10-18, see the update below: the 409 fix is live, a recipient's token account was created on devnet, one transaction was checked on the explorer, and all 14 signatures were verified for the first tag.)* Still open from this list: a normal push to the default branch still needs a Snyk token (or that step stays skipped with a warning).
 - **No full rebuild from the off-site backup has been done**, so there is no measured recovery time. The nightly backup job has not yet been seen to run. The shares were decrypted onto a staging host for the restore check, acceptable for test keys only. The backup's Vault token on staging is the development root token.
 - The agent routes and MCP server were not part of the 26 checks and have still not been through a pentest round.
 
