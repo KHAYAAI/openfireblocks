@@ -51,6 +51,8 @@ func TestRealMultiPartySigningOverHTTP(t *testing.T) {
 		t.Cleanup(server.Close)
 	}
 
+	seedPreParams(t, managers[1], managers[2], managers[3])
+
 	// --- Phase 1: real DKG over real HTTP ---
 	ceremonyID := "signing-integration-keygen"
 	for i := 1; i <= n; i++ {
@@ -214,6 +216,8 @@ func TestSigningWithEveryCommittee(t *testing.T) {
 		peers[i] = server.URL
 		t.Cleanup(server.Close)
 	}
+
+	seedPreParams(t, managers[1], managers[2], managers[3])
 
 	ceremonyID := "every-committee-keygen"
 	for i := 1; i <= n; i++ {

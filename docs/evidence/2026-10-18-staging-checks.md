@@ -31,7 +31,65 @@ on the running gateway, and the token-account creation path that the first run d
 - The Tenant A key was rotated after a wrong paste; the new key was verified (HTTP 200) and saved to a password
   manager. Keys are never recorded here.
 
+## Explorer check
+- The signature above was opened on the Solana explorer (devnet) by a person: **Success, Finalized**, slot 512,497,572,
+  fee 0.000005 SOL, and the fee payer is the first key. The recipient's token account is created in the same
+  transaction.
+
+## Signed images, first tag
+- `~/verify-images.sh <tag>` run in CloudShell for the 14 repositories (`api-gateway mpc-party mpc-signer
+  policy-service temporal-worker vault-pki-init vault-unseal billing webhooks marketplace settlement policy
+  compliance backup`): **14 of 14 PASS** against the deploy workflow's identity. The images for the merged commit
+  `6e62356` do not exist yet: the Deploy run's secret-scan gate failed (the checkout was shallow, so the scan's
+  commit range was missing), which skipped the builds. The fix was pull request #46, merged as `2571281`.
+- **Rebuilt from `2571281`:** Security Scanning, Run Tests and all 14 Build jobs succeeded on the Deploy run, and
+  `~/verify-images.sh 2571281b80042ebcf46ebbf45691efd23527bd7c` in CloudShell printed **14 PASS, problems: 0**
+  (signature and SBOM attestation, against the deploy workflow's identity). This is the first Deploy run in which
+  the gates ran and passed.
+- The same run's **Deploy to Staging** job failed at its first step, "Configure AWS credentials for the registry",
+  and the rest of that job was skipped. It targets a cluster setup that the single-server staging does not use;
+  the cause has not been investigated. The push-event CI run of the merged commit also had one failure,
+  `TestParticipantsCanBeRestoredFromSealedMaterialAndStillSign` ("timed out signing with restored shares"); the
+  pull-request run of the same commit passed it. The push-event run for the merge commit itself then failed a different heavy test in the same package,
+  `TestSealAndLoadKeyShareRoundTrip` ("timed out waiting for keygen to complete"), with logs showing the Paillier
+  pre-parameter (safe-prime) generation timing out and retrying: both failures are key-generation timing under CI load,
+  and both happened only in push-event runs while the pull-request runs of the same commits passed.
+- **Two causes were found and fixed** (`3192cae`, `75bb1f6`; verified locally, and CI on `75bb1f6` passed all 30 checks including the mpc-party job):
+  1. *Test timing.* Every party a test built started a background safe-prime search that never stopped, and each
+     secp256k1 ceremony paid for an inline search under a fixed deadline. Tests now disable the background search and
+     seed their parties from three pre-parameter sets generated once per run. The five heavy tests went from 7-13
+     minutes in CI to about 90 seconds on a 4-core machine.
+  2. *A real bug in the signing, key-generation and refresh drivers.* A party's last round queues a message and then
+     finishes as soon as it has everyone else's, so both the message and the result can be ready together. The driver
+     chose between them at random; choosing the result returned without sending the message. The party reported
+     success and its partner waited for ever. It needs the sender to be a round ahead, so it appeared only under load,
+     and most often in restore-then-sign (`TestAKeyCanStillBeRecoveredAfterARefresh` and
+     `TestParticipantsCanBeRestoredFromSealedMaterialAndStillSign` hung for 120 s with one party reporting
+     "produced its share"). It did not reproduce in 50 local runs on an idle machine. A regression test offers both
+     at once: without the fix the peer received 95 of 200 final messages, with it 200 of 200. Every driver now relays
+     what is still queued before finishing.
+  - Effect: an intermittent signing or key-generation request could hang and time out. It could not produce a wrong
+    signature and no funds were at risk; a retry worked. Staging runs the unfixed images until the next deploy.
+
+## Old backup access key
+- The first (wrong) IAM access key for the backup writer is gone: the user has one working key.
+
+## Saved secrets
+- Tenant A and Tenant B API keys, entered from the password manager: length 52 each, and `GET /wallets` returned
+  **200** for both.
+- Backup encryption key: the saved key's SHA-256 fingerprint was compared with the cluster's (64 characters each):
+  **MATCH**. Neither the key nor the fingerprint was recorded here.
+
+## Unfreeze by a signed-in admin
+- The frozen wallet `test-001` (demo tenant `spl-demo`) was unfrozen through the organisation route, the path the console
+  uses (there is no wallets screen yet). Steps: the tenant's API key was rotated with the admin key (neither saved tenant
+  key owned this wallet); a console account was registered (`POST /v1/auth/register`); the tenant's API key appointed it
+  first admin (`POST /organisation/first-admin`, allowed once); it signed in (`POST /v1/auth/login`, status `ok`, no
+  second factor was enrolled); then `POST /organisations/:id/wallets/:walletId/unfreeze` returned **`active`** with the
+  reason recorded as "… (console-admin@example.com)".
+- An API key's attempt to unfreeze answered **404** (the route does not exist for API keys), and the wallet stayed `active`.
+- Not shown by this run: signing from the wallet's key after the unfreeze; a console screen (none exists); an admin with
+  a second factor enrolled.
+
 ## Not done
-- The explorer check of the signature above had not been done when this was written.
-- Unfreezing a wallet in the console (no console login for the demo tenant).
-- The old IAM access key for the backup writer was not yet deleted when this was written.
+- The rebuild on a fresh server (Part B of the disaster-recovery test).

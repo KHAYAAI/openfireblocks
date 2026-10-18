@@ -33,6 +33,15 @@
 #       Drills an existing key. For rehearsing against a real deployment,
 #       which section 6 of KEY-RECOVERY.md asks you to do annually.
 #
+#   ./recovery-drill.sh --restore-only --ceremony-id C --key-id K --api-key KEY
+#       For a cluster that was just rebuilt from a backup (the database and
+#       the sealed shares restored, the parties freshly started and holding
+#       nothing). It skips the baseline signature and the destroy step,
+#       because there is nothing to sign with and nothing to destroy, and
+#       runs the rest: it still requires that the parties do not know the
+#       ceremony and that signing fails, then restores the parties from
+#       Vault and requires a signature for the key's address.
+#
 # Requires a deployed cluster. The drill opens its own tunnels and cleans
 # them up.
 set -euo pipefail
@@ -49,17 +58,21 @@ CURL=(curl -sS --noproxy '*')
 CEREMONY_ID=""
 KEY_ID=""
 API_KEY=""
+RESTORE_ONLY=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --ceremony-id) CEREMONY_ID="$2"; shift 2 ;;
     --key-id)      KEY_ID="$2"; shift 2 ;;
     --api-key)     API_KEY="$2"; shift 2 ;;
-    -h|--help)     sed -n '2,36p' "$0" | sed 's/^# \?//'; exit 0 ;;
+    --restore-only) RESTORE_ONLY=1; shift ;;
+    -h|--help)     sed -n '2,46p' "$0" | sed 's/^# \?//'; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
+[[ "${RESTORE_ONLY}" != "1" || -n "${CEREMONY_ID}" ]] \
+  || fail "--restore-only needs --ceremony-id, --key-id and --api-key: there is no key to provision on a rebuilt cluster"
 jqp() { python3 -c "import sys,json;d=json.load(sys.stdin);print($1)"; }
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -97,16 +110,49 @@ setup_client_identity() {
     return
   fi
   local base=/etc/openfireblocks/mtls
+  local borrowed=1
   for f in tls.crt tls.key ca.crt; do
     if ! kubectl -n "${NS}" exec "${pod}" -c temporal-worker -- cat "${base}/${f}" \
       > "${WORKDIR}/${f}" 2>/dev/null; then
-      echo "    no client certificate in the worker; assuming the parties are in plaintext"
-      return
+      borrowed=0
+      break
     fi
   done
-  [[ -s "${WORKDIR}/tls.crt" ]] || return
+  if [[ "${borrowed}" == "1" && -s "${WORKDIR}/tls.crt" ]]; then
+    MTLS=1
+    echo "    borrowed the temporal worker's client certificate"
+    return
+  fi
+  # The worker image is distroless, so there is no `cat` to exec: reading
+  # its certificate fails on a deployed cluster, and the drill would then
+  # speak plain HTTP to parties that require a client certificate (they
+  # answer 400). Fall back to what an operator recovering a cluster would
+  # do: ask the cluster's own CA for a short-lived client certificate.
+  if mint_client_identity; then
+    return
+  fi
+  echo "    no client certificate available; assuming the parties are in plaintext"
+}
+
+# Issues a one-hour client certificate from the cluster's internal CA, the
+# same role the services use, under a name that is not a party's.
+mint_client_identity() {
+  [[ -n "${vault_pod:-}" && -n "${VAULT_ROOT_TOKEN:-}" ]] || return 1
+  local out
+  out=$(kubectl -n "${NS}" exec "${vault_pod}" -- \
+    env "VAULT_TOKEN=${VAULT_ROOT_TOKEN}" VAULT_ADDR=http://127.0.0.1:8200 \
+    vault write -format=json pki/production/issue/internal-service \
+    common_name=recovery-drill.internal ttl=1h 2>/dev/null) || return 1
+  echo "${out}" | python3 -c '
+import sys, json
+d = json.load(sys.stdin)["data"]
+w = sys.argv[1]
+open(w + "/tls.crt", "w").write(d["certificate"] + "\n")
+open(w + "/tls.key", "w").write(d["private_key"] + "\n")
+open(w + "/ca.crt", "w").write(d["issuing_ca"] + "\n")
+' "${WORKDIR}" || return 1
   MTLS=1
-  echo "    borrowed the temporal worker's client certificate"
+  echo "    minted a short-lived client certificate from the cluster's CA"
 }
 
 party_tunnel_port() { echo $((PARTY_TUNNEL_BASE + $1)); }
@@ -155,12 +201,14 @@ party_url() {
 
 # The peers map a restored party needs in order to rebuild its committee.
 # In-cluster service DNS, because the parties talk to each other, not
-# through the drill's tunnels.
+# through the drill's tunnels. The full name, not "party-N": the parties'
+# certificates are issued for party-N.internal and
+# party-N.<namespace>.svc.cluster.local, and TLS verifies the name dialled.
 peers_json() {
   local out="" id
   for id in $(seq 1 "${PARTY_COUNT}"); do
     [[ -n "${out}" ]] && out="${out},"
-    out="${out}\"${id}\":\"https://party-${id}:${PARTY_PORT}\""
+    out="${out}\"${id}\":\"https://party-${id}.${NS}.svc.cluster.local:${PARTY_PORT}\""
   done
   [[ "${MTLS}" == "1" ]] || out="${out//https:/http:}"
   echo "{${out}}"
@@ -293,13 +341,16 @@ sign_and_recover() {
   echo "    ${label}: recovered ${recovered}"
 }
 
+if [[ "${RESTORE_ONLY}" != "1" ]]; then
 echo "==> baseline: signing before the parties are destroyed"
 sign_and_recover "baseline" || fail "the key could not sign before the drill started"
+fi
 
 # ---------------------------------------------------------------------------
 # Step 4 -- destroy the parties
 # ---------------------------------------------------------------------------
 
+if [[ "${RESTORE_ONLY}" != "1" ]]; then
 echo "==> destroying every party"
 # --force --grace-period=0 deliberately. A graceful stop is not the
 # scenario: the scenario is the hosts going away. Nothing in this platform
@@ -313,6 +364,9 @@ for id in $(seq 1 "${PARTY_COUNT}"); do
     || fail "party ${id} did not come back"
 done
 echo "    all ${PARTY_COUNT} parties restarted with empty memory"
+else
+  echo "==> restore-only: the parties are taken as freshly started, holding nothing"
+fi
 
 setup_client_identity
 open_party_tunnels
@@ -408,6 +462,7 @@ sign_and_recover "post-restore" \
   || fail "the restored committee could not sign"
 
 echo
+[[ "${RESTORE_ONLY}" == "1" ]] && echo "(restore-only: the parties came from a rebuilt cluster; none were destroyed here)"
 echo "PASS: every party was destroyed with no grace period, lost the ceremony,"
 echo "      was rebuilt from material sealed in Vault, and the restored committee"
 echo "      signed for ${ORIGINAL_ADDRESS} -- the address the original DKG derived."
