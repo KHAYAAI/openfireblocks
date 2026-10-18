@@ -61,6 +61,15 @@ on the running gateway, and the token-account creation path that the first run d
 - Backup encryption key: the saved key's SHA-256 fingerprint was compared with the cluster's (64 characters each):
   **MATCH**. Neither the key nor the fingerprint was recorded here.
 
+## Unfreeze by a signed-in admin
+- The frozen wallet `test-001` (demo tenant `spl-demo`) was unfrozen through the organisation route, the path the console
+  uses (there is no wallets screen yet). Steps: the tenant's API key was rotated with the admin key (neither saved tenant
+  key owned this wallet); a console account was registered (`POST /v1/auth/register`); the tenant's API key appointed it
+  first admin (`POST /organisation/first-admin`, allowed once); it signed in (`POST /v1/auth/login`, status `ok`, no
+  second factor was enrolled); then `POST /organisations/:id/wallets/:walletId/unfreeze` returned **`active`** with the
+  reason recorded as "… (console-admin@example.com)".
+- Not shown by this run: signing from the wallet's key after the unfreeze; a console screen (none exists); an admin with
+  a second factor enrolled.
+
 ## Not done
-- Unfreezing a wallet in the console (no console login for the demo tenant).
 - The rebuild on a fresh server (Part B of the disaster-recovery test).

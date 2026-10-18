@@ -120,7 +120,9 @@ matched, and the restored parties signed for the original address. **Measured re
 (including the faults found: no BuildKit on the new server, and two defects in the recovery drill, now fixed). Limits: one
 key was restored, not all 24; the checksums needed to fetch a backup exist only in the cluster; test keys only.
 
-**Still not shown.** The unfreeze through the console; separate hosts; hardware HSM (deferred, see step 7 below).
+**Unfreeze, done:** a signed-in organisation admin unfroze the frozen wallet through the organisation route (the reason was recorded with their email). There is no wallets screen in the console yet.
+
+**Still not shown.** Separate hosts; hardware HSM (deferred, see step 7 below).
 
 ## Compliance and governance update, 2026-10-11 (evening)
 
