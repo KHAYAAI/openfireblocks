@@ -116,7 +116,7 @@ ssh -i ~/Downloads/ofb-staging-key.pem ubuntu@$NEW
 On the new server:
 
 ```bash
-sudo apt update && sudo apt install -y docker.io git curl jq tmux && sudo usermod -aG docker $USER
+sudo apt update && sudo apt install -y docker.io docker-buildx git curl jq tmux && sudo usermod -aG docker $USER
 exit
 ```
 
