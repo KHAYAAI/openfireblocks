@@ -53,9 +53,23 @@ on the running gateway, and the token-account creation path that the first run d
   pull-request run of the same commit passed it. The push-event run for the merge commit itself then failed a different heavy test in the same package,
   `TestSealAndLoadKeyShareRoundTrip` ("timed out waiting for keygen to complete"), with logs showing the Paillier
   pre-parameter (safe-prime) generation timing out and retrying: both failures are key-generation timing under CI load,
-  and both happened only in push-event runs while the pull-request runs of the same commits passed. Not a logic failure
-  as far as the logs show, but the package's heavy tests are timing-sensitive and have now failed in two of three
-  push runs; worth a deterministic fix (pre-generated pre-parameters in tests, or a looser timeout).
+  and both happened only in push-event runs while the pull-request runs of the same commits passed.
+- **Two causes were found and fixed** (`3192cae`, `75bb1f6`; verified locally, the CI result for `75bb1f6` was still pending when this was written):
+  1. *Test timing.* Every party a test built started a background safe-prime search that never stopped, and each
+     secp256k1 ceremony paid for an inline search under a fixed deadline. Tests now disable the background search and
+     seed their parties from three pre-parameter sets generated once per run. The five heavy tests went from 7-13
+     minutes in CI to about 90 seconds on a 4-core machine.
+  2. *A real bug in the signing, key-generation and refresh drivers.* A party's last round queues a message and then
+     finishes as soon as it has everyone else's, so both the message and the result can be ready together. The driver
+     chose between them at random; choosing the result returned without sending the message. The party reported
+     success and its partner waited for ever. It needs the sender to be a round ahead, so it appeared only under load,
+     and most often in restore-then-sign (`TestAKeyCanStillBeRecoveredAfterARefresh` and
+     `TestParticipantsCanBeRestoredFromSealedMaterialAndStillSign` hung for 120 s with one party reporting
+     "produced its share"). It did not reproduce in 50 local runs on an idle machine. A regression test offers both
+     at once: without the fix the peer received 95 of 200 final messages, with it 200 of 200. Every driver now relays
+     what is still queued before finishing.
+  - Effect: an intermittent signing or key-generation request could hang and time out. It could not produce a wrong
+    signature and no funds were at risk; a retry worked. Staging runs the unfixed images until the next deploy.
 
 ## Old backup access key
 - The first (wrong) IAM access key for the backup writer is gone: the user has one working key.
