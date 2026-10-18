@@ -110,16 +110,49 @@ setup_client_identity() {
     return
   fi
   local base=/etc/openfireblocks/mtls
+  local borrowed=1
   for f in tls.crt tls.key ca.crt; do
     if ! kubectl -n "${NS}" exec "${pod}" -c temporal-worker -- cat "${base}/${f}" \
       > "${WORKDIR}/${f}" 2>/dev/null; then
-      echo "    no client certificate in the worker; assuming the parties are in plaintext"
-      return
+      borrowed=0
+      break
     fi
   done
-  [[ -s "${WORKDIR}/tls.crt" ]] || return
+  if [[ "${borrowed}" == "1" && -s "${WORKDIR}/tls.crt" ]]; then
+    MTLS=1
+    echo "    borrowed the temporal worker's client certificate"
+    return
+  fi
+  # The worker image is distroless, so there is no `cat` to exec: reading
+  # its certificate fails on a deployed cluster, and the drill would then
+  # speak plain HTTP to parties that require a client certificate (they
+  # answer 400). Fall back to what an operator recovering a cluster would
+  # do: ask the cluster's own CA for a short-lived client certificate.
+  if mint_client_identity; then
+    return
+  fi
+  echo "    no client certificate available; assuming the parties are in plaintext"
+}
+
+# Issues a one-hour client certificate from the cluster's internal CA, the
+# same role the services use, under a name that is not a party's.
+mint_client_identity() {
+  [[ -n "${vault_pod:-}" && -n "${VAULT_ROOT_TOKEN:-}" ]] || return 1
+  local out
+  out=$(kubectl -n "${NS}" exec "${vault_pod}" -- \
+    env "VAULT_TOKEN=${VAULT_ROOT_TOKEN}" VAULT_ADDR=http://127.0.0.1:8200 \
+    vault write -format=json pki/production/issue/internal-service \
+    common_name=recovery-drill.internal ttl=1h 2>/dev/null) || return 1
+  echo "${out}" | python3 -c '
+import sys, json
+d = json.load(sys.stdin)["data"]
+w = sys.argv[1]
+open(w + "/tls.crt", "w").write(d["certificate"] + "\n")
+open(w + "/tls.key", "w").write(d["private_key"] + "\n")
+open(w + "/ca.crt", "w").write(d["issuing_ca"] + "\n")
+' "${WORKDIR}" || return 1
   MTLS=1
-  echo "    borrowed the temporal worker's client certificate"
+  echo "    minted a short-lived client certificate from the cluster's CA"
 }
 
 party_tunnel_port() { echo $((PARTY_TUNNEL_BASE + $1)); }
