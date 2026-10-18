@@ -1,6 +1,6 @@
 # Launch readiness
 
-As of 2026-10-17, branch `claude/platform-explanation-h0st5y`. This is a
+As of 2026-10-18, branch `claude/platform-explanation-h0st5y`. This is a
 summary; `LAUNCH-CHECKLIST.md` is the evidence-based source and wins if they
 disagree.
 
@@ -8,7 +8,7 @@ disagree.
 
 | Audience | Verdict |
 |---|---|
-| Fintech, supervised pilot on testnet or capped balances | **Ready to start.** A real key generation and signature pass on a real cluster (lite profile and AWS full profile), with public HTTPS. An external AI-driven pentest has run against the AWS deployment and every finding is fixed and was redeployed to staging on 2026-10-17 (a fourth run, covering the newest routes, is deferred until after the separate-hosts and HSM work). Threshold-signed transactions have been accepted by public test networks on four chains (see below); a Stripe run is still to do |
+| Fintech, supervised pilot on testnet or capped balances | **Ready to start.** A real key generation and signature pass on a real cluster (lite profile and AWS full profile), with public HTTPS. An external AI-driven pentest has run against the AWS deployment and every finding is fixed and was redeployed to staging on 2026-10-17 (a fourth run, covering the newest routes, is deferred until after the separate-hosts work; CloudHSM is deferred on cost, see step 7 below). Threshold-signed transactions have been accepted by public test networks on four chains (see below); a Stripe run is still to do |
 | Banks, governments, uncapped mainnet funds | **Not ready. Bounded pilots only** |
 | Production | **Not ready.** Blocked by external work (audit, SOC 2, isolated hosts, legal), not by known engineering gaps |
 
