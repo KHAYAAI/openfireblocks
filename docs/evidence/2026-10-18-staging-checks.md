@@ -121,6 +121,9 @@ on the running gateway, and the token-account creation path that the first run d
   away: every step was cached and the image hash was unchanged. The checkout was repeated after removing the copy.)
   `restore-all-keys.sh` then printed **PASS: 23 of 23 keys fully restored on all three parties, 69 party restores, 0
   failed**, including both Cosmos keys.
+- **Smoke test after the restore (2026-10-19): PASS.** A new key from a real DKG across three pods, shares sealed by all
+  three, policy and tenant isolation enforced, and a 2-of-3 signature from the public API recovered to the key's address
+  (`0x063d01…A047`). So the platform signs end to end on the fixed images after the restart and the restore.
 - Not shown: a signature from a restored Cosmos key.
 
 ## Not done
