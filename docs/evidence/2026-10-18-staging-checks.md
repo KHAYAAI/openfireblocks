@@ -124,6 +124,9 @@ on the running gateway, and the token-account creation path that the first run d
 - **Smoke test after the restore (2026-10-19): PASS.** A new key from a real DKG across three pods, shares sealed by all
   three, policy and tenant isolation enforced, and a 2-of-3 signature from the public API recovered to the key's address
   (`0x063d01…A047`). So the platform signs end to end on the fixed images after the restart and the restore.
+- **Signed images from the later builds (2026-10-19):** `~/verify-images.sh` in CloudShell printed 14 PASS for `4fa61b7`
+  (the dependency bumps) and **14 PASS, problems: 0** for `b868b0b` (the signing-driver fix, the Cosmos fix and the backup
+  checksums).
 - Not shown: a signature from a restored Cosmos key.
 
 ## Not done
