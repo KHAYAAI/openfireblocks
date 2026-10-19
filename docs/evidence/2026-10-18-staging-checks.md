@@ -114,8 +114,27 @@ on the running gateway, and the token-account creation path that the first run d
   only that half). Both now compare the public key, which determines every address the key can have, and keep the
   address the key was created with. New test `TestACosmosKeyCanBeRefreshedAndRestored` (a real Cosmos DKG, a restore, a
   refresh, a restore after the refresh); without the fix it fails with the production error.
-- Not shown: the two Cosmos keys restored on staging (its parties run the unfixed image until the next deploy), and a
-  signature from a Cosmos key after a restore.
+- **Fixed and confirmed live (2026-10-19).** The fix was merged as `b868b0b` (pull request #48, 60 of 60 checks); the
+  Deploy workflow's gates and all 14 Build jobs passed on it. Staging was moved to that commit and the three signing
+  parties rebuilt and restarted. (The first attempt rebuilt the old code: the checkout had silently refused because the
+  server held an untracked copy of `restore-all-keys.sh` that the new commit also contains, and the build output gave it
+  away: every step was cached and the image hash was unchanged. The checkout was repeated after removing the copy.)
+  `restore-all-keys.sh` then printed **PASS: 23 of 23 keys fully restored on all three parties, 69 party restores, 0
+  failed**, including both Cosmos keys.
+- **Smoke test after the restore (2026-10-19): PASS.** A new key from a real DKG across three pods, shares sealed by all
+  three, policy and tenant isolation enforced, and a 2-of-3 signature from the public API recovered to the key's address
+  (`0x063d01…A047`). So the platform signs end to end on the fixed images after the restart and the restore.
+- **Signed images from the later builds (2026-10-19):** `~/verify-images.sh` in CloudShell printed 14 PASS for `4fa61b7`
+  (the dependency bumps) and **14 PASS, problems: 0** for `b868b0b` (the signing-driver fix, the Cosmos fix and the backup
+  checksums).
+- **Backup checksums stored in the bucket, proven against the real bucket (2026-10-19).** The backup image was rebuilt
+  from `b868b0b` and restarted on staging (`reload-image.sh backup ofb-openfireblocks-backup`); a full backup
+  (`backup-1792388958389771565`) completed; and `POST /offsite/fetch` with **no checksums** (only a placeholder tag, so
+  the service did not fall back to its local record) returned `fetched` with all three files, each verified. That can
+  only happen by reading the encrypted checksums stored beside the backup. The decrypted copies in the backup pod were
+  removed afterwards. The bucket listing for that backup shows four objects: `checksums.enc` (640 bytes),
+  `manifest.enc`, `postgres.enc` and `vault.enc`.
+- Not shown: a signature from a restored Cosmos key.
 
 ## Not done
 - The two Cosmos keys on staging (see above).

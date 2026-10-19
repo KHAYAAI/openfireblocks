@@ -1,6 +1,6 @@
 # Launch readiness
 
-As of 2026-10-18, branch `claude/platform-explanation-h0st5y`. This is a
+As of 2026-10-19, branch `claude/platform-explanation-h0st5y`. This is a
 summary; `LAUNCH-CHECKLIST.md` is the evidence-based source and wins if they
 disagree.
 
@@ -11,6 +11,35 @@ disagree.
 | Fintech, supervised pilot on testnet or capped balances | **Ready to start.** A real key generation and signature pass on a real cluster (lite profile and AWS full profile), with public HTTPS. An external AI-driven pentest has run against the AWS deployment and every finding is fixed and was redeployed to staging on 2026-10-17 (a fourth run, covering the newest routes, is deferred until after the separate-hosts work; CloudHSM is deferred on cost, see step 7 below). Threshold-signed transactions have been accepted by public test networks on four chains (see below); a Stripe run is still to do |
 | Banks, governments, uncapped mainnet funds | **Not ready. Bounded pilots only** |
 | Production | **Not ready.** Blocked by external work (audit, SOC 2, isolated hosts, legal), not by known engineering gaps |
+
+## Where we are, 2026-10-19
+
+**One line:** the platform is ready for a supervised pilot on testnet or capped balances. The one engineering step
+between that and real money is running the three signing parties on separate hosts under separate operators, and
+nothing about it has been applied to real AWS yet.
+
+**Proven on a real cluster in the last three days** (evidence in `docs/evidence/`, checks in `docs/security/`):
+
+| Area | Result |
+|---|---|
+| Signing | Real 2-of-3 key generation and signatures; new Solana SPL token (USDC on devnet, including creating a recipient's token account); per-user wallets with a freeze that stops every signing route and an admin-only unfreeze |
+| A real bug found and fixed | A signing party could drop its last message when it finished and leave its partner waiting for ever, intermittently under load; fixed in signing, key generation and refresh, with a regression test (95 of 200 messages delivered before, 200 of 200 after) |
+| A second real bug found and fixed | Keys whose chain writes addresses its own way (Cosmos) could not be restored or refreshed; found by the first real run of the restore command, fixed with a regression test, confirmed live |
+| Recovery | A fresh server rebuilt from the off-site backup alone in **41 min 42 s**: identical database, 66 of 66 key shares, a restored key signing for its original address. `restore-all-keys.sh` then restored **23 of 23** keys on staging in one command |
+| Backups | Encrypted, object-locked in another region, nightly job seen to run by itself; each backup now also stores its checksums in the bucket so it can be fetched after total loss (takes effect once the backup image is redeployed) |
+| Supply chain | Security Scanning and Run Tests gate every build; all 14 images signed keyless and given SBOM attestations, 14 of 14 verified on two builds; seven dependency updates tested and merged |
+| Our own pentest checks | 26 hand-run checks on the new routes, all as expected |
+
+**Not proven, and what would prove it:**
+
+| Gap | What closes it |
+|---|---|
+| Signing parties on separate hosts | `docs/deployment/SEPARATE-HOSTS-PLAYBOOK.md`: a rehearsal (one operator, 1-2 days, proves the Terraform but not the separation) and then three operators |
+| Any mainnet transfer; the live TRISA link | A capped mainnet pilot; a TRISA membership |
+| Independent human pentest; cryptographic audit; SOC 2 Type II | Engagements to commission (decisions, not engineering) |
+| Hardware custody for the single-key signer | CloudHSM, deferred on cost (about $1,100 a month per HSM) |
+| Stripe with a real key | Optional: pilots can be invoiced by EFT |
+| Pentest round 4 on the newest routes | After the separate-hosts work |
 
 ## What is built and how well it is proven
 
@@ -371,8 +400,8 @@ Competitive note: Absa launched a bank-led digital-asset custody service (with R
 
 Any mainnet transfer, the TRISA link on the live network, the custody
 executor against anything but a stand-in, Stripe with a real key, signing
-parties on isolated hosts, restoring **every** key after a rebuild at once (one key was restored on a fresh
-server; the nightly checksums are not kept off the cluster), AI-agent payments on a
+parties on isolated hosts, a **second** full rebuild from the off-site backup using the restore-all-keys
+command (the first rebuild restored one key; the command has since restored all 23 on staging), AI-agent payments on a
 public network, the AWS baseline on the real account, and an independent
 human-led pentest or cryptographic audit. The token contract is unaudited.
 (A real cluster with public HTTPS, a real external AI-driven pentest with its
@@ -381,7 +410,10 @@ four chains, an SPL token and a user-wallet transfer on devnet, signed images in
 a real registry, and an off-site backup in a real locked bucket are no longer on
 this list.)
 
-## What is needed next (updated 2026-10-18)
+## What is needed next (updated 2026-10-19)
+
+**The detailed plan, with phases, costs, acceptance criteria and a timeline, is
+[NEXT-STEPS-PLAN.md](NEXT-STEPS-PLAN.md).** The table below is the running list it is built from.
 
 In the order to do them. "You" means it needs a person with access or authority; "Engineering" can be done
 from here once you say go.
@@ -393,10 +425,12 @@ from here once you say go.
 | 3 | ~~Verify all 14 images' signatures; run the repaired Deploy workflow~~ **Done 2026-10-18** (14 of 14 for both `2571281` and `c585a2e`). Still open: the run's "Deploy to Staging" job fails at its AWS credentials step | | | |
 | 4 | **Done 2026-10-18 (41 min 42 s; one key restored).** Disaster-recovery rebuild (Part B): fresh server, `up.sh`, restore database and key shares, stand the parties back up, sign with a restored key and check the address is unchanged, timed | half a day, a second instance for a day | You, with Engineering writing the commands | Gives the measured recovery time; the biggest open item in the backup story |
 | 5 | ~~Redeploy staging; recipient with no token account; unfreeze~~ **Done 2026-10-18** (staging runs the signing-driver fix) | | | |
-| 5b | ~~Keep the backup checksums off the cluster~~ **Built 2026-10-18:** each backup now stores `checksums.enc` in the bucket; tested (missing, altered, wrong-backup, wrong-key, swapped file). Takes effect for backups taken after the next deploy; not yet proven against the real bucket | | | |
-| 5c | **Restore every key after a rebuild:** `restore-all-keys.sh` ran on staging: **21 of 23 keys restored**; the 2 Cosmos keys were refused because of a bug (restore and refresh compared addresses in different forms), now fixed with a regression test. To do: deploy the fix and run the script again | 30 min | You, with Engineering | The rebuild restored one key of 24; the party restart left the older staging keys unable to sign |
-| 5d | Review the remaining Dependabot pull requests one at a time (OPA 1, NestJS 11, TypeScript, Vault client, immudb, Temporal) and the `checkout` bump | 1-2 days | You, with Engineering | Old dependencies; OPA 1 and NestJS 11 are major versions |
-| 6 | **Signing parties on separate hosts** (three operators, three AWS accounts), then a new key generated on them. Playbook written: `docs/deployment/SEPARATE-HOSTS-PLAYBOOK.md` (track A: a rehearsal by you alone, 1-2 days, which proves the Terraform but not the separation; track B: three operators, 1-2 weeks). Nothing has been applied to real AWS yet | 1-2 weeks | Three people | The step between bounded pilots and real money |
+| 5b | ~~Keep the backup checksums off the cluster~~ **Done 2026-10-19:** each backup now stores `checksums.enc` in the bucket; tested (missing, altered, wrong-backup, wrong-key, swapped file) and proven by a fetch with no checksums against the real bucket. The nightly job uses the same image, so tonight's backup will carry it | | | |
+| 5c | ~~Restore every key after a rebuild~~ **Done 2026-10-19:** `restore-all-keys.sh` restored **23 of 23 keys** on all three parties on staging (a first run restored 21; the 2 Cosmos keys were refused because restore and refresh compared addresses in different forms, now fixed with a regression test and confirmed live). A full rebuild from scratch with this script has not been repeated | | | |
+| 5e | ~~Redeploy the backup image on staging; fetch with no checksums~~ **Done 2026-10-19:** a fetch with no checksums supplied succeeded against the real bucket, and the bucket listing shows `checksums.enc` beside the other three objects | | | |
+| 5f | ~~Verify the signatures of the newest images~~ **Done 2026-10-19:** 14 of 14 for both `4fa61b7` and `b868b0b` | | | |
+| 5d | Review the remaining eight Dependabot pull requests one at a time (OPA 1, NestJS 11, TypeScript 6 and 7, Vault client, immudb, Temporal SDK); the seven low-risk ones are merged | 1-2 days | You, with Engineering | Old dependencies; OPA 1 and NestJS 11 are major versions |
+| 6 | **Signing parties on separate hosts** (three operators, three AWS accounts), then a new key generated on them. Playbook written: `docs/deployment/SEPARATE-HOSTS-PLAYBOOK.md` (track A: a rehearsal by you alone, 1-2 days, which proves the Terraform but not the separation; track B: three operators, 1-2 weeks). Nothing has been applied to real AWS yet. **Decided 2026-10-19: rehearsal (track A) first, then three operators (track B).** Waiting on: a domain and three AWS accounts | 1-2 weeks | Three people | The step between bounded pilots and real money |
 | 7 | **CloudHSM** for the single-key signer. **Deferred, 2026-10-18:** about US$1,100 a month for one HSM and about US$2,200 for the two that high availability needs (hourly, so billed whether or not it is used; confirm the figure for the region on AWS's pricing page). It covers only the single-key path, not the 2-of-3 shares. The signing code already passes against SoftHSM2 in CI. Revisit when a customer or auditor requires FIPS 140-2 Level 3 custody, or once revenue covers it; a one-afternoon test (one HSM, then deleted) would cost a few dollars | about a week | You | Hardware key custody for that path; the 2-of-3 shares are not covered by it |
 | 8 | **Pentest round 4** (Shannon), then commission the independent human-led test | 1-2 days, plus a vendor | You | Most useful on the final shape of the system (after 6 and 7) |
 | 9 | Re-run the AWS baseline check once the AWS connector is re-authorised | 30 min | You | New resources exist in the account |

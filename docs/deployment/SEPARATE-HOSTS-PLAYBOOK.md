@@ -315,7 +315,13 @@ were generated for a rehearsal.
 
 ---
 
-## 12. Decisions needed from you
+## 12. Decisions
+
+**Decided 2026-10-19:** Track A (the rehearsal, one operator) first, then Track B (three operators). Regions as
+suggested: party 1 `eu-west-1`, party 2 `eu-central-1`, party 3 `eu-west-2`. Co-signer key on the operator's laptop for
+the rehearsal. Still to settle: the domain, the three account ids, and (Track B only) operators 2 and 3.
+
+The questions, as they were asked:
 
 1. **Track A first, then B?** (recommended) or go straight to B.
 2. **Domain:** which domain will the parties answer on?

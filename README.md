@@ -11,17 +11,19 @@ option — see [`docs/LAUNCH-THESIS.md`](docs/LAUNCH-THESIS.md) for the
 argument and, separately, an honest readiness assessment against what is
 actually in this repository.
 
-> **Status.** Real threshold ECDSA and EdDSA signing (`bnb-chain/tss-lib`),
-> proven over genuine multi-process HTTP transport — not a single shared
-> key. Proactive key refresh, sender-bound party messages, mutual TLS,
-> optional ceremony co-signing, HSM-held keys for the single-key signer,
-> and a recovery procedure that is executed
-> against real processes and a real Vault in CI, not just described. Fully
-> tested end to end with real HTTP, a real database, and (where the
-> environment allows it) a real Kubernetes cluster. **Not yet cleared for
-> material customer funds**: the signing parties are not yet deployed on
-> isolated hosts, and no independent cryptographic audit has been
-> commissioned. See [Readiness](#readiness) below.
+> **Status, 2026-10-19: ready for a supervised pilot on testnet or capped
+> balances.** Real 2-of-3 threshold ECDSA and EdDSA signing
+> (`bnb-chain/tss-lib`), with transactions accepted by public test networks
+> on four chains (Ethereum Sepolia, Solana devnet, Cosmos testnet, Bitcoin
+> testnet4). A fresh server was rebuilt from the encrypted off-site backup
+> alone in 41 minutes and its restored key signed for the original address;
+> every key on staging restores in one command. Every image is signed and
+> carries an SBOM attestation, and the build is gated on security scanning
+> and tests. **Not yet cleared for material customer funds**: the signing
+> parties are not yet on separate hosts under separate operators, and no
+> independent cryptographic audit or human-led pentest has been
+> commissioned. See [Readiness](#readiness) and the
+> [plan](docs/NEXT-STEPS-PLAN.md).
 
 ## What it does
 
@@ -171,16 +173,33 @@ cd services/api-gateway && npm install && npm run start:dev && npm test
 
 ## Readiness
 
-The honest version, kept separate from the pitch, lives in
-[`docs/LAUNCH-THESIS.md`](docs/LAUNCH-THESIS.md). Short form:
+The current, evidence-backed state is
+[`docs/LAUNCH-READINESS.md`](docs/LAUNCH-READINESS.md); what to do next, in
+order, is [`docs/NEXT-STEPS-PLAN.md`](docs/NEXT-STEPS-PLAN.md); every claim
+has a record in [`docs/evidence/`](docs/evidence/). The argument, kept
+separate from the pitch, is [`docs/LAUNCH-THESIS.md`](docs/LAUNCH-THESIS.md).
+Short form:
 
-**Cleared today:** demos, testnet pilots, paid design partnerships.
+**Cleared today:** demos, testnet pilots, a supervised pilot on capped
+balances, paid design partnerships.
+
+**Proven on a real cluster** (2026-10-17 to 19): disaster recovery from the
+off-site backup alone (41 min 42 s, database and all key shares identical, a
+restored key signing for its original address); all 23 staging keys restored
+in one command (`infrastructure/kind/restore-all-keys.sh`); backups fetchable
+with only the bucket and the key; Solana SPL tokens and per-user wallets with
+an enforced freeze; all 14 images signed and attested. Testing on that cluster
+found and fixed two real signing-path bugs (a dropped final message that could
+hang a ceremony, and Cosmos keys that could not be restored or refreshed),
+each now pinned by a regression test.
 
 **What blocks production with real money — one item, and it is not
 cryptography:** the signing parties are not yet deployed on isolated
 hosts (separate cloud accounts for custody). The Terraform and procedure
-to do it are built ([`docs/deployment/SEPARATE-HOSTS.md`](docs/deployment/SEPARATE-HOSTS.md));
-applying them needs three AWS accounts and three operators. `infrastructure/kind/party-isolation-check.sh`
+to do it are built ([`docs/deployment/SEPARATE-HOSTS.md`](docs/deployment/SEPARATE-HOSTS.md)),
+with a step-by-step [playbook](docs/deployment/SEPARATE-HOSTS-PLAYBOOK.md);
+applying them needs three AWS accounts and three operators. A rehearsal
+with one operator comes first, then the real three-operator setup. `infrastructure/kind/party-isolation-check.sh`
 reports the isolation level a deployment has actually achieved and fails
 the build below whatever a deployment requires; on a single-host cluster
 it always reports `simulated`, which is deployment work, not research.
@@ -202,9 +221,11 @@ Taurus](docs/COMPETITIVE-ANALYSIS.md) and
 
 ## Documentation
 
-- [Launch thesis and readiness](docs/LAUNCH-THESIS.md) — the argument and the evidence, kept separate
+- [Launch readiness](docs/LAUNCH-READINESS.md) · [Next steps plan](docs/NEXT-STEPS-PLAN.md) · [Evidence](docs/evidence/)
+- [Launch thesis](docs/LAUNCH-THESIS.md) — the argument and the evidence, kept separate
 - [Platform overview](docs/PLATFORM-OVERVIEW.md) · [Architecture](docs/architecture.md)
-- [Key recovery procedure](docs/deployment/KEY-RECOVERY.md) · [Party isolation](docs/deployment/PARTY-ISOLATION.md)
+- [Key recovery procedure](docs/deployment/KEY-RECOVERY.md) · [Disaster-recovery rebuild runbook](docs/deployment/DR-REBUILD-RUNBOOK.md) · [Off-site backups](docs/deployment/OFFSITE-BACKUPS.md)
+- [Party isolation](docs/deployment/PARTY-ISOLATION.md) · [Separate hosts](docs/deployment/SEPARATE-HOSTS.md) · [Separate-hosts playbook](docs/deployment/SEPARATE-HOSTS-PLAYBOOK.md)
 - [HSM signing over PKCS#11](docs/engineering/PKCS11-HSM-SIGNING.md) — what it does, what it can't do, how to run it
 - [tss-lib dependency review](docs/security/TSS-LIB-ADVISORY-REVIEW.md) · [Threat model](docs/security/threat-model.md) · [Audit checklist](docs/security/audit-checklist.md)
 - [API reference](docs/api.md) · [Policies (OPA)](docs/policies.md) · [Deployment](docs/deployment.md)
