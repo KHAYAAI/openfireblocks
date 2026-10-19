@@ -401,8 +401,7 @@ Competitive note: Absa launched a bank-led digital-asset custody service (with R
 Any mainnet transfer, the TRISA link on the live network, the custody
 executor against anything but a stand-in, Stripe with a real key, signing
 parties on isolated hosts, a **second** full rebuild from the off-site backup using the restore-all-keys
-command (the first rebuild restored one key; the command has since restored all 23 on staging), the new
-in-bucket backup checksums against the real bucket, AI-agent payments on a
+command (the first rebuild restored one key; the command has since restored all 23 on staging), AI-agent payments on a
 public network, the AWS baseline on the real account, and an independent
 human-led pentest or cryptographic audit. The token contract is unaudited.
 (A real cluster with public HTTPS, a real external AI-driven pentest with its
@@ -423,9 +422,9 @@ from here once you say go.
 | 3 | ~~Verify all 14 images' signatures; run the repaired Deploy workflow~~ **Done 2026-10-18** (14 of 14 for both `2571281` and `c585a2e`). Still open: the run's "Deploy to Staging" job fails at its AWS credentials step | | | |
 | 4 | **Done 2026-10-18 (41 min 42 s; one key restored).** Disaster-recovery rebuild (Part B): fresh server, `up.sh`, restore database and key shares, stand the parties back up, sign with a restored key and check the address is unchanged, timed | half a day, a second instance for a day | You, with Engineering writing the commands | Gives the measured recovery time; the biggest open item in the backup story |
 | 5 | ~~Redeploy staging; recipient with no token account; unfreeze~~ **Done 2026-10-18** (staging runs the signing-driver fix) | | | |
-| 5b | ~~Keep the backup checksums off the cluster~~ **Built 2026-10-18:** each backup now stores `checksums.enc` in the bucket; tested (missing, altered, wrong-backup, wrong-key, swapped file). Takes effect for backups taken after the next deploy; not yet proven against the real bucket | | | |
+| 5b | ~~Keep the backup checksums off the cluster~~ **Done 2026-10-19:** each backup now stores `checksums.enc` in the bucket; tested (missing, altered, wrong-backup, wrong-key, swapped file) and proven by a fetch with no checksums against the real bucket. The nightly job uses the same image, so tonight's backup will carry it | | | |
 | 5c | ~~Restore every key after a rebuild~~ **Done 2026-10-19:** `restore-all-keys.sh` restored **23 of 23 keys** on all three parties on staging (a first run restored 21; the 2 Cosmos keys were refused because restore and refresh compared addresses in different forms, now fixed with a regression test and confirmed live). A full rebuild from scratch with this script has not been repeated | | | |
-| 5e | **Redeploy the backup image on staging** (`reload-image.sh backup ofb-openfireblocks-backup`), take a backup, and confirm `checksums.enc` is in the bucket and a fetch works with no checksums supplied | 20 min | You | The in-bucket checksums are built and tested but not yet proven against the real bucket |
+| 5e | ~~Redeploy the backup image on staging; fetch with no checksums~~ **Done 2026-10-19:** a fetch with no checksums supplied succeeded against the real bucket. To confirm: the bucket listing shows `checksums.enc` | | | |
 | 5f | ~~Verify the signatures of the newest images~~ **Done 2026-10-19:** 14 of 14 for both `4fa61b7` and `b868b0b` | | | |
 | 5d | Review the remaining eight Dependabot pull requests one at a time (OPA 1, NestJS 11, TypeScript 6 and 7, Vault client, immudb, Temporal SDK); the seven low-risk ones are merged | 1-2 days | You, with Engineering | Old dependencies; OPA 1 and NestJS 11 are major versions |
 | 6 | **Signing parties on separate hosts** (three operators, three AWS accounts), then a new key generated on them. Playbook written: `docs/deployment/SEPARATE-HOSTS-PLAYBOOK.md` (track A: a rehearsal by you alone, 1-2 days, which proves the Terraform but not the separation; track B: three operators, 1-2 weeks). Nothing has been applied to real AWS yet | 1-2 weeks | Three people | The step between bounded pilots and real money |

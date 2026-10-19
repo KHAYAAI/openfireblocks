@@ -127,6 +127,13 @@ on the running gateway, and the token-account creation path that the first run d
 - **Signed images from the later builds (2026-10-19):** `~/verify-images.sh` in CloudShell printed 14 PASS for `4fa61b7`
   (the dependency bumps) and **14 PASS, problems: 0** for `b868b0b` (the signing-driver fix, the Cosmos fix and the backup
   checksums).
+- **Backup checksums stored in the bucket, proven against the real bucket (2026-10-19).** The backup image was rebuilt
+  from `b868b0b` and restarted on staging (`reload-image.sh backup ofb-openfireblocks-backup`); a full backup
+  (`backup-1792388958389771565`) completed; and `POST /offsite/fetch` with **no checksums** (only a placeholder tag, so
+  the service did not fall back to its local record) returned `fetched` with all three files, each verified. That can
+  only happen by reading the encrypted checksums stored beside the backup. The decrypted copies in the backup pod were
+  removed afterwards. The bucket listing showing `checksums.enc` beside the other three objects was still to be
+  confirmed when this was written.
 - Not shown: a signature from a restored Cosmos key.
 
 ## Not done
