@@ -132,8 +132,8 @@ on the running gateway, and the token-account creation path that the first run d
   (`backup-1792388958389771565`) completed; and `POST /offsite/fetch` with **no checksums** (only a placeholder tag, so
   the service did not fall back to its local record) returned `fetched` with all three files, each verified. That can
   only happen by reading the encrypted checksums stored beside the backup. The decrypted copies in the backup pod were
-  removed afterwards. The bucket listing showing `checksums.enc` beside the other three objects was still to be
-  confirmed when this was written.
+  removed afterwards. The bucket listing for that backup shows four objects: `checksums.enc` (640 bytes),
+  `manifest.enc`, `postgres.enc` and `vault.enc`.
 - Not shown: a signature from a restored Cosmos key.
 
 ## Not done
