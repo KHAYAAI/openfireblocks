@@ -410,7 +410,10 @@ four chains, an SPL token and a user-wallet transfer on devnet, signed images in
 a real registry, and an off-site backup in a real locked bucket are no longer on
 this list.)
 
-## What is needed next (updated 2026-10-18)
+## What is needed next (updated 2026-10-19)
+
+**The detailed plan, with phases, costs, acceptance criteria and a timeline, is
+[NEXT-STEPS-PLAN.md](NEXT-STEPS-PLAN.md).** The table below is the running list it is built from.
 
 In the order to do them. "You" means it needs a person with access or authority; "Engineering" can be done
 from here once you say go.
