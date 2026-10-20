@@ -84,7 +84,7 @@ jobs:
           (cd evidence && sha256sum -- */* > SHA256SUMS)
           cat "$out/SUMMARY.md" >> "$GITHUB_STEP_SUMMARY"
           exit 0
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: compliance-evidence-${{ github.run_id }}
           path: evidence/
@@ -118,7 +118,7 @@ jobs:
             jq -r '.results[] | select(.status != "PASS") | "- **\(.status)** `\(.id)`: \(.message)"' "$out/aws-baseline.json"
           } >> "$GITHUB_STEP_SUMMARY"
           (cd evidence && sha256sum -- */* > SHA256SUMS)
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: compliance-evidence-aws-${{ github.run_id }}
           path: evidence/

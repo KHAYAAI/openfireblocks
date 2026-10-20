@@ -218,7 +218,7 @@ jobs:
           redoc-cli build api/openapi.yaml -o api/index.html
 
       - name: Upload docs artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v7
         with:
           name: api-docs
           path: api/index.html
