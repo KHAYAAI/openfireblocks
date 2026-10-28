@@ -10,9 +10,9 @@ toolchain go1.26.9
 
 require (
 	github.com/bnb-chain/tss-lib/v2 v2.0.0
-	github.com/btcsuite/btcd v0.0.0-20190629003639-c26ffa870fd8
+	github.com/btcsuite/btcd v0.20.1-beta
 	github.com/btcsuite/btcd/btcec/v2 v2.3.4
-	github.com/btcsuite/btcutil v0.0.0-20190425235716-9e5f4b9a998d
+	github.com/btcsuite/btcutil v1.0.2
 	github.com/codenotary/immudb v1.9.5
 	github.com/decred/dcrd/dcrec/edwards/v2 v2.0.4
 	github.com/google/uuid v1.6.0
