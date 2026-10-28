@@ -95,8 +95,11 @@ github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/decred/dcrd/crypto/blake256 v1.0.0 h1:/8DMNYp9SGi5f0w7uCm6d6M4OU2rGFK09Y2A4Xv7EE0=
 github.com/decred/dcrd/crypto/blake256 v1.0.0/go.mod h1:sQl2p6Y26YV+ZOcSTP6thNdn47hh8kt6rqSlvmrXFAc=
-github.com/decred/dcrd/dcrec/edwards/v2 v2.0.0 h1:E5KszxGgpjpmW8vN811G6rBAZg0/S/DftdGqN4FW5x4=
+github.com/decred/dcrd/crypto/rand v1.0.1 h1:pYMgDRmRv1z1RNgAAs8izJstm4B+fLFiqGD5btOt2Wg=
+github.com/decred/dcrd/crypto/rand v1.0.1/go.mod h1:MsA2XySk/4KpCOYW6vsNYTGuOYRK1wpvulaWCuW7RyI=
 github.com/decred/dcrd/dcrec/edwards/v2 v2.0.0/go.mod h1:d0H8xGMWbiIQP7gN3v2rByWUcuZPm9YsgmnfoxgbINc=
+github.com/decred/dcrd/dcrec/edwards/v2 v2.0.4 h1:xmmdtnGxF/Od2doiP56zBv5a3LgJ3PA6mlx3Luf622I=
+github.com/decred/dcrd/dcrec/edwards/v2 v2.0.4/go.mod h1:07Ke2V+uJkG72M1Eiek8CF6NUB3XPlZ38cIit57R0UU=
 github.com/decred/dcrd/dcrec/secp256k1/v4 v4.0.1 h1:YLtO71vCjJRCBcrPMtQ9nqBsqpA1m5sE92cU+pd5Mcc=
 github.com/decred/dcrd/dcrec/secp256k1/v4 v4.0.1/go.mod h1:hyedUtir6IdtD/7lIxGeCxkaw7y45JueMRL4DIyJDKs=
 github.com/envoyproxy/go-control-plane v0.9.0/go.mod h1:YTl/9mNaCwkRvm6d1a2C3ymFceY/DCBVvsKhRF0iEA4=
