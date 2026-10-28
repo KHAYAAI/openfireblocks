@@ -1,12 +1,10 @@
 // Temporal worker hosting the OpenFireblocks transaction settlement workflow.
 module forge-crypto/temporal-worker
 
-go 1.26.0
-
-toolchain go1.26.9
+go 1.26.10
 
 require (
-	github.com/btcsuite/btcd/btcec/v2 v2.3.4
+	github.com/btcsuite/btcd/btcec/v2 v2.5.1
 	github.com/hashicorp/vault/api v1.23.0
 	github.com/lib/pq v1.12.3
 	github.com/stretchr/testify v1.12.1
@@ -16,7 +14,7 @@ require (
 
 require (
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
-	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.0.1 // indirect
+	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.1 // indirect
 	github.com/facebookgo/clock v0.0.0-20150410010913-600d898af40a // indirect
 	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
