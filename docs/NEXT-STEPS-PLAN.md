@@ -34,7 +34,8 @@ Small items that make every later phase cleaner.
 **Progress, 2026-10-28:** 0.1 done (the documentation pull request is merged). 0.2 done: the job is skipped
 unless the repository variable `STAGING_DEPLOY_ENABLED` is `true`, so it no longer fails every run; set the
 variable once a staging cluster the workflow can reach exists. The gateway's `npm audit` step also started failing
-on four advisories published after 2026-10-20; they are fixed. 0.3 to 0.5 are open.
+on four advisories published after 2026-10-20; they are fixed. Ten low-risk dependency updates are merged
+(#51, #53, #54, #55, #56, #59, #60, #61, #62, #67). 0.3 to 0.5 are open.
 
 ---
 
@@ -108,16 +109,18 @@ negative tests are recorded, and the readiness verdict for uncapped balances can
 
 ## Phase 4: dependency reviews — 1 to 2 days, alongside the others
 
-Eight Dependabot pull requests remain. One at a time, each with CI green on current code, in this order:
+Ten Dependabot pull requests remain (as of 2026-10-28; Dependabot replaced several of the earlier ones). One at a
+time, each with CI green on current code, in this order:
 
 | Order | Pull request | Why it needs care |
 |---|---|---|
 | 1 | #11 Vault client | Used by the signer and the backup service; check the token and KV v2 paths still behave |
 | 2 | #38 immudb | Audit log; check verification and the client's TLS behaviour |
-| 3 | #39 Temporal SDK (20 minor versions) | Workflow determinism: replay existing workflow histories before merging |
-| 4 | #43 OPA 1.x (major) | Rego v1 syntax can change policy meaning; run every policy test and the sanctions screening against known cases |
-| 5 | #12, #15, #17 NestJS 11 (together) | Must move as a set; the gateway's guards, interceptors and validation pipes need a full test pass |
-| 6 | #18 TypeScript 6, #23 TypeScript 7 | Compiler changes; TypeScript 7 is a new compiler and may be left until it settles |
+| 3 | #50 Temporal SDK 1.50 (replaces #39) | Workflow determinism: replay existing workflow histories before merging |
+| 4 | #68 OPA 1.x (major; replaces #43) | Rego v1 syntax can change policy meaning; run every policy test and the sanctions screening against known cases |
+| 5 | #64, #65, #66 NestJS 12 (together) | Must move as a set; the gateway's guards, interceptors and validation pipes need a full test pass |
+| 6 | #57 protobufjs 8 (major) | The gateway's gRPC link to TRISA (Travel Rule) uses it through @grpc/proto-loader; run the TRISA tests and one exchange |
+| 7 | #63, #23 TypeScript 7 | A new compiler; may be left until it settles |
 
 ---
 

@@ -11,7 +11,7 @@ option — see [`docs/LAUNCH-THESIS.md`](docs/LAUNCH-THESIS.md) for the
 argument and, separately, an honest readiness assessment against what is
 actually in this repository.
 
-> **Status, 2026-10-19: ready for a supervised pilot on testnet or capped
+> **Status, 2026-10-28: ready for a supervised pilot on testnet or capped
 > balances.** Real 2-of-3 threshold ECDSA and EdDSA signing
 > (`bnb-chain/tss-lib`), with transactions accepted by public test networks
 > on four chains (Ethereum Sepolia, Solana devnet, Cosmos testnet, Bitcoin
@@ -192,6 +192,24 @@ an enforced freeze; all 14 images signed and attested. Testing on that cluster
 found and fixed two real signing-path bugs (a dropped final message that could
 hang a ceremony, and Cosmos keys that could not be restored or refreshed),
 each now pinned by a regression test.
+
+**Maintenance, 2026-10-28:** four security advisories published after
+2026-10-20 in the gateway's dependencies (body-parser, follow-redirects,
+multer, qs) are fixed without the breaking NestJS 12 upgrade; ten
+dependency updates are merged, each with every check green, including the
+real key-generation and threshold-signing suite (btcec, btcutil, x/crypto,
+edwards, pkcs11, and five CI actions); and the deploy workflow's staging job,
+which failed on every run because staging is a hand-run server it cannot
+reach, is now off until `STAGING_DEPLOY_ENABLED` is set. Ten dependency
+updates that need individual review (Vault, immudb, Temporal, OPA 1.x,
+NestJS 12, protobufjs 8, TypeScript 7) remain open, in the order the
+[plan](docs/NEXT-STEPS-PLAN.md) gives.
+
+**Capped mainnet is about two to three weeks** from the start of the
+separate-hosts rehearsal: the rehearsal (1 to 2 days), fixing what it finds,
+pentest round 4, and re-running the recovery drills. Uncapped balances and
+banks follow the independent reviews and SOC 2 Type I, about two to three
+months.
 
 **What blocks production with real money — one item, and it is not
 cryptography:** the signing parties are not yet deployed on isolated
