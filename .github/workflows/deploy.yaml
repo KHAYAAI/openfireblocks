@@ -71,7 +71,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: "1.26"
           check-latest: true
@@ -132,7 +132,7 @@ jobs:
       # Credentials first: ECR login needs them. A role assumed through GitHub
       # OIDC, so no long-lived AWS key is stored in the repository.
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN_BUILD }}
           aws-region: ${{ vars.AWS_REGION }}
@@ -193,10 +193,16 @@ jobs:
   # --atomic rolls the release back if the upgrade does not become ready in
   # time, which is the rollback this job has: Kubernetes' own rolling update
   # replaces pods only as the new ones pass their readiness probes.
+  #
+  # Off until the repository variable STAGING_DEPLOY_ENABLED is "true". Today
+  # staging is one server deployed by hand (docs/deployment/DR-REBUILD-RUNBOOK.md)
+  # that this workflow cannot reach, so the job failed at its AWS credentials
+  # step on every run; skipped, the run is green and the reason is here.
+  # Production needs this job, so it stays off with it.
   deploy-staging:
     name: Deploy to Staging
     needs: build
-    if: ${{ !inputs.skip_gates }}
+    if: ${{ !inputs.skip_gates && vars.STAGING_DEPLOY_ENABLED == 'true' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -213,7 +219,7 @@ jobs:
 
       # Reading signatures from a private registry needs a login too.
       - name: Configure AWS credentials for the registry
-        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN_BUILD }}
           aws-region: ${{ vars.AWS_REGION }}
@@ -238,7 +244,7 @@ jobs:
             --set imageRegistry=${{ secrets.ECR_REGISTRY }} --set imageTag=${{ github.sha }} > /dev/null
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@5fd3084fc36e372ff1fff382a39b10d03659f355 # v2
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN_STAGING }}
           aws-region: us-east-1
@@ -280,7 +286,7 @@ jobs:
       - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@5fd3084fc36e372ff1fff382a39b10d03659f355 # v2
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN_PRODUCTION }}
           aws-region: us-east-1
