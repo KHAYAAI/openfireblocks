@@ -31,6 +31,11 @@ Small items that make every later phase cleaner.
 | 0.4 | Snyk token as a repository secret, or record the decision to rely on the other scanners | You | 5 min | The Snyk step either runs or the skip is a written decision |
 | 0.5 | Prove a **restored Cosmos key signs** (the restore is proven; a signature from it is not) | You, with Engineering | 20 min | A signature from one of the two restored Cosmos keys, recorded |
 
+**Progress, 2026-10-28:** 0.1 done (the documentation pull request is merged). 0.2 done: the job is skipped
+unless the repository variable `STAGING_DEPLOY_ENABLED` is `true`, so it no longer fails every run; set the
+variable once a staging cluster the workflow can reach exists. The gateway's `npm audit` step also started failing
+on four advisories published after 2026-10-20; they are fixed. 0.3 to 0.5 are open.
+
 ---
 
 ## Phase 1: separate hosts, rehearsal (track A) — 1 to 2 days, about $20-30

@@ -193,10 +193,16 @@ jobs:
   # --atomic rolls the release back if the upgrade does not become ready in
   # time, which is the rollback this job has: Kubernetes' own rolling update
   # replaces pods only as the new ones pass their readiness probes.
+  #
+  # Off until the repository variable STAGING_DEPLOY_ENABLED is "true". Today
+  # staging is one server deployed by hand (docs/deployment/DR-REBUILD-RUNBOOK.md)
+  # that this workflow cannot reach, so the job failed at its AWS credentials
+  # step on every run; skipped, the run is green and the reason is here.
+  # Production needs this job, so it stays off with it.
   deploy-staging:
     name: Deploy to Staging
     needs: build
-    if: ${{ !inputs.skip_gates }}
+    if: ${{ !inputs.skip_gates && vars.STAGING_DEPLOY_ENABLED == 'true' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
