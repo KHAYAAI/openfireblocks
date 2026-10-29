@@ -1,0 +1,1970 @@
+{
+  "allowance/bounded": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "approving 0x1111111111111111111111111111111111111111 to spend USDC requires approval; an allowance can be drawn at any later time"
+    ],
+    "reason": "approved, manual approval required"
+  },
+  "allowance/unlimited": {
+    "approved": false,
+    "denials": [
+      "amount exceeds the global limit of 1000000 USD for USDC",
+      "pro tier limited to 100000 USD per transaction",
+      "refusing an unlimited token approval; approve a specific amount instead"
+    ],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transfer (\u003e 100000 USD) requires approval"
+    ],
+    "reason": "3 policy violation(s)"
+  },
+  "allowance/unlimited-18-decimals": {
+    "approved": false,
+    "denials": [
+      "amount exceeds the global limit of 1000000 USD for DAI",
+      "pro tier limited to 100000 USD per transaction"
+    ],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "approving 0x1111111111111111111111111111111111111111 to spend DAI requires approval; an allowance can be drawn at any later time",
+      "high-value transfer (\u003e 100000 USD) requires approval"
+    ],
+    "reason": "2 policy violation(s)"
+  },
+  "destination/country-blocked": {
+    "approved": false,
+    "denials": [
+      "transactions from kp are blocked for this tenant"
+    ],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "1 policy violation(s)"
+  },
+  "destination/country-empty-blocklist": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "destination/country-missing": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "destination/country-not-blocked": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "destination/everything-wrong": {
+    "approved": false,
+    "denials": [
+      "amount exceeds global limit of 100 ETH",
+      "destination 0x8589427373D6D84E98730D7795D8f6f8731FDA16 is not on the tenant whitelist",
+      "destination 0x8589427373D6D84E98730D7795D8f6f8731FDA16 is on the sanctions list",
+      "pro tier limited to 50 ETH per transaction",
+      "transactions from KP are blocked for this tenant"
+    ],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transaction (\u003e 10 ETH) requires approval"
+    ],
+    "reason": "5 policy violation(s)"
+  },
+  "destination/sanctioned": {
+    "approved": false,
+    "denials": [
+      "destination 0x8589427373D6D84E98730D7795D8f6f8731FDA16 is on the sanctions list"
+    ],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "1 policy violation(s)"
+  },
+  "destination/sanctioned-and-whitelisted": {
+    "approved": false,
+    "denials": [
+      "destination 0x8589427373D6D84E98730D7795D8f6f8731FDA16 is on the sanctions list"
+    ],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "1 policy violation(s)"
+  },
+  "destination/sanctioned-lowercase": {
+    "approved": false,
+    "denials": [
+      "destination 0x8589427373d6d84e98730d7795d8f6f8731fda16 is on the sanctions list"
+    ],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "1 policy violation(s)"
+  },
+  "destination/sanctioned-uppercase-hex": {
+    "approved": false,
+    "denials": [
+      "destination 0x8589427373D6D84E98730D7795D8F6F8731FDA16 is on the sanctions list"
+    ],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "1 policy violation(s)"
+  },
+  "destination/whitelist-empty": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "destination/whitelist-has-destination": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "destination/whitelist-lacks-destination": {
+    "approved": false,
+    "denials": [
+      "destination 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045 is not on the tenant whitelist"
+    ],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "1 policy violation(s)"
+  },
+  "destination/whitelist-nil": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "invalid/implausible-decimals": {
+    "error": "implausible decimals 99 for asset \"USDC\""
+  },
+  "invalid/negative-token-amount": {
+    "error": "negative asset amount: \"-5\""
+  },
+  "invalid/wei-not-a-number": {
+    "error": "invalid wei value: \"12abc\""
+  },
+  "native/enterprise/1000eth": {
+    "approved": false,
+    "denials": [
+      "amount exceeds global limit of 100 ETH"
+    ],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transaction (\u003e 10 ETH) requires approval"
+    ],
+    "reason": "1 policy violation(s)"
+  },
+  "native/enterprise/100eth": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transaction (\u003e 10 ETH) requires approval"
+    ],
+    "reason": "approved, manual approval required"
+  },
+  "native/enterprise/101eth": {
+    "approved": false,
+    "denials": [
+      "amount exceeds global limit of 100 ETH"
+    ],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transaction (\u003e 10 ETH) requires approval"
+    ],
+    "reason": "1 policy violation(s)"
+  },
+  "native/enterprise/10eth": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "native/enterprise/10eth+1": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "native/enterprise/11eth": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transaction (\u003e 10 ETH) requires approval"
+    ],
+    "reason": "approved, manual approval required"
+  },
+  "native/enterprise/1wei": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "native/enterprise/50eth": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transaction (\u003e 10 ETH) requires approval"
+    ],
+    "reason": "approved, manual approval required"
+  },
+  "native/enterprise/51eth": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transaction (\u003e 10 ETH) requires approval"
+    ],
+    "reason": "approved, manual approval required"
+  },
+  "native/enterprise/empty": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "native/enterprise/zero": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "native/free/1000eth": {
+    "approved": false,
+    "denials": [
+      "amount exceeds global limit of 100 ETH",
+      "free tier limited to 10 ETH per transaction"
+    ],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transaction (\u003e 10 ETH) requires approval"
+    ],
+    "reason": "2 policy violation(s)"
+  },
+  "native/free/100eth": {
+    "approved": false,
+    "denials": [
+      "free tier limited to 10 ETH per transaction"
+    ],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transaction (\u003e 10 ETH) requires approval"
+    ],
+    "reason": "1 policy violation(s)"
+  },
+  "native/free/101eth": {
+    "approved": false,
+    "denials": [
+      "amount exceeds global limit of 100 ETH",
+      "free tier limited to 10 ETH per transaction"
+    ],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transaction (\u003e 10 ETH) requires approval"
+    ],
+    "reason": "2 policy violation(s)"
+  },
+  "native/free/10eth": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "native/free/10eth+1": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "native/free/11eth": {
+    "approved": false,
+    "denials": [
+      "free tier limited to 10 ETH per transaction"
+    ],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transaction (\u003e 10 ETH) requires approval"
+    ],
+    "reason": "1 policy violation(s)"
+  },
+  "native/free/1wei": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "native/free/50eth": {
+    "approved": false,
+    "denials": [
+      "free tier limited to 10 ETH per transaction"
+    ],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transaction (\u003e 10 ETH) requires approval"
+    ],
+    "reason": "1 policy violation(s)"
+  },
+  "native/free/51eth": {
+    "approved": false,
+    "denials": [
+      "free tier limited to 10 ETH per transaction"
+    ],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transaction (\u003e 10 ETH) requires approval"
+    ],
+    "reason": "1 policy violation(s)"
+  },
+  "native/free/empty": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "native/free/zero": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "native/no-tier/1000eth": {
+    "approved": false,
+    "denials": [
+      "amount exceeds global limit of 100 ETH"
+    ],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transaction (\u003e 10 ETH) requires approval"
+    ],
+    "reason": "1 policy violation(s)"
+  },
+  "native/no-tier/100eth": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transaction (\u003e 10 ETH) requires approval"
+    ],
+    "reason": "approved, manual approval required"
+  },
+  "native/no-tier/101eth": {
+    "approved": false,
+    "denials": [
+      "amount exceeds global limit of 100 ETH"
+    ],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transaction (\u003e 10 ETH) requires approval"
+    ],
+    "reason": "1 policy violation(s)"
+  },
+  "native/no-tier/10eth": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "native/no-tier/10eth+1": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "native/no-tier/11eth": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transaction (\u003e 10 ETH) requires approval"
+    ],
+    "reason": "approved, manual approval required"
+  },
+  "native/no-tier/1wei": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "native/no-tier/50eth": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transaction (\u003e 10 ETH) requires approval"
+    ],
+    "reason": "approved, manual approval required"
+  },
+  "native/no-tier/51eth": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transaction (\u003e 10 ETH) requires approval"
+    ],
+    "reason": "approved, manual approval required"
+  },
+  "native/no-tier/empty": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "native/no-tier/zero": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "native/pro/1000eth": {
+    "approved": false,
+    "denials": [
+      "amount exceeds global limit of 100 ETH",
+      "pro tier limited to 50 ETH per transaction"
+    ],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transaction (\u003e 10 ETH) requires approval"
+    ],
+    "reason": "2 policy violation(s)"
+  },
+  "native/pro/100eth": {
+    "approved": false,
+    "denials": [
+      "pro tier limited to 50 ETH per transaction"
+    ],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transaction (\u003e 10 ETH) requires approval"
+    ],
+    "reason": "1 policy violation(s)"
+  },
+  "native/pro/101eth": {
+    "approved": false,
+    "denials": [
+      "amount exceeds global limit of 100 ETH",
+      "pro tier limited to 50 ETH per transaction"
+    ],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transaction (\u003e 10 ETH) requires approval"
+    ],
+    "reason": "2 policy violation(s)"
+  },
+  "native/pro/10eth": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "native/pro/10eth+1": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "native/pro/11eth": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transaction (\u003e 10 ETH) requires approval"
+    ],
+    "reason": "approved, manual approval required"
+  },
+  "native/pro/1wei": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "native/pro/50eth": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transaction (\u003e 10 ETH) requires approval"
+    ],
+    "reason": "approved, manual approval required"
+  },
+  "native/pro/51eth": {
+    "approved": false,
+    "denials": [
+      "pro tier limited to 50 ETH per transaction"
+    ],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transaction (\u003e 10 ETH) requires approval"
+    ],
+    "reason": "1 policy violation(s)"
+  },
+  "native/pro/empty": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "native/pro/zero": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "token/enterprise/EUR/1": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "token/enterprise/EUR/10000": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "token/enterprise/EUR/100000": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transfer (\u003e 90000 EUR) requires approval"
+    ],
+    "reason": "approved, manual approval required"
+  },
+  "token/enterprise/EUR/1000001": {
+    "approved": false,
+    "denials": [
+      "amount exceeds the global limit of 900000 EUR for TOKEN-EUR"
+    ],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transfer (\u003e 90000 EUR) requires approval"
+    ],
+    "reason": "1 policy violation(s)"
+  },
+  "token/enterprise/EUR/100001": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transfer (\u003e 90000 EUR) requires approval"
+    ],
+    "reason": "approved, manual approval required"
+  },
+  "token/enterprise/EUR/10001": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "token/enterprise/EUR/18000001": {
+    "approved": false,
+    "denials": [
+      "amount exceeds the global limit of 900000 EUR for TOKEN-EUR"
+    ],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transfer (\u003e 90000 EUR) requires approval"
+    ],
+    "reason": "1 policy violation(s)"
+  },
+  "token/enterprise/EUR/1800001": {
+    "approved": false,
+    "denials": [
+      "amount exceeds the global limit of 900000 EUR for TOKEN-EUR"
+    ],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transfer (\u003e 90000 EUR) requires approval"
+    ],
+    "reason": "1 policy violation(s)"
+  },
+  "token/enterprise/EUR/180001": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transfer (\u003e 90000 EUR) requires approval"
+    ],
+    "reason": "approved, manual approval required"
+  },
+  "token/enterprise/EUR/9000": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "token/enterprise/EUR/900001": {
+    "approved": false,
+    "denials": [
+      "amount exceeds the global limit of 900000 EUR for TOKEN-EUR"
+    ],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transfer (\u003e 90000 EUR) requires approval"
+    ],
+    "reason": "1 policy violation(s)"
+  },
+  "token/enterprise/EUR/90001": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transfer (\u003e 90000 EUR) requires approval"
+    ],
+    "reason": "approved, manual approval required"
+  },
+  "token/enterprise/EUR/9001": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "token/enterprise/GBP/1": {
+    "approved": false,
+    "denials": [
+      "no amount limits are configured for GBP; refusing to transact TOKEN-GBP until they are"
+    ],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "1 policy violation(s)"
+  },
+  "token/enterprise/GBP/10000": {
+    "approved": false,
+    "denials": [
+      "no amount limits are configured for GBP; refusing to transact TOKEN-GBP until they are"
+    ],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "1 policy violation(s)"
+  },
+  "token/enterprise/GBP/100000": {
+    "approved": false,
+    "denials": [
+      "no amount limits are configured for GBP; refusing to transact TOKEN-GBP until they are"
+    ],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "1 policy violation(s)"
+  },
+  "token/enterprise/GBP/1000001": {
+    "approved": false,
+    "denials": [
+      "no amount limits are configured for GBP; refusing to transact TOKEN-GBP until they are"
+    ],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "1 policy violation(s)"
+  },
+  "token/enterprise/GBP/100001": {
+    "approved": false,
+    "denials": [
+      "no amount limits are configured for GBP; refusing to transact TOKEN-GBP until they are"
+    ],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "1 policy violation(s)"
+  },
+  "token/enterprise/GBP/10001": {
+    "approved": false,
+    "denials": [
+      "no amount limits are configured for GBP; refusing to transact TOKEN-GBP until they are"
+    ],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "1 policy violation(s)"
+  },
+  "token/enterprise/GBP/18000001": {
+    "approved": false,
+    "denials": [
+      "no amount limits are configured for GBP; refusing to transact TOKEN-GBP until they are"
+    ],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "1 policy violation(s)"
+  },
+  "token/enterprise/GBP/1800001": {
+    "approved": false,
+    "denials": [
+      "no amount limits are configured for GBP; refusing to transact TOKEN-GBP until they are"
+    ],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "1 policy violation(s)"
+  },
+  "token/enterprise/GBP/180001": {
+    "approved": false,
+    "denials": [
+      "no amount limits are configured for GBP; refusing to transact TOKEN-GBP until they are"
+    ],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "1 policy violation(s)"
+  },
+  "token/enterprise/GBP/9000": {
+    "approved": false,
+    "denials": [
+      "no amount limits are configured for GBP; refusing to transact TOKEN-GBP until they are"
+    ],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "1 policy violation(s)"
+  },
+  "token/enterprise/GBP/900001": {
+    "approved": false,
+    "denials": [
+      "no amount limits are configured for GBP; refusing to transact TOKEN-GBP until they are"
+    ],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "1 policy violation(s)"
+  },
+  "token/enterprise/GBP/90001": {
+    "approved": false,
+    "denials": [
+      "no amount limits are configured for GBP; refusing to transact TOKEN-GBP until they are"
+    ],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "1 policy violation(s)"
+  },
+  "token/enterprise/GBP/9001": {
+    "approved": false,
+    "denials": [
+      "no amount limits are configured for GBP; refusing to transact TOKEN-GBP until they are"
+    ],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "1 policy violation(s)"
+  },
+  "token/enterprise/USD/1": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "token/enterprise/USD/10000": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "token/enterprise/USD/100000": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "token/enterprise/USD/1000001": {
+    "approved": false,
+    "denials": [
+      "amount exceeds the global limit of 1000000 USD for TOKEN-USD"
+    ],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transfer (\u003e 100000 USD) requires approval"
+    ],
+    "reason": "1 policy violation(s)"
+  },
+  "token/enterprise/USD/100001": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transfer (\u003e 100000 USD) requires approval"
+    ],
+    "reason": "approved, manual approval required"
+  },
+  "token/enterprise/USD/10001": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "token/enterprise/USD/18000001": {
+    "approved": false,
+    "denials": [
+      "amount exceeds the global limit of 1000000 USD for TOKEN-USD"
+    ],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transfer (\u003e 100000 USD) requires approval"
+    ],
+    "reason": "1 policy violation(s)"
+  },
+  "token/enterprise/USD/1800001": {
+    "approved": false,
+    "denials": [
+      "amount exceeds the global limit of 1000000 USD for TOKEN-USD"
+    ],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transfer (\u003e 100000 USD) requires approval"
+    ],
+    "reason": "1 policy violation(s)"
+  },
+  "token/enterprise/USD/180001": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transfer (\u003e 100000 USD) requires approval"
+    ],
+    "reason": "approved, manual approval required"
+  },
+  "token/enterprise/USD/9000": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "token/enterprise/USD/900001": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transfer (\u003e 100000 USD) requires approval"
+    ],
+    "reason": "approved, manual approval required"
+  },
+  "token/enterprise/USD/90001": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "token/enterprise/USD/9001": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "token/enterprise/ZAR/1": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "token/enterprise/ZAR/10000": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "token/enterprise/ZAR/100000": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "token/enterprise/ZAR/1000001": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "token/enterprise/ZAR/100001": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "token/enterprise/ZAR/10001": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "token/enterprise/ZAR/18000001": {
+    "approved": false,
+    "denials": [
+      "amount exceeds the global limit of 18000000 ZAR for TOKEN-ZAR"
+    ],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transfer (\u003e 1800000 ZAR) requires approval"
+    ],
+    "reason": "1 policy violation(s)"
+  },
+  "token/enterprise/ZAR/1800001": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transfer (\u003e 1800000 ZAR) requires approval"
+    ],
+    "reason": "approved, manual approval required"
+  },
+  "token/enterprise/ZAR/180001": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "token/enterprise/ZAR/9000": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "token/enterprise/ZAR/900001": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "token/enterprise/ZAR/90001": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "token/enterprise/ZAR/9001": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "token/fractional-over-limit": {
+    "approved": false,
+    "denials": [
+      "free tier limited to 10000 USD per transaction"
+    ],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "1 policy violation(s)"
+  },
+  "token/free/EUR/1": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "token/free/EUR/10000": {
+    "approved": false,
+    "denials": [
+      "free tier limited to 9000 EUR per transaction"
+    ],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "1 policy violation(s)"
+  },
+  "token/free/EUR/100000": {
+    "approved": false,
+    "denials": [
+      "free tier limited to 9000 EUR per transaction"
+    ],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transfer (\u003e 90000 EUR) requires approval"
+    ],
+    "reason": "1 policy violation(s)"
+  },
+  "token/free/EUR/1000001": {
+    "approved": false,
+    "denials": [
+      "amount exceeds the global limit of 900000 EUR for TOKEN-EUR",
+      "free tier limited to 9000 EUR per transaction"
+    ],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transfer (\u003e 90000 EUR) requires approval"
+    ],
+    "reason": "2 policy violation(s)"
+  },
+  "token/free/EUR/100001": {
+    "approved": false,
+    "denials": [
+      "free tier limited to 9000 EUR per transaction"
+    ],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transfer (\u003e 90000 EUR) requires approval"
+    ],
+    "reason": "1 policy violation(s)"
+  },
+  "token/free/EUR/10001": {
+    "approved": false,
+    "denials": [
+      "free tier limited to 9000 EUR per transaction"
+    ],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "1 policy violation(s)"
+  },
+  "token/free/EUR/18000001": {
+    "approved": false,
+    "denials": [
+      "amount exceeds the global limit of 900000 EUR for TOKEN-EUR",
+      "free tier limited to 9000 EUR per transaction"
+    ],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transfer (\u003e 90000 EUR) requires approval"
+    ],
+    "reason": "2 policy violation(s)"
+  },
+  "token/free/EUR/1800001": {
+    "approved": false,
+    "denials": [
+      "amount exceeds the global limit of 900000 EUR for TOKEN-EUR",
+      "free tier limited to 9000 EUR per transaction"
+    ],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transfer (\u003e 90000 EUR) requires approval"
+    ],
+    "reason": "2 policy violation(s)"
+  },
+  "token/free/EUR/180001": {
+    "approved": false,
+    "denials": [
+      "free tier limited to 9000 EUR per transaction"
+    ],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transfer (\u003e 90000 EUR) requires approval"
+    ],
+    "reason": "1 policy violation(s)"
+  },
+  "token/free/EUR/9000": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "token/free/EUR/900001": {
+    "approved": false,
+    "denials": [
+      "amount exceeds the global limit of 900000 EUR for TOKEN-EUR",
+      "free tier limited to 9000 EUR per transaction"
+    ],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transfer (\u003e 90000 EUR) requires approval"
+    ],
+    "reason": "2 policy violation(s)"
+  },
+  "token/free/EUR/90001": {
+    "approved": false,
+    "denials": [
+      "free tier limited to 9000 EUR per transaction"
+    ],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transfer (\u003e 90000 EUR) requires approval"
+    ],
+    "reason": "1 policy violation(s)"
+  },
+  "token/free/EUR/9001": {
+    "approved": false,
+    "denials": [
+      "free tier limited to 9000 EUR per transaction"
+    ],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "1 policy violation(s)"
+  },
+  "token/free/GBP/1": {
+    "approved": false,
+    "denials": [
+      "no amount limits are configured for GBP; refusing to transact TOKEN-GBP until they are"
+    ],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "1 policy violation(s)"
+  },
+  "token/free/GBP/10000": {
+    "approved": false,
+    "denials": [
+      "no amount limits are configured for GBP; refusing to transact TOKEN-GBP until they are"
+    ],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "1 policy violation(s)"
+  },
+  "token/free/GBP/100000": {
+    "approved": false,
+    "denials": [
+      "no amount limits are configured for GBP; refusing to transact TOKEN-GBP until they are"
+    ],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "1 policy violation(s)"
+  },
+  "token/free/GBP/1000001": {
+    "approved": false,
+    "denials": [
+      "no amount limits are configured for GBP; refusing to transact TOKEN-GBP until they are"
+    ],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "1 policy violation(s)"
+  },
+  "token/free/GBP/100001": {
+    "approved": false,
+    "denials": [
+      "no amount limits are configured for GBP; refusing to transact TOKEN-GBP until they are"
+    ],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "1 policy violation(s)"
+  },
+  "token/free/GBP/10001": {
+    "approved": false,
+    "denials": [
+      "no amount limits are configured for GBP; refusing to transact TOKEN-GBP until they are"
+    ],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "1 policy violation(s)"
+  },
+  "token/free/GBP/18000001": {
+    "approved": false,
+    "denials": [
+      "no amount limits are configured for GBP; refusing to transact TOKEN-GBP until they are"
+    ],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "1 policy violation(s)"
+  },
+  "token/free/GBP/1800001": {
+    "approved": false,
+    "denials": [
+      "no amount limits are configured for GBP; refusing to transact TOKEN-GBP until they are"
+    ],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "1 policy violation(s)"
+  },
+  "token/free/GBP/180001": {
+    "approved": false,
+    "denials": [
+      "no amount limits are configured for GBP; refusing to transact TOKEN-GBP until they are"
+    ],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "1 policy violation(s)"
+  },
+  "token/free/GBP/9000": {
+    "approved": false,
+    "denials": [
+      "no amount limits are configured for GBP; refusing to transact TOKEN-GBP until they are"
+    ],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "1 policy violation(s)"
+  },
+  "token/free/GBP/900001": {
+    "approved": false,
+    "denials": [
+      "no amount limits are configured for GBP; refusing to transact TOKEN-GBP until they are"
+    ],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "1 policy violation(s)"
+  },
+  "token/free/GBP/90001": {
+    "approved": false,
+    "denials": [
+      "no amount limits are configured for GBP; refusing to transact TOKEN-GBP until they are"
+    ],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "1 policy violation(s)"
+  },
+  "token/free/GBP/9001": {
+    "approved": false,
+    "denials": [
+      "no amount limits are configured for GBP; refusing to transact TOKEN-GBP until they are"
+    ],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "1 policy violation(s)"
+  },
+  "token/free/USD/1": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "token/free/USD/10000": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "token/free/USD/100000": {
+    "approved": false,
+    "denials": [
+      "free tier limited to 10000 USD per transaction"
+    ],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "1 policy violation(s)"
+  },
+  "token/free/USD/1000001": {
+    "approved": false,
+    "denials": [
+      "amount exceeds the global limit of 1000000 USD for TOKEN-USD",
+      "free tier limited to 10000 USD per transaction"
+    ],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transfer (\u003e 100000 USD) requires approval"
+    ],
+    "reason": "2 policy violation(s)"
+  },
+  "token/free/USD/100001": {
+    "approved": false,
+    "denials": [
+      "free tier limited to 10000 USD per transaction"
+    ],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transfer (\u003e 100000 USD) requires approval"
+    ],
+    "reason": "1 policy violation(s)"
+  },
+  "token/free/USD/10001": {
+    "approved": false,
+    "denials": [
+      "free tier limited to 10000 USD per transaction"
+    ],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "1 policy violation(s)"
+  },
+  "token/free/USD/18000001": {
+    "approved": false,
+    "denials": [
+      "amount exceeds the global limit of 1000000 USD for TOKEN-USD",
+      "free tier limited to 10000 USD per transaction"
+    ],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transfer (\u003e 100000 USD) requires approval"
+    ],
+    "reason": "2 policy violation(s)"
+  },
+  "token/free/USD/1800001": {
+    "approved": false,
+    "denials": [
+      "amount exceeds the global limit of 1000000 USD for TOKEN-USD",
+      "free tier limited to 10000 USD per transaction"
+    ],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transfer (\u003e 100000 USD) requires approval"
+    ],
+    "reason": "2 policy violation(s)"
+  },
+  "token/free/USD/180001": {
+    "approved": false,
+    "denials": [
+      "free tier limited to 10000 USD per transaction"
+    ],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transfer (\u003e 100000 USD) requires approval"
+    ],
+    "reason": "1 policy violation(s)"
+  },
+  "token/free/USD/9000": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "token/free/USD/900001": {
+    "approved": false,
+    "denials": [
+      "free tier limited to 10000 USD per transaction"
+    ],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transfer (\u003e 100000 USD) requires approval"
+    ],
+    "reason": "1 policy violation(s)"
+  },
+  "token/free/USD/90001": {
+    "approved": false,
+    "denials": [
+      "free tier limited to 10000 USD per transaction"
+    ],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "1 policy violation(s)"
+  },
+  "token/free/USD/9001": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "token/free/ZAR/1": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "token/free/ZAR/10000": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "token/free/ZAR/100000": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "token/free/ZAR/1000001": {
+    "approved": false,
+    "denials": [
+      "free tier limited to 180000 ZAR per transaction"
+    ],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "1 policy violation(s)"
+  },
+  "token/free/ZAR/100001": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "token/free/ZAR/10001": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "token/free/ZAR/18000001": {
+    "approved": false,
+    "denials": [
+      "amount exceeds the global limit of 18000000 ZAR for TOKEN-ZAR",
+      "free tier limited to 180000 ZAR per transaction"
+    ],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transfer (\u003e 1800000 ZAR) requires approval"
+    ],
+    "reason": "2 policy violation(s)"
+  },
+  "token/free/ZAR/1800001": {
+    "approved": false,
+    "denials": [
+      "free tier limited to 180000 ZAR per transaction"
+    ],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transfer (\u003e 1800000 ZAR) requires approval"
+    ],
+    "reason": "1 policy violation(s)"
+  },
+  "token/free/ZAR/180001": {
+    "approved": false,
+    "denials": [
+      "free tier limited to 180000 ZAR per transaction"
+    ],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "1 policy violation(s)"
+  },
+  "token/free/ZAR/9000": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "token/free/ZAR/900001": {
+    "approved": false,
+    "denials": [
+      "free tier limited to 180000 ZAR per transaction"
+    ],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "1 policy violation(s)"
+  },
+  "token/free/ZAR/90001": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "token/free/ZAR/9001": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "token/pegged-no-amount": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "USDC is not a pegged asset, so its value cannot be checked against a limit; approval required"
+    ],
+    "reason": "approved, manual approval required"
+  },
+  "token/pro/EUR/1": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "token/pro/EUR/10000": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "token/pro/EUR/100000": {
+    "approved": false,
+    "denials": [
+      "pro tier limited to 90000 EUR per transaction"
+    ],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transfer (\u003e 90000 EUR) requires approval"
+    ],
+    "reason": "1 policy violation(s)"
+  },
+  "token/pro/EUR/1000001": {
+    "approved": false,
+    "denials": [
+      "amount exceeds the global limit of 900000 EUR for TOKEN-EUR",
+      "pro tier limited to 90000 EUR per transaction"
+    ],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transfer (\u003e 90000 EUR) requires approval"
+    ],
+    "reason": "2 policy violation(s)"
+  },
+  "token/pro/EUR/100001": {
+    "approved": false,
+    "denials": [
+      "pro tier limited to 90000 EUR per transaction"
+    ],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transfer (\u003e 90000 EUR) requires approval"
+    ],
+    "reason": "1 policy violation(s)"
+  },
+  "token/pro/EUR/10001": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "token/pro/EUR/18000001": {
+    "approved": false,
+    "denials": [
+      "amount exceeds the global limit of 900000 EUR for TOKEN-EUR",
+      "pro tier limited to 90000 EUR per transaction"
+    ],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transfer (\u003e 90000 EUR) requires approval"
+    ],
+    "reason": "2 policy violation(s)"
+  },
+  "token/pro/EUR/1800001": {
+    "approved": false,
+    "denials": [
+      "amount exceeds the global limit of 900000 EUR for TOKEN-EUR",
+      "pro tier limited to 90000 EUR per transaction"
+    ],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transfer (\u003e 90000 EUR) requires approval"
+    ],
+    "reason": "2 policy violation(s)"
+  },
+  "token/pro/EUR/180001": {
+    "approved": false,
+    "denials": [
+      "pro tier limited to 90000 EUR per transaction"
+    ],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transfer (\u003e 90000 EUR) requires approval"
+    ],
+    "reason": "1 policy violation(s)"
+  },
+  "token/pro/EUR/9000": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "token/pro/EUR/900001": {
+    "approved": false,
+    "denials": [
+      "amount exceeds the global limit of 900000 EUR for TOKEN-EUR",
+      "pro tier limited to 90000 EUR per transaction"
+    ],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transfer (\u003e 90000 EUR) requires approval"
+    ],
+    "reason": "2 policy violation(s)"
+  },
+  "token/pro/EUR/90001": {
+    "approved": false,
+    "denials": [
+      "pro tier limited to 90000 EUR per transaction"
+    ],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transfer (\u003e 90000 EUR) requires approval"
+    ],
+    "reason": "1 policy violation(s)"
+  },
+  "token/pro/EUR/9001": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "token/pro/GBP/1": {
+    "approved": false,
+    "denials": [
+      "no amount limits are configured for GBP; refusing to transact TOKEN-GBP until they are"
+    ],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "1 policy violation(s)"
+  },
+  "token/pro/GBP/10000": {
+    "approved": false,
+    "denials": [
+      "no amount limits are configured for GBP; refusing to transact TOKEN-GBP until they are"
+    ],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "1 policy violation(s)"
+  },
+  "token/pro/GBP/100000": {
+    "approved": false,
+    "denials": [
+      "no amount limits are configured for GBP; refusing to transact TOKEN-GBP until they are"
+    ],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "1 policy violation(s)"
+  },
+  "token/pro/GBP/1000001": {
+    "approved": false,
+    "denials": [
+      "no amount limits are configured for GBP; refusing to transact TOKEN-GBP until they are"
+    ],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "1 policy violation(s)"
+  },
+  "token/pro/GBP/100001": {
+    "approved": false,
+    "denials": [
+      "no amount limits are configured for GBP; refusing to transact TOKEN-GBP until they are"
+    ],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "1 policy violation(s)"
+  },
+  "token/pro/GBP/10001": {
+    "approved": false,
+    "denials": [
+      "no amount limits are configured for GBP; refusing to transact TOKEN-GBP until they are"
+    ],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "1 policy violation(s)"
+  },
+  "token/pro/GBP/18000001": {
+    "approved": false,
+    "denials": [
+      "no amount limits are configured for GBP; refusing to transact TOKEN-GBP until they are"
+    ],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "1 policy violation(s)"
+  },
+  "token/pro/GBP/1800001": {
+    "approved": false,
+    "denials": [
+      "no amount limits are configured for GBP; refusing to transact TOKEN-GBP until they are"
+    ],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "1 policy violation(s)"
+  },
+  "token/pro/GBP/180001": {
+    "approved": false,
+    "denials": [
+      "no amount limits are configured for GBP; refusing to transact TOKEN-GBP until they are"
+    ],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "1 policy violation(s)"
+  },
+  "token/pro/GBP/9000": {
+    "approved": false,
+    "denials": [
+      "no amount limits are configured for GBP; refusing to transact TOKEN-GBP until they are"
+    ],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "1 policy violation(s)"
+  },
+  "token/pro/GBP/900001": {
+    "approved": false,
+    "denials": [
+      "no amount limits are configured for GBP; refusing to transact TOKEN-GBP until they are"
+    ],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "1 policy violation(s)"
+  },
+  "token/pro/GBP/90001": {
+    "approved": false,
+    "denials": [
+      "no amount limits are configured for GBP; refusing to transact TOKEN-GBP until they are"
+    ],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "1 policy violation(s)"
+  },
+  "token/pro/GBP/9001": {
+    "approved": false,
+    "denials": [
+      "no amount limits are configured for GBP; refusing to transact TOKEN-GBP until they are"
+    ],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "1 policy violation(s)"
+  },
+  "token/pro/USD/1": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "token/pro/USD/10000": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "token/pro/USD/100000": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "token/pro/USD/1000001": {
+    "approved": false,
+    "denials": [
+      "amount exceeds the global limit of 1000000 USD for TOKEN-USD",
+      "pro tier limited to 100000 USD per transaction"
+    ],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transfer (\u003e 100000 USD) requires approval"
+    ],
+    "reason": "2 policy violation(s)"
+  },
+  "token/pro/USD/100001": {
+    "approved": false,
+    "denials": [
+      "pro tier limited to 100000 USD per transaction"
+    ],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transfer (\u003e 100000 USD) requires approval"
+    ],
+    "reason": "1 policy violation(s)"
+  },
+  "token/pro/USD/10001": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "token/pro/USD/18000001": {
+    "approved": false,
+    "denials": [
+      "amount exceeds the global limit of 1000000 USD for TOKEN-USD",
+      "pro tier limited to 100000 USD per transaction"
+    ],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transfer (\u003e 100000 USD) requires approval"
+    ],
+    "reason": "2 policy violation(s)"
+  },
+  "token/pro/USD/1800001": {
+    "approved": false,
+    "denials": [
+      "amount exceeds the global limit of 1000000 USD for TOKEN-USD",
+      "pro tier limited to 100000 USD per transaction"
+    ],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transfer (\u003e 100000 USD) requires approval"
+    ],
+    "reason": "2 policy violation(s)"
+  },
+  "token/pro/USD/180001": {
+    "approved": false,
+    "denials": [
+      "pro tier limited to 100000 USD per transaction"
+    ],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transfer (\u003e 100000 USD) requires approval"
+    ],
+    "reason": "1 policy violation(s)"
+  },
+  "token/pro/USD/9000": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "token/pro/USD/900001": {
+    "approved": false,
+    "denials": [
+      "pro tier limited to 100000 USD per transaction"
+    ],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transfer (\u003e 100000 USD) requires approval"
+    ],
+    "reason": "1 policy violation(s)"
+  },
+  "token/pro/USD/90001": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "token/pro/USD/9001": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "token/pro/ZAR/1": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "token/pro/ZAR/10000": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "token/pro/ZAR/100000": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "token/pro/ZAR/1000001": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "token/pro/ZAR/100001": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "token/pro/ZAR/10001": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "token/pro/ZAR/18000001": {
+    "approved": false,
+    "denials": [
+      "amount exceeds the global limit of 18000000 ZAR for TOKEN-ZAR",
+      "pro tier limited to 1800000 ZAR per transaction"
+    ],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transfer (\u003e 1800000 ZAR) requires approval"
+    ],
+    "reason": "2 policy violation(s)"
+  },
+  "token/pro/ZAR/1800001": {
+    "approved": false,
+    "denials": [
+      "pro tier limited to 1800000 ZAR per transaction"
+    ],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "high-value transfer (\u003e 1800000 ZAR) requires approval"
+    ],
+    "reason": "1 policy violation(s)"
+  },
+  "token/pro/ZAR/180001": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "token/pro/ZAR/9000": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "token/pro/ZAR/900001": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "token/pro/ZAR/90001": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "token/pro/ZAR/9001": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "approved"
+  },
+  "token/sanctioned-destination": {
+    "approved": false,
+    "denials": [
+      "destination 0x8589427373D6D84E98730D7795D8f6f8731FDA16 is on the sanctions list"
+    ],
+    "requiresApproval": false,
+    "approvalReasons": [],
+    "reason": "1 policy violation(s)"
+  },
+  "token/unpegged": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "WILD is not a pegged asset, so its value cannot be checked against a limit; approval required"
+    ],
+    "reason": "approved, manual approval required"
+  },
+  "token/unpegged-allowance": {
+    "approved": true,
+    "denials": [],
+    "requiresApproval": true,
+    "approvalReasons": [
+      "approving 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045 to spend WILD requires approval; an allowance can be drawn at any later time"
+    ],
+    "reason": "approved, manual approval required"
+  }
+}
