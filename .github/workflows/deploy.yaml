@@ -82,7 +82,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: "24"
           cache: npm
           cache-dependency-path: services/api-gateway/package-lock.json
 
@@ -90,7 +90,7 @@ jobs:
         working-directory: services/api-gateway
         run: |
           npm ci
-          npx jest
+          npm test
 
   # The image list comes from scripts/build-images.sh --list, the same list
   # the chart and the kind cluster use. This job used to hand-write three

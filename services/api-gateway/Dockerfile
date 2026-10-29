@@ -8,11 +8,14 @@
 # this directory, so it could never have produced an image. This is the
 # only internet-facing service in the platform.
 #
-# node:22 because @workos-inc/node@10 declares `engines: node >=22.11.0`.
+# node:24 because NestJS 12 is published as ES modules only: the compiled
+# CommonJS gateway loads it through require(esm), and its Jest suite needs
+# Node 24.9+ to do the same, so the runtime matches what the tests run on.
+# (@workos-inc/node@10 also needs node >=22.11.0.)
 # The full bookworm image, not -slim, because `bcrypt` is a native addon:
 # it falls back to a node-gyp build that needs python3, make and g++. Only
 # the build stage pays for that toolchain.
-FROM node:22-bookworm AS build
+FROM node:24-bookworm AS build
 
 # Optional trust anchor for building behind a TLS-intercepting egress proxy
 # (corporate MITM, sandboxed CI). Passed as a BuildKit secret rather than a
@@ -45,7 +48,7 @@ RUN npm run build && npm prune --omit=dev
 # source, no compiler toolchain, no devDependencies, and no trace of the
 # build-time CA. bcrypt's compiled .node addon is carried across inside
 # node_modules and links against the same bookworm glibc.
-FROM node:22-bookworm-slim AS runtime
+FROM node:24-bookworm-slim AS runtime
 
 WORKDIR /app
 
