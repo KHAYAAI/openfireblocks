@@ -1,5 +1,7 @@
 package policies
 
+import rego.v1
+
 # Amount limits for tokens, denominated in the currency the token is
 # pegged to.
 #
@@ -32,14 +34,14 @@ limits := {
 }
 
 # The global ceiling applies to every tenant on every tier.
-deny[msg] {
+deny contains msg if {
 	input.has_pegged_value
 	limit := limits[input.peg_currency].global
 	input.pegged_value > limit
 	msg := sprintf("amount exceeds the global limit of %v %s for %s", [limit, input.peg_currency, input.asset])
 }
 
-deny[msg] {
+deny contains msg if {
 	input.has_pegged_value
 	input.customer_tier == "free"
 	limit := limits[input.peg_currency].free
@@ -47,7 +49,7 @@ deny[msg] {
 	msg := sprintf("free tier limited to %v %s per transaction", [limit, input.peg_currency])
 }
 
-deny[msg] {
+deny contains msg if {
 	input.has_pegged_value
 	input.customer_tier == "pro"
 	limit := limits[input.peg_currency].pro
@@ -60,7 +62,7 @@ deny[msg] {
 # Fail closed. The alternative is that registering a token in a new
 # currency silently creates an unlimited payment rail, and nothing about
 # the system looks any different when it happens.
-deny[msg] {
+deny contains msg if {
 	input.has_pegged_value
 	not limits[input.peg_currency]
 	msg := sprintf("no amount limits are configured for %s; refusing to transact %s until they are", [input.peg_currency, input.asset])
@@ -70,7 +72,7 @@ deny[msg] {
 # held to a money limit. Routed to a human rather than denied: plenty of
 # legitimate tokens are not stablecoins, and refusing all of them outright
 # would be a bigger claim than the missing information justifies.
-require_approval[msg] {
+require_approval contains msg if {
 	input.is_token
 	not input.has_pegged_value
 	not input.is_allowance
@@ -80,7 +82,7 @@ require_approval[msg] {
 # Large transfers go to an approver even when they are within the ceiling.
 high_value := {"USD": 100000, "ZAR": 1800000, "EUR": 90000}
 
-require_approval[msg] {
+require_approval contains msg if {
 	input.has_pegged_value
 	threshold := high_value[input.peg_currency]
 	input.pegged_value > threshold
@@ -99,7 +101,7 @@ require_approval[msg] {
 # Compared as a float against 1e70 rather than the exact 2^256-1: the
 # value has already been divided by the token's scale, and no real
 # allowance comes within sixty orders of magnitude of this.
-deny[msg] {
+deny contains msg if {
 	input.is_allowance
 	input.pegged_value > 1e70
 	msg := "refusing an unlimited token approval; approve a specific amount instead"
@@ -107,7 +109,7 @@ deny[msg] {
 
 # Every other approval is allowed but escalated. The amount is exposure,
 # not a payment, and somebody should look at it.
-require_approval[msg] {
+require_approval contains msg if {
 	input.is_allowance
 	input.pegged_value <= 1e70
 	msg := sprintf("approving %s to spend %s requires approval; an allowance can be drawn at any later time", [input.to, input.asset])

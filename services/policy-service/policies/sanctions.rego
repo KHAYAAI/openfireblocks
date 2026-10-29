@@ -1,11 +1,13 @@
 package policies
 
+import rego.v1
+
 # Sanctions screening. Denies any transaction whose destination is on the
 # sanctions list. The list is provided as data (data.sanctions.addresses),
 # loaded from sanctions.json at startup, so it can be refreshed from the
 # official OFAC SDN feed without changing policy code.
 
-deny[msg] {
+deny contains msg if {
 	addrs := data.sanctions.addresses
 	some i
 	lower(addrs[i]) == lower(input.to)
