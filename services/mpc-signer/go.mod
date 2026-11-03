@@ -4,14 +4,12 @@
 // Binance TSS-Lib distributed key generation / threshold signing.
 module forge-crypto/mpc-signer
 
-go 1.26.0
-
-toolchain go1.26.9
+go 1.26.10
 
 require (
 	github.com/bnb-chain/tss-lib/v2 v2.0.0
 	github.com/btcsuite/btcd v0.20.1-beta
-	github.com/btcsuite/btcd/btcec/v2 v2.3.4
+	github.com/btcsuite/btcd/btcec/v2 v2.5.1
 	github.com/btcsuite/btcutil v1.0.2
 	github.com/codenotary/immudb v1.11.2
 	github.com/decred/dcrd/dcrec/edwards/v2 v2.0.4
@@ -34,7 +32,7 @@ require (
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/decred/dcrd/crypto/rand v1.0.1 // indirect
-	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.0.1 // indirect
+	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.1 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
 	github.com/go-viper/mapstructure/v2 v2.4.0 // indirect
