@@ -24,7 +24,7 @@
     "@nestjs/throttler": "^6.7.1",
     "@temporalio/client": "^1.11.8",
     "@workos-inc/node": "^10.13.0",
-    "axios": "^1.7.9",
+    "axios": "^1.21.0",
     "bcrypt": "^6.0.0",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.1",
