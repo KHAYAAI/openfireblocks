@@ -245,6 +245,7 @@ Taurus](docs/COMPETITIVE-ANALYSIS.md) and
 - [Key recovery procedure](docs/deployment/KEY-RECOVERY.md) · [Disaster-recovery rebuild runbook](docs/deployment/DR-REBUILD-RUNBOOK.md) · [Off-site backups](docs/deployment/OFFSITE-BACKUPS.md)
 - [Party isolation](docs/deployment/PARTY-ISOLATION.md) · [Separate hosts](docs/deployment/SEPARATE-HOSTS.md) · [Separate-hosts playbook](docs/deployment/SEPARATE-HOSTS-PLAYBOOK.md)
 - [HSM signing over PKCS#11](docs/engineering/PKCS11-HSM-SIGNING.md) — what it does, what it can't do, how to run it
+- [Signing parties inside Nitro Enclaves](docs/engineering/NITRO-ENCLAVE-MPC-PARTY.md) — proposal: verified stack, architecture, phased plan · [Claude Code brief, Phase 0](docs/engineering/nitro/CLAUDE-CODE-BRIEF.md)
 - [tss-lib dependency review](docs/security/TSS-LIB-ADVISORY-REVIEW.md) · [Threat model](docs/security/threat-model.md) · [Audit checklist](docs/security/audit-checklist.md)
 - [API reference](docs/api.md) · [Policies (OPA)](docs/policies.md) · [Deployment](docs/deployment.md)
 - [Competitive analysis](docs/COMPETITIVE-ANALYSIS.md) · [Commercial model](docs/COMMERCIAL-MODEL.md)
