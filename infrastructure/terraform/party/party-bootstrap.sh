@@ -50,10 +50,15 @@ export VAULT_TOKEN
 for _ in $(seq 1 30); do vault status >/dev/null 2>&1 && break; sleep 2; done
 
 vault secrets enable -path=secret kv-v2
-# The party may read and write its own shares and nothing else.
+# The party may read and write its own shares and nothing else. It also
+# destroys them: retiring a share after a rotation deletes its metadata
+# (every version, RetireSealedShare), and migrating a key into enclave
+# sealing destroys the earlier clear-text versions. Without "delete" and
+# "destroy" both fail with permission denied, and the old shares stay.
 vault policy write mpc-party - <<'POLICY'
 path "secret/data/openfireblocks/mpc-party/*"     { capabilities = ["create", "read", "update"] }
-path "secret/metadata/openfireblocks/mpc-party/*" { capabilities = ["read", "list"] }
+path "secret/metadata/openfireblocks/mpc-party/*" { capabilities = ["read", "list", "delete"] }
+path "secret/destroy/openfireblocks/mpc-party/*"  { capabilities = ["update"] }
 POLICY
 PARTY_TOKEN=$(vault token create -policy=mpc-party -period=768h -orphan -format=json | jq -r .auth.client_token)
 
@@ -61,5 +66,11 @@ aws secretsmanager put-secret-value --region "$REGION" --secret-id "$SECRET_ARN"
 vault token revoke -self
 unset VAULT_TOKEN PARTY_TOKEN INIT
 
-systemctl restart ofb-party.service
-echo "Party token stored; the party is starting. Check: systemctl status ofb-party; curl -s localhost:7001/health"
+if systemctl list-unit-files ofb-enclave.service >/dev/null 2>&1 && [ -f /etc/systemd/system/ofb-enclave.service ]; then
+  # Enclave mode: the host relay reads the token; the enclave restarts after it.
+  systemctl restart ofb-party-host.service ofb-enclave.service
+  echo "Party token stored; the enclave is starting. Check: journalctl -u ofb-party-host | grep 'enclave report'; curl -s localhost:7001/health"
+else
+  systemctl restart ofb-party.service
+  echo "Party token stored; the party is starting. Check: systemctl status ofb-party; curl -s localhost:7001/health"
+fi

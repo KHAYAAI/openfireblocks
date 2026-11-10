@@ -71,3 +71,83 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+# ---------------------------------------------------------------------------
+# Enclave mode (services/mpc-party/enclave_mode.go,
+# docs/engineering/NITRO-ENCLAVE-MPC-PARTY.md). Off by default; with it off,
+# nothing below changes the host.
+# ---------------------------------------------------------------------------
+
+variable "enclave_mode" {
+  description = "Run the party in a Nitro Enclave: enclave-enabled instance, attestation-bound KMS key for the shares, host relay instead of the container."
+  type        = bool
+  default     = false
+}
+
+variable "enclave_image_pcr0s" {
+  description = "PCR0 of every enclave image this party's KMS key may release shares to. One normally; old and new during an upgrade."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition = alltrue([
+      for p in var.enclave_image_pcr0s :
+      can(regex("^[0-9a-fA-F]{96}$", p)) && lower(p) != join("", [for i in range(96) : "0"])
+    ])
+    error_message = "Each PCR0 must be 96 hex characters (SHA-384), and never all zeros: that is what a debug-mode enclave reports."
+  }
+}
+
+variable "enclave_eif_s3_uri" {
+  description = "s3://bucket/key of the enclave image file (EIF), built by infrastructure/nitro/Dockerfile.enclave and nitro-cli build-enclave."
+  type        = string
+  default     = ""
+}
+
+variable "enclave_eif_sha256" {
+  description = "SHA-256 of the EIF file. The host refuses a download that does not match, and an EIF whose PCR0 is not in enclave_image_pcr0s."
+  type        = string
+  default     = ""
+}
+
+variable "enclave_host_binary_s3_uri" {
+  description = "s3://bucket/key of the mpc-party-host binary (services/mpc-party/cmd/mpc-party-host)."
+  type        = string
+  default     = ""
+}
+
+variable "enclave_host_binary_sha256" {
+  description = "SHA-256 of the mpc-party-host binary."
+  type        = string
+  default     = ""
+}
+
+variable "enclave_cpu_count" {
+  description = "vCPUs given to the enclave. The parent keeps the rest; the instance needs at least two more than this."
+  type        = number
+  default     = 2
+}
+
+variable "enclave_memory_mib" {
+  description = "Memory given to the enclave. tss-lib pre-parameter generation is the large user."
+  type        = number
+  default     = 4096
+}
+
+variable "peer_endpoints" {
+  description = "Enclave mode: where to reach each OTHER party, by party number, as host:port (e.g. {\"2\" = \"203.0.113.7:7000\"}). The enclave dials party-N.internal; the host relays to this address."
+  type        = map(string)
+  default     = {}
+}
+
+variable "share_key_replica_region" {
+  description = "Enclave mode: region for a replica of the share key (multi-region KMS key), so losing this region does not lose the shares. Empty: no replica."
+  type        = string
+  default     = ""
+}
+
+variable "alert_email" {
+  description = "Email for alerts on changes to the share key (policy rewritten, deletion scheduled, key disabled). Needs CloudTrail management events in this account."
+  type        = string
+  default     = ""
+}

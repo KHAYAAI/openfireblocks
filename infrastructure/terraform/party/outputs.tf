@@ -30,3 +30,20 @@ output "tls_secret_arn" {
 output "vault_token_secret_arn" {
   value = module.party.vault_token_secret_arn
 }
+
+output "host_role_arn" {
+  value = module.party.host_role_arn
+}
+
+output "share_key_arn" {
+  description = "Enclave mode: bake into the image as this party's entry in ENCLAVE_KMS_KEYS."
+  value       = module.party.share_key_arn
+}
+
+output "share_key_replica_arn" {
+  value = module.party.share_key_replica_arn
+}
+
+output "share_key_alerts_topic_arn" {
+  value = module.party.share_key_alerts_topic_arn
+}

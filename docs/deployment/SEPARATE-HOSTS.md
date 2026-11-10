@@ -115,6 +115,32 @@ Then, on testnet: provision a key, sign, and run the recovery drill
 time across regions before promising anyone an SLA. Put the isolation
 check in the go-live runbook with `REQUIRE=multi-account`.
 
+## Running the parties in Nitro Enclaves
+
+The same root takes `enclave_mode = true`. It changes four things:
+1. The instance is enclave-enabled.
+2. The party runs inside a Nitro Enclave started from a measured image, instead of a container.
+3. The party's shares are sealed with a KMS key released only to that image.
+4. Alerts fire on any change to that key.
+
+The first deployment needs one extra exchange between the operators: each party's `share_key_arn`
+and PCR3, which are baked into the shared image. The procedure is under "Provisioning with Terraform"
+in [`../engineering/NITRO-ENCLAVE-MPC-PARTY.md`](../engineering/NITRO-ENCLAVE-MPC-PARTY.md). Step 5
+(`party-bootstrap.sh`) is unchanged; it restarts the enclave instead of the container.
+
+`party-bootstrap.sh` now also grants the party's Vault token `delete` on its metadata and `destroy`
+on its versions. Without them, retiring a share after a rotation fails with permission denied, and so
+does destroying the clear-text versions after a migration into enclave sealing. A party bootstrapped
+before this change needs the policy rewritten:
+
+```
+vault policy write mpc-party - <<'POLICY'
+path "secret/data/openfireblocks/mpc-party/*"     { capabilities = ["create", "read", "update"] }
+path "secret/metadata/openfireblocks/mpc-party/*" { capabilities = ["read", "list", "delete"] }
+path "secret/destroy/openfireblocks/mpc-party/*"  { capabilities = ["update"] }
+POLICY
+```
+
 ## What changed in the platform
 
 **Retiring old shares.** After a key rotation, the worker used to delete

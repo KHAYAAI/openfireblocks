@@ -58,3 +58,59 @@ variable "ceremony_authorizer_pubkey" {
     error_message = "Set ceremony_authorizer_pubkey. A party on the public internet without ceremony co-signing will sign for anything that can reach it with a valid certificate."
   }
 }
+
+# ---- enclave mode; see modules/mpc-party-host/variables.tf ----
+
+variable "enclave_mode" {
+  description = "Run this party in a Nitro Enclave (docs/engineering/NITRO-ENCLAVE-MPC-PARTY.md)."
+  type        = bool
+  default     = false
+}
+
+variable "enclave_image_pcr0s" {
+  description = "PCR0 of the enclave image(s) this party's share key may be released to."
+  type        = list(string)
+  default     = []
+}
+
+variable "enclave_eif_s3_uri" {
+  description = "s3:// location of the enclave image file."
+  type        = string
+  default     = ""
+}
+
+variable "enclave_eif_sha256" {
+  description = "SHA-256 of the enclave image file."
+  type        = string
+  default     = ""
+}
+
+variable "enclave_host_binary_s3_uri" {
+  description = "s3:// location of the mpc-party-host binary."
+  type        = string
+  default     = ""
+}
+
+variable "enclave_host_binary_sha256" {
+  description = "SHA-256 of the mpc-party-host binary."
+  type        = string
+  default     = ""
+}
+
+variable "peer_endpoints" {
+  description = "The other parties' host:port, by party number (enclave mode)."
+  type        = map(string)
+  default     = {}
+}
+
+variable "share_key_replica_region" {
+  description = "Region for a replica of the share key. Empty: no replica."
+  type        = string
+  default     = ""
+}
+
+variable "alert_email" {
+  description = "Email alerted on changes to the share key."
+  type        = string
+  default     = ""
+}

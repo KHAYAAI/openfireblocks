@@ -14,3 +14,17 @@ platform_cidrs = ["192.0.2.50/32"]
 # An ed25519 public key: 32 bytes as 64 hex characters (the party refuses secp256k1 for this key by design).
 # See docs/deployment/SEPARATE-HOSTS-PLAYBOOK.md, phase 2, for how to make one.
 ceremony_authorizer_pubkey = "<64 hex characters>"
+
+# ---- Enclave mode (docs/engineering/NITRO-ENCLAVE-MPC-PARTY.md) ----
+# The party runs in a Nitro Enclave from a measured image. Build the EIF with
+# infrastructure/nitro/Dockerfile.enclave, upload it and mpc-party-host to S3,
+# and pin both by SHA-256. The instance moves to m6i.xlarge.
+# enclave_mode               = true
+# enclave_image_pcr0s        = ["<PCR0 from nitro-cli build-enclave>"]
+# enclave_eif_s3_uri         = "s3://<bucket>/party.eif"
+# enclave_eif_sha256         = "<sha256sum party.eif>"
+# enclave_host_binary_s3_uri = "s3://<bucket>/mpc-party-host"
+# enclave_host_binary_sha256 = "<sha256sum mpc-party-host>"
+# peer_endpoints             = { "2" = "<party 2 public ip>:7000", "3" = "<party 3 public ip>:7000" }
+# share_key_replica_region   = "eu-west-1"   # a second region holding the share key
+# alert_email                = "<who is told when the share key changes>"
