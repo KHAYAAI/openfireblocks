@@ -8,10 +8,10 @@ require (
 	github.com/aws/aws-sdk-go-v2 v1.47.8
 	github.com/aws/aws-sdk-go-v2/config v1.33.17
 	github.com/aws/aws-sdk-go-v2/service/kms v1.62.5
-	github.com/bnb-chain/tss-lib/v2 v2.0.0
+	github.com/bnb-chain/tss-lib/v2 v2.0.2
 	github.com/btcsuite/btcd/btcec/v2 v2.3.4
-	github.com/btcsuite/btcutil v0.0.0-20190425235716-9e5f4b9a998d
-	github.com/decred/dcrd/dcrec/edwards/v2 v2.0.0
+	github.com/btcsuite/btcutil v1.0.2
+	github.com/decred/dcrd/dcrec/edwards/v2 v2.0.3
 	github.com/edgebitio/nitro-enclaves-sdk-go v1.0.0
 	github.com/fxamacker/cbor/v2 v2.10.0
 	github.com/gorilla/mux v1.8.1
@@ -24,7 +24,7 @@ require (
 )
 
 require (
-	github.com/agl/ed25519 v0.0.0-20170116200512-5312a6153412 // indirect
+	github.com/agl/ed25519 v0.0.0-20200225211852-fd4d107ace12 // indirect
 	github.com/aws/aws-sdk-go-v2/credentials v1.20.17 // indirect
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.20.8 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/configsources v1.5.11 // indirect
@@ -38,7 +38,8 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sts v1.51.9 // indirect
 	github.com/aws/smithy-go v1.28.8 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
-	github.com/btcsuite/btcd v0.0.0-20190629003639-c26ffa870fd8 // indirect
+	github.com/btcsuite/btcd v0.23.4 // indirect
+	github.com/btcsuite/btcd/chaincfg/chainhash v1.0.1 // indirect
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
 	github.com/cespare/xxhash/v2 v2.2.0 // indirect
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.0.1 // indirect
@@ -53,22 +54,23 @@ require (
 	github.com/hashicorp/go-secure-stdlib/strutil v0.1.2 // indirect
 	github.com/hashicorp/go-sockaddr v1.0.7 // indirect
 	github.com/hashicorp/hcl v1.0.1-vault-7 // indirect
-	github.com/ipfs/go-log v0.0.1 // indirect
-	github.com/mattn/go-colorable v0.1.14 // indirect
-	github.com/mattn/go-isatty v0.0.20 // indirect
+	github.com/ipfs/go-log v1.0.5 // indirect
+	github.com/ipfs/go-log/v2 v2.1.3 // indirect
 	github.com/matttproud/golang_protobuf_extensions/v2 v2.0.0 // indirect
 	github.com/mdlayher/socket v0.8.0 // indirect
 	github.com/mitchellh/go-homedir v1.1.0 // indirect
 	github.com/mitchellh/mapstructure v1.5.0 // indirect
-	github.com/opentracing/opentracing-go v1.1.0 // indirect
-	github.com/otiai10/primes v0.0.0-20180210170552-f6d2a1ba97c4 // indirect
+	github.com/opentracing/opentracing-go v1.2.0 // indirect
+	github.com/otiai10/primes v0.0.0-20210501021515-f1b2be525a11 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/prometheus/client_model v0.5.0 // indirect
 	github.com/prometheus/common v0.45.0 // indirect
 	github.com/prometheus/procfs v0.12.0 // indirect
 	github.com/ryanuber/go-glob v1.0.0 // indirect
-	github.com/whyrusleeping/go-logging v0.0.0-20170515211332-0457bb6b88fc // indirect
 	github.com/x448/float16 v0.8.4 // indirect
+	go.uber.org/atomic v1.7.0 // indirect
+	go.uber.org/multierr v1.6.0 // indirect
+	go.uber.org/zap v1.16.0 // indirect
 	golang.org/x/net v0.62.0 // indirect
 	golang.org/x/sync v0.24.0 // indirect
 	golang.org/x/sys v0.49.0 // indirect
