@@ -19,11 +19,19 @@
 #
 # Reproducibility: anyone rebuilding this from the same commit must get the
 # same PCR0, or the measurement proves nothing to them. Hence -trimpath,
-# -buildvcs=false, an empty build id, a scratch runtime, and no timestamps.
-# Pin both base images by digest (FROM image@sha256:...) before production;
-# a tag can move and change PCR0 under you.
+# -buildvcs=false, an empty build id, a scratch runtime, no timestamps, and
+# a base image pinned by digest: a tag moves, and a moved tag is a new PCR0
+# nobody reviewed. infrastructure/nitro/reproduce.sh builds twice and
+# compares. Updating the digest is an image upgrade (see "Upgrading the
+# enclave image" in docs/engineering/NITRO-ENCLAVE-MPC-PARTY.md).
+#
+# golang:1.26-bookworm, multi-platform index digest as of 2026-11-10. Written
+# out on both lines, not through an ARG, so Dependabot can bump them together.
+# The CA bundle the enclave uses for TLS to KMS: Debian's, from the pinned
+# image, copied before anything below can modify it.
+FROM golang:1.26-bookworm@sha256:dc40a13b61304647ed7e5d581d246b86413dfc29d63c6d018310feb93cd98fc0 AS certs
 
-FROM golang:1.26-bookworm AS build
+FROM golang:1.26-bookworm@sha256:dc40a13b61304647ed7e5d581d246b86413dfc29d63c6d018310feb93cd98fc0 AS build
 
 RUN --mount=type=secret,id=egress_ca \
     if [ -s /run/secrets/egress_ca ]; then \
@@ -41,16 +49,25 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
 # rebuilt image being refused. Written to a file so it is in the root file
 # system, not only in the image configuration.
 ARG SPIKE_MARKER=""
-RUN printf '%s' "${SPIKE_MARKER}" > /out/spike-marker
+
+# The enclave's whole file system, assembled here and copied in one step.
+# Every timestamp is set to the epoch: Docker stamps files and directories
+# with the time of the build, the EIF's ramdisk keeps those stamps, and two
+# builds of the same commit then differ in PCR0 and PCR2 although every byte
+# of every file is the same (found by reproduce.sh).
+#
+# Roots for TLS to KMS come from the certs stage: the egress CA above is
+# appended to this stage's bundle only, and must never reach the enclave.
+COPY --from=certs /etc/ssl/certs/ca-certificates.crt /rootfs/etc/ssl/certs/ca-certificates.crt
+RUN cp /out/mpc-party /rootfs/mpc-party \
+ && printf '%s' "${SPIKE_MARKER}" > /rootfs/spike-marker \
+ && chmod 0755 /rootfs/mpc-party /rootfs/etc /rootfs/etc/ssl /rootfs/etc/ssl/certs \
+ && chmod 0644 /rootfs/spike-marker /rootfs/etc/ssl/certs/ca-certificates.crt \
+ && find /rootfs -exec touch -h -d @0 {} +
 
 FROM scratch
 
-# Roots for TLS to KMS. The egress CA above is never copied: it is appended
-# to the build stage's bundle only, and this copies Debian's file from a
-# fresh layer below.
-COPY --from=golang:1.26-bookworm /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
-COPY --from=build /out/mpc-party /mpc-party
-COPY --from=build /out/spike-marker /spike-marker
+COPY --from=build /rootfs/ /
 
 # Production: the orchestrator's CA, so it can connect with its PKI
 # certificate. Without it only attested parties can connect.

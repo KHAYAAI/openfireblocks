@@ -10,6 +10,14 @@ updates:
     directory: /services/temporal-worker
     schedule: { interval: weekly }
   - package-ecosystem: gomod
+    directory: /services/mpc-party
+    schedule: { interval: weekly }
+  # The enclave image's base, pinned by digest. A bump is a new PCR0, so it
+  # is an image upgrade: merge it through the upgrade runbook, not alone.
+  - package-ecosystem: docker
+    directory: /infrastructure/nitro
+    schedule: { interval: monthly }
+  - package-ecosystem: gomod
     directory: /sdks/sdk-go
     schedule: { interval: weekly }
   - package-ecosystem: npm

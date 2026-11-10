@@ -345,6 +345,31 @@ jobs:
           pip install pyyaml
           python3 infrastructure/helm/test-chart-invariants.py
 
+  enclave-reproducible:
+    name: Enclave image rebuilds to the same PCRs
+    runs-on: ubuntu-latest
+    # Two clean builds of infrastructure/nitro/Dockerfile.enclave, each turned
+    # into an EIF and measured, must give the same PCR0/1/2. Without it, a
+    # published PCR0 cannot be checked against the source by anyone.
+    # nitro-cli is built from a pinned AWS release; no enclave hardware needed.
+    env:
+      NITRO_CLI_REF: 536dca352e130e23bb39b6227753c91ad702048d # v1.5.3
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build nitro-cli
+        run: |
+          git init -q nitro-cli-src
+          git -C nitro-cli-src fetch -q --depth 1 https://github.com/aws/aws-nitro-enclaves-cli.git "$NITRO_CLI_REF"
+          git -C nitro-cli-src checkout -q FETCH_HEAD
+          cargo build --release --manifest-path nitro-cli-src/Cargo.toml --bin nitro-cli
+      - name: Build twice and compare
+        run: |
+          sudo -E env "PATH=$PATH" \
+            NITRO_CLI="$PWD/nitro-cli-src/target/release/nitro-cli" \
+            NITRO_CLI_BLOBS="$PWD/nitro-cli-src/blobs/x86_64" \
+            WORK="$RUNNER_TEMP/repro" \
+            ./infrastructure/nitro/reproduce.sh
+
   terraform:
     name: Terraform
     runs-on: ubuntu-latest
