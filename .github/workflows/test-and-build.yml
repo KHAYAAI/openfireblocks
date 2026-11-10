@@ -137,7 +137,7 @@ jobs:
           fetch-depth: 0
 
       - name: SonarQube Scan
-        uses: sonarsource/sonarqube-scan-action@d209202bc7d53ff1cc128f7f907dac145c9d6ae9 # master as of 2026-10-12
+        uses: sonarsource/sonarqube-scan-action@e805d875275f728fac1885b413934be6d7c63f65 # master as of 2026-10-12
         env:
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
