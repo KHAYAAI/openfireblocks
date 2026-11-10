@@ -9,7 +9,7 @@ require (
 	github.com/hf/nitrite v0.0.0-20241225144000-c2d5d3c4f303
 	github.com/lib/pq v1.12.3
 	github.com/stretchr/testify v1.12.1
-	go.temporal.io/api v1.63.5
+	go.temporal.io/api v1.64.2
 	go.temporal.io/sdk v1.50.0
 	golang.org/x/crypto v0.58.0
 	google.golang.org/protobuf v1.36.11
