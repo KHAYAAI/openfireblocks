@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
@@ -62,6 +63,10 @@ type tssSigningCeremony struct {
 	localParty  tsscommon.Party
 	curve       Curve  // decides the signature encoding below
 	signature   string // hex: 65-byte [R||S||V] on secp256k1, 64-byte [R||S] on ed25519
+	// What was asked to be signed, and by which key, so an Ed25519 result is
+	// checked with crypto/ed25519 before it is reported (completeSigning).
+	message     []byte
+	groupKeyHex string
 }
 
 // StartSigning begins a threshold signing ceremony over a 32-byte message
@@ -91,6 +96,11 @@ func (m *TSSPartyManager) StartSigning(signID, keygenCeremonyID string, messageH
 		return fmt.Errorf("keygen ceremony %s has not completed (status: %s)", keygenCeremonyID, status)
 	}
 	share := keygenCeremony.saveData
+	if keygenCeremony.migrating {
+		keygenCeremony.mu.Unlock()
+		return fmt.Errorf("key %s was loaded for migration into enclave sealing and must be refreshed "+
+			"before it signs; run the migration's refresh first", keygenCeremonyID)
+	}
 
 	// The length rule is per curve, so it is checked here rather than at
 	// the top -- ECDSA signs a 32-byte digest and nothing else, while
@@ -98,8 +108,24 @@ func (m *TSSPartyManager) StartSigning(signID, keygenCeremonyID string, messageH
 	// the ECDSA rule to both would have made every Solana transaction
 	// unsignable.
 	if share.Curve == CurveSecp256k1 && len(messageHash) != 32 {
+		keygenCeremony.mu.Unlock()
 		return fmt.Errorf("a secp256k1 signature is over a 32-byte digest, got %d bytes", len(messageHash))
 	}
+	// tss-lib v2 carries the message as a big.Int and hashes m.Bytes() into
+	// the Ed25519 challenge (eddsa/signing/round_3.go), which drops leading
+	// zero bytes. A message starting with 0x00 is therefore signed as a
+	// shorter message, and every standard verifier rejects the result, while
+	// tss-lib's own check, made over the same truncated bytes, passes. About
+	// one random message in 256 hits it. Solana transaction messages never
+	// start with 0x00 (the first byte is a signer count, or 0x80 for a
+	// versioned message), so refusing costs nothing there and is correct
+	// everywhere else.
+	if share.Curve == CurveEd25519 && messageHash[0] == 0x00 {
+		keygenCeremony.mu.Unlock()
+		return fmt.Errorf("refusing an Ed25519 message that starts with a zero byte: tss-lib would sign it " +
+			"without its leading zeros, and the signature would not verify")
+	}
+	groupKey := keygenCeremony.publicKeyHex
 	fullSortedIDs := keygenCeremony.sortedIDs
 	fullPeers := keygenCeremony.peers
 	threshold := keygenCeremony.threshold
@@ -158,6 +184,8 @@ func (m *TSSPartyManager) StartSigning(signID, keygenCeremonyID string, messageH
 		selfPartyID: m.partyID,
 		committee:   committee,
 		peers:       peers,
+		message:     append([]byte(nil), messageHash...),
+		groupKeyHex: groupKey,
 	}
 	m.signMu.Lock()
 	m.signings[signID] = ceremony
@@ -329,6 +357,17 @@ func (m *TSSPartyManager) completeSigning(signID string, ceremony *tssSigningCer
 		// branch below does produces a signature of exactly the right
 		// length that fails every verification.
 		sig = encoded
+		// Checked with the standard library, over the bytes the caller asked
+		// for, before anyone is told it worked. tss-lib verifies its own
+		// output, but over its own representation of the message; a gap
+		// between the two (see StartSigning) is invisible to that check.
+		if pub, err := hex.DecodeString(ceremony.groupKeyHex); err == nil && len(pub) == ed25519.PublicKeySize {
+			if !ed25519.Verify(ed25519.PublicKey(pub), ceremony.message, sig) {
+				m.failSigning(signID, fmt.Errorf("the threshold signature does not verify with crypto/ed25519 "+
+					"against the key's public key; not reporting it"))
+				return
+			}
+		}
 	} else {
 		sig = make([]byte, 65)
 		copy(sig[32-len(r):32], r)
