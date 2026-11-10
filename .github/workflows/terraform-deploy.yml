@@ -101,7 +101,7 @@ jobs:
           terraform plan -no-color -out=tfplan
 
       - name: Comment on PR
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         if: github.event_name == 'pull_request'
         with:
           script: |
@@ -164,7 +164,7 @@ jobs:
 
       - name: Notify on Failure
         if: failure()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             github.rest.issues.createComment({
@@ -222,7 +222,7 @@ jobs:
           infracost breakdown --path . --format json > costs.json
 
       - name: Comment Cost Estimate on PR
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         if: github.event_name == 'pull_request'
         with:
           script: |
