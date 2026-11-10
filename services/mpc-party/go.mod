@@ -10,7 +10,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/kms v1.62.5
 	github.com/bnb-chain/tss-lib/v2 v2.0.0
 	github.com/btcsuite/btcd/btcec/v2 v2.3.4
-	github.com/btcsuite/btcutil v0.0.0-20190425235716-9e5f4b9a998d
+	github.com/btcsuite/btcutil v1.0.2
 	github.com/decred/dcrd/dcrec/edwards/v2 v2.0.0
 	github.com/edgebitio/nitro-enclaves-sdk-go v1.0.0
 	github.com/fxamacker/cbor/v2 v2.10.0
@@ -38,7 +38,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sts v1.51.9 // indirect
 	github.com/aws/smithy-go v1.28.8 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
-	github.com/btcsuite/btcd v0.0.0-20190629003639-c26ffa870fd8 // indirect
+	github.com/btcsuite/btcd v0.20.1-beta // indirect
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
 	github.com/cespare/xxhash/v2 v2.2.0 // indirect
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.0.1 // indirect
