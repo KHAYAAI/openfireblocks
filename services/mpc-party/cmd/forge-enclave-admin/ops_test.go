@@ -167,7 +167,9 @@ func startAttestedParty(t *testing.T, party int, attester enclave.Attester) stri
 func TestInventoryReportsImagesAndRefusals(t *testing.T) {
 	root := nitroattesttest.New()
 	v := &nitroattest.Verifier{Policy: nitroattest.Policy{ImagePCR0: []string{nitroattesttest.Hex("image")}}, Roots: root.Roots()}
-	dial := func(ctx context.Context, addr string) (net.Conn, error) { return (&net.Dialer{}).DialContext(ctx, "tcp", addr) }
+	dial := func(ctx context.Context, addr string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, "tcp", addr)
+	}
 
 	a1 := startAttestedParty(t, 1, root.Clone())
 	newImage := root.Clone()
