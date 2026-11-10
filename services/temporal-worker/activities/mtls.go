@@ -2,8 +2,11 @@ package activities
 
 import (
 	"crypto/tls"
+	"fmt"
 	"net/http"
 	"os"
+
+	"forge-crypto/temporal-worker/internal/nitroattest"
 )
 
 // Client side of mutual TLS to services/mpc-party -- see the matching
@@ -61,8 +64,30 @@ func reloader() (*clientCertReloader, bool, error) {
 // for anything long-lived -- see clientCertReloader.transport.
 func mtlsTransportFromEnv() (*http.Transport, bool, error) {
 	r, ok, err := reloader()
-	if err != nil || !ok {
+	if err != nil {
 		return nil, false, err
 	}
-	return r.transport(), true, nil
+	policyPath := os.Getenv(envPartyAttestationPolicy)
+	if !ok {
+		if policyPath != "" {
+			return nil, false, fmt.Errorf("%s is set but mTLS is not: parties in enclaves accept the orchestrator "+
+				"only with its PKI client certificate", envPartyAttestationPolicy)
+		}
+		return nil, false, nil
+	}
+	if policyPath == "" {
+		return r.transport(), true, nil
+	}
+	policy, err := nitroattest.LoadPolicy(policyPath)
+	if err != nil {
+		return nil, false, err
+	}
+	return r.attestedTransport(&nitroattest.Verifier{Policy: policy}), true, nil
 }
+
+// envPartyAttestationPolicy names the attestation policy for parties that
+// run in Nitro Enclaves (services/mpc-party/enclave_mode.go). With it set,
+// a connection to a party-N host must reach an enclave whose attestation
+// passes the policy and attests party N; connections to any other host are
+// verified against the PKI as before. Unset, nothing changes.
+const envPartyAttestationPolicy = "PARTY_ATTESTATION_POLICY_FILE"
