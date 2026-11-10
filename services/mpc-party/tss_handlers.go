@@ -133,6 +133,10 @@ func (ps *PartyServer) HandleTSSKeygenStart(w http.ResponseWriter, r *http.Reque
 		}
 		peers[id] = url
 	}
+	if err := checkEnclavePeers(peers); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
 
 	// Defaulted to secp256k1 when absent, for the orchestrator that
 	// predates the field. Every key generated before curves existed is
@@ -379,6 +383,10 @@ func (ps *PartyServer) HandleTSSReshareStart(w http.ResponseWriter, r *http.Requ
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": err.Error()})
 		return
 	}
+	if err := checkEnclavePeers(req.Peers); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
 	if err := ps.tssManager.StartResharing(req.ReshareID, req.SourceCeremonyID, req.Peers); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
@@ -456,6 +464,10 @@ func (ps *PartyServer) HandleTSSRestore(w http.ResponseWriter, r *http.Request) 
 		req.Authorization, req.AuthorizationSignature); err != nil {
 		log.Printf("refused restore of %s: %v", req.CeremonyID, err)
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": err.Error()})
+		return
+	}
+	if err := checkEnclavePeers(req.Peers); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
 	if err := ps.tssManager.RestoreCeremony(req.CeremonyID, req.Peers); err != nil {

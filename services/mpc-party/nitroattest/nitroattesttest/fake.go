@@ -168,3 +168,15 @@ func nilIfEmpty(b []byte) []byte {
 	}
 	return b
 }
+
+// Clone returns a fake that shares this one's root, with its own copy of the
+// PCRs: another enclave on another instance, under the same (fake) AWS root.
+func (f *FakeNSM) Clone() *FakeNSM {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	c := &FakeNSM{rootKey: f.rootKey, root: f.root, ModuleID: f.ModuleID, PCRs: map[uint][]byte{}, Now: f.Now}
+	for k, v := range f.PCRs {
+		c.PCRs[k] = append([]byte(nil), v...)
+	}
+	return c
+}

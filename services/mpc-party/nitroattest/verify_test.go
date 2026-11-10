@@ -232,7 +232,10 @@ func TestVerifyCertificate(t *testing.T) {
 	mustRefuse(t, func() error { _, e := v.VerifyCertificate(plain); return e }(), "no attestation document")
 
 	expired := &nitroattest.Verifier{Policy: policy(), Roots: nsm.Roots(), Now: func() time.Time { return time.Now().Add(2 * time.Hour) }}
-	mustRefuse(t, func() error { _, e := expired.VerifyCertificate(certFor(t, nsm, "party-1.internal", 1, false)); return e }(), "validity period")
+	mustRefuse(t, func() error {
+		_, e := expired.VerifyCertificate(certFor(t, nsm, "party-1.internal", 1, false))
+		return e
+	}(), "validity period")
 }
 
 func TestPartyFromName(t *testing.T) {

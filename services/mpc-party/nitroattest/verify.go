@@ -324,3 +324,21 @@ func matchAny(name string, got []byte, allowed []string) error {
 	sort.Strings(sorted)
 	return refuse("%s is %s, which the policy does not allow (allowed: %s)", name, hex.EncodeToString(got), strings.Join(sorted, ", "))
 }
+
+// ReadMeasurements verifies a document's signature chain (and nothing else)
+// and returns its PCRs. An enclave uses it on a document about itself, to
+// learn the image measurement it then requires of its peers: every party runs
+// the same image, so "my peers must run what I run" needs no hash in the
+// image, which could not contain its own hash anyway.
+func ReadMeasurements(doc []byte, roots *x509.CertPool) (pcrs map[uint][]byte, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			pcrs, err = nil, refuse("malformed attestation document (%v)", r)
+		}
+	}()
+	res, verr := nitrite.Verify(doc, nitrite.VerifyOptions{Roots: roots})
+	if verr != nil || res == nil || res.Document == nil || !res.SignatureOK {
+		return nil, refuse("own attestation document does not verify: %v", verr)
+	}
+	return res.Document.PCRs, nil
+}

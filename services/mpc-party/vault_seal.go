@@ -3,10 +3,13 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
 
 	tsskeygen "github.com/bnb-chain/tss-lib/v2/ecdsa/keygen"
 	vault "github.com/hashicorp/vault/api"
+	"openfireblocks.com/services/mpc-party/enclave"
 )
 
 // vault_seal.go seals this party's DKG key share -- the actual private
@@ -82,6 +85,11 @@ func SealKeyShare(ctx context.Context, getenv func(string) string, partyID int, 
 // SealKeyShareWithContext seals the share and the context needed to use it.
 func SealKeyShareWithContext(ctx context.Context, getenv func(string) string, partyID int, ceremonyID string, share *KeyShare, cc *CeremonyContext) (bool, error) {
 	cfg, configured := vaultShareConfigFromEnv(getenv, partyID, ceremonyID)
+	if _, enclaveSealed := sealerFor(partyID); enclaveSealed && !configured {
+		// An enclave has no disk: a share not in Vault is gone at the next
+		// restart, so a ceremony must fail rather than report success.
+		return false, errors.New("enclave mode: VAULT_ADDR is not set, and an enclave cannot keep a share anywhere else")
+	}
 	if !configured {
 		// No Vault: an encrypted file store, if one is configured (see
 		// file_seal.go). Neither configured is still "not sealed, not an error".
@@ -94,7 +102,7 @@ func SealKeyShareWithContext(ctx context.Context, getenv func(string) string, pa
 		return false, nil
 	}
 
-	client, err := vault.NewClient(&vault.Config{Address: cfg.addr})
+	client, err := newVaultClient(cfg.addr)
 	if err != nil {
 		return false, fmt.Errorf("vault client: %w", err)
 	}
@@ -124,6 +132,29 @@ func SealKeyShareWithContext(ctx context.Context, getenv func(string) string, pa
 			return false, fmt.Errorf("marshal ceremony context: %w", err)
 		}
 		payload["ceremony_context"] = string(ccRaw)
+	}
+	if sealer, ok := sealerFor(partyID); ok {
+		// Enclave mode: Vault receives only the KMS envelope. The share and
+		// its context are inside it; the curve stays outside for operators.
+		p := sealedPayload{PartyID: partyID, CeremonyID: ceremonyID, SaveData: string(raw)}
+		if s, ok := payload["ceremony_context"].(string); ok {
+			p.CeremonyContext = s
+		}
+		plain, err := json.Marshal(p)
+		if err != nil {
+			return false, err
+		}
+		env, err := sealer.Seal(ctx, plain, enclave.ShareContext(partyID, ceremonyID))
+		clear(plain)
+		if err != nil {
+			return false, fmt.Errorf("sealing the key share with KMS: %w", err)
+		}
+		payload = map[string]interface{}{
+			"party_id":         partyID,
+			"ceremony_id":      ceremonyID,
+			"curve":            string(share.Curve),
+			"enclave_envelope": string(env),
+		}
 	}
 
 	kv := client.KVv2(cfg.mount)
@@ -159,7 +190,7 @@ func LoadKeyShare(ctx context.Context, getenv func(string) string, partyID int, 
 		return nil, fmt.Errorf("VAULT_ADDR not set; sealing is not configured")
 	}
 
-	client, err := vault.NewClient(&vault.Config{Address: cfg.addr})
+	client, err := newVaultClient(cfg.addr)
 	if err != nil {
 		return nil, fmt.Errorf("vault client: %w", err)
 	}
@@ -176,6 +207,15 @@ func LoadKeyShare(ctx context.Context, getenv func(string) string, partyID int, 
 		return nil, fmt.Errorf("no sealed key share found at %s", cfg.keyPath)
 	}
 
+	if share, _, handled, err := openEnclaveEntry(ctx, partyID, ceremonyID, cfg.keyPath, secret.Data); handled {
+		if err != nil {
+			return nil, err
+		}
+		if share.Curve != CurveSecp256k1 || share.ECDSA == nil {
+			return nil, fmt.Errorf("the share at %s is a %s share; LoadKeyShare returns secp256k1 save-data only", cfg.keyPath, share.Curve)
+		}
+		return share.ECDSA, nil
+	}
 	raw, ok := secret.Data["save_data"].(string)
 	if !ok || raw == "" {
 		return nil, fmt.Errorf("sealed key share at %s is malformed", cfg.keyPath)
@@ -221,7 +261,7 @@ func LoadSealedShare(ctx context.Context, getenv func(string) string, partyID in
 		return nil, nil, fmt.Errorf("neither VAULT_ADDR nor SHARE_STORE_DIR is set; there is nothing sealed to restore from")
 	}
 
-	client, err := vault.NewClient(&vault.Config{Address: cfg.addr})
+	client, err := newVaultClient(cfg.addr)
 	if err != nil {
 		return nil, nil, fmt.Errorf("vault client: %w", err)
 	}
@@ -237,6 +277,9 @@ func LoadSealedShare(ctx context.Context, getenv func(string) string, partyID in
 		return nil, nil, fmt.Errorf("no sealed key share at %s", cfg.keyPath)
 	}
 
+	if share, cc, handled, err := openEnclaveEntry(ctx, partyID, ceremonyID, cfg.keyPath, secret.Data); handled {
+		return share, cc, err
+	}
 	raw, ok := secret.Data["save_data"].(string)
 	if !ok || raw == "" {
 		return nil, nil, fmt.Errorf("the sealed share at %s is malformed", cfg.keyPath)
@@ -282,7 +325,7 @@ func RetireSealedShare(ctx context.Context, getenv func(string) string, partyID 
 		}
 		return false, nil
 	}
-	client, err := vault.NewClient(&vault.Config{Address: cfg.addr})
+	client, err := newVaultClient(cfg.addr)
 	if err != nil {
 		return false, fmt.Errorf("vault client: %w", err)
 	}
@@ -293,4 +336,60 @@ func RetireSealedShare(ctx context.Context, getenv func(string) string, partyID 
 		return false, fmt.Errorf("vault destroy %s: %w", cfg.keyPath, err)
 	}
 	return true, nil
+}
+
+// newVaultClient builds a Vault client. In enclave mode it dials through the
+// egress map and trusts the CA the host supplied.
+func newVaultClient(addr string) (*vault.Client, error) {
+	enclaveMu.RLock()
+	ev := enclaveVault
+	enclaveMu.RUnlock()
+	if ev == nil || !ev.active {
+		return vault.NewClient(&vault.Config{Address: addr})
+	}
+	cfg := vault.DefaultConfig()
+	if cfg.Error != nil {
+		return nil, cfg.Error
+	}
+	cfg.Address = addr
+	if len(ev.caPEM) > 0 {
+		if err := cfg.ConfigureTLS(&vault.TLSConfig{CACertBytes: ev.caPEM}); err != nil {
+			return nil, err
+		}
+	}
+	tr, ok := cfg.HttpClient.Transport.(*http.Transport)
+	if !ok {
+		return nil, errors.New("enclave mode: unexpected Vault transport")
+	}
+	tr.DialContext = ev.dial
+	return vault.NewClient(cfg)
+}
+
+// openEnclaveEntry handles a Vault entry in enclave mode, or one written by
+// an enclave. handled is false only for an ordinary entry read outside
+// enclave mode.
+func openEnclaveEntry(ctx context.Context, partyID int, ceremonyID, keyPath string, data map[string]interface{}) (*KeyShare, *CeremonyContext, bool, error) {
+	envStr, hasEnvelope := data["enclave_envelope"].(string)
+	sealer, enclaveMode := sealerFor(partyID)
+	switch {
+	case !hasEnvelope && !enclaveMode:
+		return nil, nil, false, nil
+	case !hasEnvelope:
+		return nil, nil, true, fmt.Errorf("the share at %s was not sealed by an enclave; enclave mode refuses a share "+
+			"that has sat in Vault in the clear. Move it in with a refresh ceremony instead", keyPath)
+	case !enclaveMode:
+		return nil, nil, true, fmt.Errorf("the share at %s was sealed by an enclave; only an enclave running the "+
+			"image the KMS key policy names can open it", keyPath)
+	}
+	plain, err := sealer.Open(ctx, []byte(envStr), enclave.ShareContext(partyID, ceremonyID))
+	if err != nil {
+		return nil, nil, true, fmt.Errorf("opening the share at %s: %w", keyPath, err)
+	}
+	defer clear(plain)
+	var p sealedPayload
+	if err := json.Unmarshal(plain, &p); err != nil || p.PartyID != partyID || p.CeremonyID != ceremonyID {
+		return nil, nil, true, fmt.Errorf("the enclave envelope at %s is malformed", keyPath)
+	}
+	share, cc, err := decodeSealedPayload(p, keyPath)
+	return share, cc, true, err
 }

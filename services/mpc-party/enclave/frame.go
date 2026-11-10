@@ -33,6 +33,8 @@ const (
 	FrameCredentialsRequest  byte = 3
 	FrameCredentialsResponse byte = 4
 	FrameError               byte = 5
+	FrameConfigRequest       byte = 6
+	FrameConfigResponse      byte = 7
 )
 
 // MaxFrame is the largest payload a frame may carry.
@@ -41,6 +43,7 @@ const MaxFrame = 16 << 20
 var knownFrames = map[byte]bool{
 	FramePing: true, FramePong: true, FrameCredentialsRequest: true,
 	FrameCredentialsResponse: true, FrameError: true,
+	FrameConfigRequest: true, FrameConfigResponse: true,
 }
 
 // ErrFrameTooLarge is returned for a frame over MaxFrame, in either direction.

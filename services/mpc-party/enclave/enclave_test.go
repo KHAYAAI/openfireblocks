@@ -390,7 +390,7 @@ func TestCredentialForwarding(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	exp := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
-	go ServeCredentials(ctx, ln, staticCreds{c: aws.Credentials{AccessKeyID: "AKIA", SecretAccessKey: "s", SessionToken: "t", CanExpire: true, Expires: exp}}, t.Logf)
+	go (&Control{Credentials: staticCreds{c: aws.Credentials{AccessKeyID: "AKIA", SecretAccessKey: "s", SessionToken: "t", CanExpire: true, Expires: exp}}, Logf: t.Logf}).Serve(ctx, ln)
 	h := HostCredentials{Dial: func(ctx context.Context) (net.Conn, error) { return net.Dial("tcp", ln.Addr().String()) }}
 	c, err := h.Retrieve(context.Background())
 	if err != nil {
@@ -401,7 +401,7 @@ func TestCredentialForwarding(t *testing.T) {
 	}
 
 	ln2, _ := net.Listen("tcp", "127.0.0.1:0")
-	go ServeCredentials(ctx, ln2, staticCreds{err: errors.New("imds down")}, t.Logf)
+	go (&Control{Credentials: staticCreds{err: errors.New("imds down")}, Logf: t.Logf}).Serve(ctx, ln2)
 	h2 := HostCredentials{Dial: func(ctx context.Context) (net.Conn, error) { return net.Dial("tcp", ln2.Addr().String()) }}
 	if _, err := h2.Retrieve(context.Background()); err == nil || !strings.Contains(err.Error(), "could not obtain") {
 		t.Fatalf("expected host error, got %v", err)
@@ -444,4 +444,39 @@ func leaf(t *testing.T, ca *x509.Certificate, caKey *ecdsa.PrivateKey, cn string
 		t.Fatal(err)
 	}
 	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}
+}
+
+func TestRuntimeConfig(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ln, _ := net.Listen("tcp", "127.0.0.1:0")
+	go (&Control{Config: map[string]string{"PARTY_ID": "2", "VAULT_ADDR": "https://vault.internal:8200"}}).Serve(ctx, ln)
+	dial := func(ctx context.Context) (net.Conn, error) { return net.Dial("tcp", ln.Addr().String()) }
+	if err := Ping(ctx, dial); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := FetchRuntimeConfig(ctx, dial)
+	if err != nil || cfg["PARTY_ID"] != "2" {
+		t.Fatalf("config %v %v", cfg, err)
+	}
+	// The enclave refuses a host that tries to set measured settings.
+	for _, k := range []string{"ENCLAVE_KMS_KEYS", "CEREMONY_AUTHORIZER_PUBKEY", "ENCLAVE_PARTY_PCR3", "TSS_ALLOW_UNAUTHENTICATED_PEERS", "ENCLAVE_ORCHESTRATOR_CA_PEM"} {
+		if _, err := ParseRuntimeConfig([]byte(`{"PARTY_ID":"1","` + k + `":"x"}`)); err == nil || !strings.Contains(err.Error(), k) {
+			t.Errorf("%s accepted from the host: %v", k, err)
+		}
+	}
+	ln2, _ := net.Listen("tcp", "127.0.0.1:0")
+	go func() {
+		c, _ := ln2.Accept()
+		_, _, _ = ReadFrame(c)
+		_ = WriteFrame(c, FrameConfigResponse, []byte(`{"PARTY_ID":"1","CEREMONY_AUTHORIZER_PUBKEY":"attacker"}`))
+		c.Close()
+	}()
+	if _, err := FetchRuntimeConfig(ctx, func(ctx context.Context) (net.Conn, error) { return net.Dial("tcp", ln2.Addr().String()) }); err == nil {
+		t.Fatal("a hostile host set the co-signer key")
+	}
+	// A host-side Control refuses to start with a measured key in its config.
+	if err := (&Control{Config: map[string]string{"ENCLAVE_KMS_KEYS": "x"}}).Serve(ctx, ln2); err == nil {
+		t.Fatal("host control accepted a measured key")
+	}
 }
