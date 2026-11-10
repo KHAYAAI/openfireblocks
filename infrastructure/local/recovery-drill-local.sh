@@ -247,7 +247,11 @@ sign_once() {
 
 # A distinct message per phase, so a cached or replayed signature cannot
 # stand in for a fresh one.
-BASELINE_MSG=$(printf 'baseline-%s' "$(date +%s%N)" | sha256sum | cut -d' ' -f1)
+# Each message starts with 0x01. tss-lib drops leading zero bytes of an
+# Ed25519 message, so the parties refuse one that starts with 0x00
+# (tss_signing.go); a random digest does about one time in 256, and this
+# drill used to fail on exactly those runs.
+BASELINE_MSG=$(printf 'baseline-%s' "$(date +%s%N)" | sha256sum | cut -c3-64 | sed "s/^/01/")
 echo "==> baseline signature, before anything is destroyed"
 BASELINE_SIG=$(sign_once baseline "${BASELINE_MSG}") || fail "the key could not sign before the drill started"
 
@@ -289,7 +293,7 @@ for id in $(seq 1 "${PARTY_COUNT}"); do
     || fail "party ${id} still knows the ceremony (HTTP ${code}); nothing was destroyed and this drill proves nothing"
 done
 
-LOST_MSG=$(printf 'post-kill-%s' "$(date +%s%N)" | sha256sum | cut -d' ' -f1)
+LOST_MSG=$(printf 'post-kill-%s' "$(date +%s%N)" | sha256sum | cut -c3-64 | sed "s/^/01/")
 if sign_once post-kill "${LOST_MSG}" >/dev/null 2>&1; then
   fail "the key signed after every party was killed; state survived that should not have"
 fi
@@ -316,7 +320,7 @@ done
 # ---------------------------------------------------------------------------
 
 echo "==> signing with the restored committee"
-RESTORED_MSG=$(printf 'post-restore-%s' "$(date +%s%N)" | sha256sum | cut -d' ' -f1)
+RESTORED_MSG=$(printf 'post-restore-%s' "$(date +%s%N)" | sha256sum | cut -c3-64 | sed "s/^/01/")
 RESTORED_SIG=$(sign_once post-restore "${RESTORED_MSG}") \
   || fail "the restored committee could not sign"
 
