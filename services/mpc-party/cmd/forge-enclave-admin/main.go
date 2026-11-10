@@ -232,11 +232,44 @@ func loadAuths(keyFile, authFile, ceremony string) (map[string]signedAuth, error
 	return nil, errors.New("give -authorizer-key-file or -authorizations")
 }
 
+const usage = `usage: forge-enclave-admin <command> [flags]
+
+  migrate          move a pre-enclave key into enclave sealing
+  inventory        show which image each party runs, and whether the policy accepts it
+  kms-policy       render a party's KMS key policy for one or more images
+  recovery-keygen  make a break-glass recovery key pair (run offline)
+  recover          open a share's recovery envelope (run offline, break-glass only)
+
+Run a command with -h for its flags.`
+
 func main() {
-	if len(os.Args) < 2 || os.Args[1] != "migrate" {
-		fmt.Fprintln(os.Stderr, "usage: forge-enclave-admin migrate -ceremony C -policy policy.json -cert C -key K ...")
+	if len(os.Args) < 2 {
+		fmt.Fprintln(os.Stderr, usage)
 		os.Exit(2)
 	}
+	var err error
+	switch os.Args[1] {
+	case "migrate":
+		mainMigrate(os.Args[2:])
+		return
+	case "inventory":
+		err = mainInventory(os.Args[2:], os.Stdout)
+	case "kms-policy":
+		err = mainKMSPolicy(os.Args[2:], os.Stdout)
+	case "recovery-keygen":
+		err = mainRecoveryKeygen(os.Args[2:], os.Stdout)
+	case "recover":
+		err = mainRecover(os.Args[2:], os.Stdout)
+	default:
+		fmt.Fprintln(os.Stderr, usage)
+		os.Exit(2)
+	}
+	if err != nil {
+		fatal(err)
+	}
+}
+
+func mainMigrate(args []string) {
 	fs := flag.NewFlagSet("migrate", flag.ExitOnError)
 	ceremony := fs.String("ceremony", "", "ceremony id of the key to migrate")
 	policyFile := fs.String("policy", "", "attestation policy (nitroattest JSON)")
@@ -248,7 +281,7 @@ func main() {
 	authKey := fs.String("authorizer-key-file", "", "co-signer ed25519 seed (hex), rehearsal only")
 	authFile := fs.String("authorizations", "", "pre-signed authorisations (JSON)")
 	timeout := fs.Duration("timeout", 10*time.Minute, "how long to wait for the refresh")
-	_ = fs.Parse(os.Args[2:])
+	_ = fs.Parse(args)
 	if *ceremony == "" || *policyFile == "" || *certFile == "" || *keyFile == "" {
 		fs.Usage()
 		os.Exit(2)
@@ -257,11 +290,8 @@ func main() {
 	if err != nil {
 		fatal(err)
 	}
-	cert, err := tls.LoadX509KeyPair(*certFile, *keyFile)
+	cert, err := loadClientCert(*certFile, *keyFile)
 	if err != nil {
-		fatal(err)
-	}
-	if cert.Leaf, err = x509.ParseCertificate(cert.Certificate[0]); err != nil {
 		fatal(err)
 	}
 	auths, err := loadAuths(*authKey, *authFile, *ceremony)
@@ -270,7 +300,7 @@ func main() {
 	}
 	v := &nitroattest.Verifier{Policy: policy}
 	client := &http.Client{Timeout: 30 * time.Second, Transport: &http.Transport{
-		TLSClientConfig: v.ClientTLSConfig(func(*tls.CertificateRequestInfo) (*tls.Certificate, error) { return &cert, nil }),
+		TLSClientConfig: v.ClientTLSConfig(func(*tls.CertificateRequestInfo) (*tls.Certificate, error) { return cert, nil }),
 	}}
 	err = migrate(context.Background(), migrateOptions{
 		ceremony: *ceremony, parties: *parties, domain: *domain, port: *port, scheme: "https",
@@ -284,4 +314,15 @@ func main() {
 func fatal(err error) {
 	fmt.Fprintln(os.Stderr, "forge-enclave-admin:", err)
 	os.Exit(1)
+}
+
+func loadClientCert(certFile, keyFile string) (*tls.Certificate, error) {
+	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+	if err != nil {
+		return nil, err
+	}
+	if cert.Leaf, err = x509.ParseCertificate(cert.Certificate[0]); err != nil {
+		return nil, err
+	}
+	return &cert, nil
 }

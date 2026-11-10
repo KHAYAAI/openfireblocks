@@ -107,9 +107,8 @@ balances. It complements separate hosts; it does not replace them.
   its shares and destroys the clear-text copies Vault holds. Old shares of the same key still
   reconstruct it, so anyone who already copied threshold-many of them still holds the key. These copies
   could come from Vault, a backup or a host's memory.
-- **There is no image rollout or break-glass recovery tooling yet.** `ENCLAVE_EXTRA_IMAGE_PCR0` and a
-  multi-value KMS condition allow two images at once. The procedure around them, a multi-region key,
-  and recovery-key holders opening shares without the image are not built.
+- **An image upgrade pauses signing.** Old and new images cannot run side by side (see Upgrading), so
+  every party switches together.
 - **It is not deployed by Helm or Terraform.** Enclaves run on EC2, not in the Kubernetes pods the chart
   deploys. Instance, role and key provisioning are manual (see `spike.sh`).
 
@@ -185,6 +184,101 @@ Tested by `TestMigrateALegacyKeyIntoEnclaveSealing`:
 `TestMigrateLegacyNeedsItsOwnAuthorisation` checks that a `restore` authorisation does not authorise a
 migration.
 
+## Upgrading the enclave image
+
+A new image has a new PCR0. Three things check PCR0, and all three must accept the new image before
+any party runs it:
+
+1. each party's KMS key policy;
+2. the parties themselves, since each requires its peers to run its own image or one listed in
+   `ENCLAVE_EXTRA_IMAGE_PCR0`;
+3. the orchestrator's `PARTY_ATTESTATION_POLICY_FILE`.
+
+Shares do not need re-sealing. The KMS envelope is not bound to an image, only the key policy is, so
+the new image opens the old envelopes once the policy lists it.
+
+1. **Build and measure.** Build the new image from the reviewed commit with the same build arguments,
+   plus `ENCLAVE_EXTRA_IMAGE_PCR0=<old PCR0>`, so new parties accept old ones. Run
+   `nitro-cli build-enclave` and record the new PCR0. Have a second person rebuild it and compare.
+2. **Allow both images in KMS.** For each party:
+
+   ```
+   forge-enclave-admin kms-policy -account <id> -role <role ARN> -party N -pcr0 <old>,<new> > p.json
+   aws kms put-key-policy --key-id <key> --policy-name default --policy file://p.json
+   ```
+
+3. **Allow both images in the orchestrator.** Add the new PCR0 to `image_pcr0` in its policy file and
+   restart it.
+4. **Switch all parties together.** An old image does not list the new one, so old and new parties
+   refuse each other. A rolling restart would leave no quorum that can sign. Stop every party, start
+   every party on the new EIF, and restore the keys (`restore-all-keys.sh` or the orchestrator's
+   restore). Signing pauses for the length of the switch.
+5. **Check.** Run:
+
+   ```
+   forge-enclave-admin inventory -policy <orchestrator policy> -cert ... -key ... -parties 3
+   ```
+
+   It shows each party's attested image and IAM role. It fails if any party is refused, or if the
+   parties run different images (`-allow-mixed` relaxes the second check). Then sign one test
+   transaction.
+6. **Remove the old image.** Render the KMS policies with the new PCR0 only and put them. Remove the
+   old PCR0 from the orchestrator's policy. The next build drops `ENCLAVE_EXTRA_IMAGE_PCR0`.
+
+To roll back, before step 6: start the old EIF on every party. Both images are still allowed
+everywhere.
+
+## Break-glass recovery
+
+With enclave sealing, a share opens only in an enclave the party's KMS key accepts. Losing the KMS key
+loses the share, whether it was deleted, its region was lost, the account was closed, or AWS is
+unavailable to you. A multi-region key and deletion protection make that unlikely (see the Terraform
+item). The break-glass path makes it survivable without the vendor or the cloud.
+
+**Setup, on day one.**
+1. For each party, an officer of that party runs
+   `forge-enclave-admin recovery-keygen -out party-N.key` on an offline machine. Each party's officer
+   must be a different person.
+2. The officers keep the private key offline, for example on paper and an encrypted USB stick in a safe.
+3. They hand over the printed public key.
+4. Bake the public keys into the image: `ENCLAVE_RECOVERY_PUBKEYS=1=<hex>,2=<hex>,3=<hex>` and
+   `ENCLAVE_REQUIRE_RECOVERY=1`. They are measured like everything else, so the host cannot swap in a
+   key of its own.
+
+Each party then stores two encryptions of its share in Vault:
+- the KMS envelope;
+- a recovery envelope, encrypted with HPKE (RFC 9180) to its officer's key, using ML-KEM-768 + X25519
+  (post-quantum hybrid), HKDF-SHA256 and AES-256-GCM, and bound to the party and ceremony.
+
+Without recovery keys, enclave mode starts but reports a warning to the host log on every start.
+
+**Recovery**, when KMS is gone. This follows `docs/deployment/KEY-RECOVERY.md`, with one extra step:
+1. Restore Vault from your own backup.
+2. Each party's officer runs, on an air-gapped machine:
+
+   ```
+   vault kv get -format=json secret/openfireblocks/mpc-party/party-N/<ceremony> > entry.json
+   forge-enclave-admin recover -key party-N.key -in entry.json -party N -ceremony <ceremony> -out share.json
+   ```
+
+3. `share.json` is the pre-enclave Vault format. Write it back with `vault kv put` into a deployment
+   without enclave mode, and restore and sign there (KEY-RECOVERY.md Route A). Or reconstruct offline
+   (Route B).
+4. Afterwards, generate a new key and move the funds to it. A key whose shares were in the clear
+   outside an enclave should not stay in service.
+
+Threshold-many recovery keys together reconstruct the key. That is the point, and the reason they must
+be held by different people, as Vault unseal shares were before.
+
+Tested by `TestBreakGlassRecoveryWithoutKMS`:
+1. Three simulated enclaves make a key with escrow.
+2. Each recovery envelope opens only with its own party's officer key.
+3. The recovered entries go into a new Vault on ordinary parties, with no enclave or KMS involved.
+4. The key signs, and the signature verifies against the original public key.
+
+`TestStartEnclaveRecoveryKeys` covers the warning, and the refusal when a key is required but missing
+or malformed.
+
 ## Configuring a party
 
 Baked into the image (build arguments to `infrastructure/nitro/Dockerfile.enclave`):
@@ -196,6 +290,7 @@ Baked into the image (build arguments to `infrastructure/nitro/Dockerfile.enclav
 | `ENCLAVE_REQUIRE_PARTY_PIN` | `1` (default); `0` only for the spike |
 | `ENCLAVE_EXTRA_IMAGE_PCR0` | Additional images peers may run, during a rollout |
 | `CEREMONY_AUTHORIZER_PUBKEY` | Required |
+| `ENCLAVE_RECOVERY_PUBKEYS`, `ENCLAVE_REQUIRE_RECOVERY` | Break-glass recovery keys, one per party; set the second to `1` in production |
 | `ENCLAVE_ORCHESTRATOR_CA_FILE` | The orchestrator's CA, copied into the image |
 
 From the host (`HOST_RUNTIME_CONFIG`, a JSON file): `PARTY_ID`, `ENCLAVE_EGRESS`
@@ -233,8 +328,8 @@ party's encryption context. It denies all cryptographic use without attestation 
 | Run `spike.sh` on hardware; commit the evidence | 1 day (you, on AWS) |
 | Pin base images by digest; check EIF reproducibility | 1–2 days |
 | ~~Migration of existing shares by refresh ceremony into enclave sealing~~ | Done (see above) |
-| Image rollout procedure; multi-region key; break-glass recovery with recovery-key holders | 2–3 weeks |
-| EC2 and KMS provisioning in Terraform for the three-account layout | 1 week |
+| ~~Image upgrade procedure; break-glass recovery with recovery-key holders~~ | Done (see above) |
+| EC2 and KMS provisioning in Terraform for the three-account layout, with a multi-region key and deletion protection | 1 week |
 | Independent review of this design | external |
 
 ## Sources

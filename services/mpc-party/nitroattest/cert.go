@@ -27,6 +27,13 @@ func HasAttestation(cert *x509.Certificate) bool {
 	return ok
 }
 
+// AttestationDocument returns the raw attestation document a certificate
+// carries, unverified. For inventory and diagnostics; trust decisions use
+// VerifyCertificate.
+func AttestationDocument(cert *x509.Certificate) ([]byte, bool) {
+	return attestationExtension(cert)
+}
+
 func attestationExtension(cert *x509.Certificate) ([]byte, bool) {
 	for _, ext := range cert.Extensions {
 		if ext.Id.Equal(OIDAttestationExtension) {

@@ -47,9 +47,10 @@ one of the deployment, not on the day you need it.
 | **A copy of the source at the deployed version** | Your own git remote or an escrow agent | ELv2 grants you this. Exercise it |
 | **The chart values you deployed with** | Configuration management | Party count, threshold, chain ids, token registry |
 | **The key inventory** | Postgres backup, or exported | Which key ids exist, their addresses, their chains |
+| **Enclave recovery keys** (enclave mode only) | One per party, each with a different officer, offline | Without them, an enclave-sealed share dies with its KMS key |
 
 **None of these come from the vendor.** That is the point. Check annually
-that you still hold all five and that the people who hold the unseal keys
+that you still hold all of them and that the people who hold the unseal keys
 still work there.
 
 ## 3. The procedure
@@ -102,6 +103,20 @@ key (section 4) while the parties are still running — a refresh re-seals
 every share with its context — and take a fresh backup afterwards. Do that
 before you need it, because a refresh needs a working committee and a
 recovery is what you have instead of one.
+
+**If the parties ran in Nitro Enclaves**, each entry holds `enclave_envelope` and
+`recovery_envelope` instead of `save_data`. Only an enclave the party's KMS key accepts can open the
+first. If KMS is gone, open the second with that party's offline recovery key:
+
+```bash
+forge-enclave-admin recover -key party-1.key -in entry.json -party 1 \
+  -ceremony "$CEREMONY_ID" -out share.json
+```
+
+`share.json` holds `save_data` and `ceremony_context` in the format above, and Steps 3 and 4 apply
+unchanged. See "Break-glass recovery" in
+[`../engineering/NITRO-ENCLAVE-MPC-PARTY.md`](../engineering/NITRO-ENCLAVE-MPC-PARTY.md). An entry with
+no `recovery_envelope` was sealed without a recovery key, and recovery for it ends here.
 
 ### Step 3 — reconstruct, or re-sign
 
@@ -245,5 +260,5 @@ That is the argument self-hosting lets you make and a SaaS custodian
 cannot.
 
 **Rehearse it annually.** An untested recovery procedure is a document, not
-a control, and the first time you find out which of section 2's five
-artefacts you are missing should not be the day you need all five.
+a control, and the first time you find out which of section 2's
+artefacts you are missing should not be the day you need all of them.
