@@ -26,6 +26,9 @@ terraform {
     aws = {
       source  = "hashicorp/aws"
       version = "~> 5.0"
+      # aws.replica: where the share key's replica lives (enclave mode).
+      # Pass the default provider when there is no replica.
+      configuration_aliases = [aws.replica]
     }
   }
 }
@@ -292,10 +295,15 @@ resource "aws_iam_instance_profile" "host" {
 
 resource "aws_instance" "party" {
   ami                    = data.aws_ssm_parameter.al2023.value
-  instance_type          = var.instance_type
+  instance_type          = local.instance_type
   subnet_id              = aws_subnet.public.id
   vpc_security_group_ids = [aws_security_group.party.id]
   iam_instance_profile   = aws_iam_instance_profile.host.name
+
+  # Nitro Enclaves are enabled at launch and cannot be switched on later.
+  enclave_options {
+    enabled = var.enclave_mode
+  }
 
   # IMDSv2 only, one hop: a container on the host cannot reach the
   # instance credentials through a forwarded request.
@@ -313,7 +321,7 @@ resource "aws_instance" "party" {
   }
 
   user_data_replace_on_change = true
-  user_data = templatefile("${path.module}/user_data.sh.tftpl", {
+  user_data = var.enclave_mode ? local.enclave_user_data : templatefile("${path.module}/user_data.sh.tftpl", {
     party_id                   = var.party_id
     party_image                = var.party_image
     vault_image                = var.vault_image

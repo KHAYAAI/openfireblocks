@@ -45,8 +45,29 @@ provider "aws" {
   }
 }
 
+# Where the replica of the share key lives (enclave mode). Without one this
+# is the same region and nothing is created in it.
+provider "aws" {
+  alias  = "replica"
+  region = var.share_key_replica_region != "" ? var.share_key_replica_region : var.region
+
+  allowed_account_ids = [var.expected_account_id]
+
+  default_tags {
+    tags = {
+      Project   = "OpenFireblocks"
+      Component = "mpc-party"
+      ManagedBy = "Terraform"
+    }
+  }
+}
+
 module "party" {
   source = "../modules/mpc-party-host"
+  providers = {
+    aws         = aws
+    aws.replica = aws.replica
+  }
 
   party_id                   = var.party_id
   party_image                = var.party_image
@@ -55,4 +76,14 @@ module "party" {
   peer_party_cidrs           = var.peer_party_cidrs
   platform_cidrs             = var.platform_cidrs
   ceremony_authorizer_pubkey = var.ceremony_authorizer_pubkey
+
+  enclave_mode               = var.enclave_mode
+  enclave_image_pcr0s        = var.enclave_image_pcr0s
+  enclave_eif_s3_uri         = var.enclave_eif_s3_uri
+  enclave_eif_sha256         = var.enclave_eif_sha256
+  enclave_host_binary_s3_uri = var.enclave_host_binary_s3_uri
+  enclave_host_binary_sha256 = var.enclave_host_binary_sha256
+  peer_endpoints             = var.peer_endpoints
+  share_key_replica_region   = var.share_key_replica_region
+  alert_email                = var.alert_email
 }

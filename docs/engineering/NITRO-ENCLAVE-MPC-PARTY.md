@@ -99,6 +99,7 @@ balances. It complements separate hosts; it does not replace them.
   - `infrastructure/nitro/reproduce.sh` builds the EIF twice from nothing and compares PCR0/1/2, and CI
     runs it on every change.
   - It also checks a published PCR0 with `EXPECTED_PCR0`.
+  - A GitHub runner and a separate build machine produced the same PCR0 from the same commit.
   - The base image is pinned by digest.
   - Every timestamp in the enclave's file system is set to the epoch. Before that fix, two builds of
     the same commit had the same binary but different PCR0 and PCR2.
@@ -116,8 +117,9 @@ balances. It complements separate hosts; it does not replace them.
   could come from Vault, a backup or a host's memory.
 - **An image upgrade pauses signing.** Old and new images cannot run side by side (see Upgrading), so
   every party switches together.
-- **It is not deployed by Helm or Terraform.** Enclaves run on EC2, not in the Kubernetes pods the chart
-  deploys. Instance, role and key provisioning are manual (see `spike.sh`).
+- **It is not deployed by Helm.** Enclaves run on EC2, not in the Kubernetes pods the chart deploys.
+  The per-party Terraform provisions them (below). It has been checked against a mocked provider; it
+  has not yet been applied to a real account.
 
 ## How to check
 
@@ -293,6 +295,49 @@ Tested by `TestBreakGlassRecoveryWithoutKMS`:
 `TestStartEnclaveRecoveryKeys` covers the warning, and the refusal when a key is required but missing
 or malformed.
 
+## Provisioning with Terraform
+
+`infrastructure/terraform/party`, applied once per party by that party's operator in that party's
+account, takes `enclave_mode = true` (see `terraform.tfvars.example`). It then:
+
+1. **Instance.** Launches the instance with Nitro Enclaves enabled, at least `m6i.xlarge`.
+2. **Share key.** Creates the party's share key with the attestation-bound policy above: only the
+   listed PCR0 values, only this party's encryption context, and all cryptography without
+   attestation denied. It has a 30-day deletion window and `prevent_destroy`. With
+   `share_key_replica_region` it is a multi-region key, with a replica holding the same key material
+   in a second region. To rebuild there, bake the replica's ARN and region into the image.
+3. **Alerts.** Sends an alert (EventBridge to SNS, optionally email) when anyone rewrites the key's
+   policy, schedules its deletion, disables it, grants on it or moves its primary region. These
+   alerts need CloudTrail management events in the account.
+4. **First boot.**
+   - Fetches the EIF and `mpc-party-host` from S3 and refuses either if its SHA-256 differs from the
+     pinned value.
+   - Refuses the EIF if its PCR0 is not in `enclave_image_pcr0s`.
+   - Then starts Vault, the host relay and the enclave, never in debug mode.
+   - The egress maps are generated from `peer_endpoints`.
+5. **Outputs.** `share_key_arn`, for the image's `ENCLAVE_KMS_KEYS`, and `host_role_arn`, whose PCR3
+   the other parties pin. The enclave reports the PCR3 value itself on its first start.
+
+The order of a first deployment is circular, because the image bakes in every party's key ARN and
+PCR3. Break it in this order:
+
+1. Each operator applies with `enclave_mode = true` and a placeholder image list. The apply creates
+   the key and the role, and the first boot refuses the placeholder EIF.
+2. The operators exchange `share_key_arn` and the PCR3 values.
+3. They build the real image once, from the reviewed commit, with every party's values baked in.
+4. Each operator re-applies with its PCR0 and EIF hash.
+
+`terraform test` in `modules/mpc-party-host` and in `party` checks all of this against a mocked AWS
+provider, with no credentials and no apply. It checks:
+- the enclave-enabled host;
+- the key policy's image, deny and party binding;
+- the egress pairs;
+- the replica;
+- that the host is unchanged with enclave mode off;
+- refusal of a debug-mode PCR0, a missing image, an unpinned EIF and a missing co-signer.
+
+CI runs these tests.
+
 ## Configuring a party
 
 Baked into the image (build arguments to `infrastructure/nitro/Dockerfile.enclave`):
@@ -343,7 +388,7 @@ party's encryption context. It denies all cryptographic use without attestation 
 | ~~Pin base images by digest; check EIF reproducibility~~ | Done; two clean builds give the same PCR0/1/2, checked in CI |
 | ~~Migration of existing shares by refresh ceremony into enclave sealing~~ | Done (see above) |
 | ~~Image upgrade procedure; break-glass recovery with recovery-key holders~~ | Done (see above) |
-| EC2 and KMS provisioning in Terraform for the three-account layout, with a multi-region key and deletion protection | 1 week |
+| ~~EC2 and KMS provisioning in Terraform for the three-account layout, with a multi-region key and deletion protection~~ | Done; not yet applied to a real account |
 | Independent review of this design | external |
 
 ## Sources

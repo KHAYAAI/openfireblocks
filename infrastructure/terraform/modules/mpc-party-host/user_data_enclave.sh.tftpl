@@ -1,0 +1,176 @@
+#!/bin/bash
+# First boot of MPC party ${party_id} in enclave mode. Rendered by
+# Terraform's templatefile; shell variables are written without braces so
+# they are not taken for template interpolations.
+#
+# The party itself runs inside a Nitro Enclave started from a measured image
+# (EIF). This host runs only:
+#   - this party's Vault, on loopback, which stores KMS envelopes only;
+#   - mpc-party-host, which relays bytes and hands the enclave its runtime
+#     settings and the instance role's credentials (services/mpc-party/cmd/mpc-party-host).
+# Neither ever holds a key share in the clear.
+set -euo pipefail
+exec > >(tee -a /var/log/ofb-party-bootstrap.log) 2>&1
+
+dnf install -y docker jq aws-nitro-enclaves-cli
+systemctl enable --now docker
+
+REGION=${region}
+OFB=/etc/ofb
+mkdir -p $OFB /var/lib/ofb /opt/ofb
+chmod 700 $OFB
+
+# --- The Nitro Enclaves allocator ------------------------------------------
+cat > /etc/nitro_enclaves/allocator.yaml <<ALLOC
+---
+memory_mib: ${enclave_memory_mib}
+cpu_count: ${enclave_cpu_count}
+ALLOC
+systemctl enable --now nitro-enclaves-allocator.service
+
+# --- The Vault data volume (KMS envelopes of the key shares live here) -----
+DEV=""
+for _ in $(seq 1 60); do
+  for candidate in /dev/sdf /dev/nvme1n1; do
+    if [ -b "$candidate" ]; then DEV=$candidate; break; fi
+  done
+  [ -n "$DEV" ] && break
+  sleep 5
+done
+[ -n "$DEV" ] || { echo "vault data volume never attached"; exit 1; }
+if ! blkid "$DEV" >/dev/null 2>&1; then mkfs.xfs "$DEV"; fi
+mkdir -p /var/lib/ofb/vault
+grep -q "/var/lib/ofb/vault" /etc/fstab || echo "$DEV /var/lib/ofb/vault xfs defaults,nofail 0 2" >> /etc/fstab
+mount -a
+chown -R 100:1000 /var/lib/ofb/vault
+
+cat > $OFB/vault.hcl <<VAULT
+storage "raft" {
+  path    = "/vault/data"
+  node_id = "party-${party_id}"
+}
+listener "tcp" {
+  address     = "127.0.0.1:8200"
+  tls_disable = true
+}
+seal "awskms" {
+  region     = "$REGION"
+  kms_key_id = "${seal_key_id}"
+}
+api_addr     = "http://127.0.0.1:8200"
+cluster_addr = "http://127.0.0.1:8201"
+ui           = false
+VAULT
+
+docker run -d --name vault --restart always --network host --cap-add IPC_LOCK \
+  -v /var/lib/ofb/vault:/vault/data -v $OFB/vault.hcl:/vault/config/vault.hcl:ro \
+  ${vault_image} server -config=/vault/config/vault.hcl
+
+# --- The enclave image and the host relay, checked before anything runs ----
+fetch() { # s3-uri sha256 destination
+  aws s3 cp --region $REGION --only-show-errors "$1" "$3.tmp"
+  echo "$2  $3.tmp" | sha256sum -c --quiet || { echo "$1 does not match its pinned SHA-256; refusing it"; rm -f "$3.tmp"; exit 1; }
+  mv "$3.tmp" "$3"
+}
+fetch '${eif_s3_uri}' '${eif_sha256}' /opt/ofb/party.eif
+fetch '${host_s3_uri}' '${host_sha256}' /opt/ofb/mpc-party-host
+chmod 755 /opt/ofb/mpc-party-host
+
+PCR0=$(nitro-cli describe-eif --eif-path /opt/ofb/party.eif | jq -r .Measurements.PCR0 | tr 'A-F' 'a-f')
+case " ${allowed_pcr0s} " in
+  *" $PCR0 "*) echo "enclave image PCR0 $PCR0 is allowed" ;;
+  *) echo "enclave image PCR0 $PCR0 is not in the allowed list; refusing to run it"; exit 1 ;;
+esac
+
+# --- The host relay ----------------------------------------------------------
+# Runtime settings for the enclave: only what cannot expose a share (the
+# enclave refuses anything else; see enclave.RuntimeKeys). The Vault token
+# is read at start, from Secrets Manager.
+cat > /usr/local/bin/ofb-party-host-start <<START
+#!/bin/bash
+set -euo pipefail
+TOKEN=\$(aws secretsmanager get-secret-value --region $REGION --secret-id ${vault_token_secret_arn} --query SecretString --output text)
+[ -n "\$TOKEN" ] || { echo "vault token not stored yet; run party-bootstrap.sh"; exit 1; }
+umask 077
+jq -n --arg token "\$TOKEN" '{
+  PARTY_ID: "${party_id}",
+  ENCLAVE_EGRESS: "${enclave_egress}",
+  VAULT_ADDR: "http://vault.internal:8200",
+  VAULT_TOKEN: \$token
+}' > $OFB/runtime.json
+export ENCLAVE_CID=${enclave_cid} ENCLAVE_VSOCK_PORT=${enclave_vsock_port} HOST_CONTROL_PORT=${enclave_control_port}
+export HOST_LISTEN=:${ceremony_port} HOST_HEALTH_LISTEN=:${health_port}
+export HOST_EGRESS="${host_egress}" HOST_RUNTIME_CONFIG=$OFB/runtime.json
+exec /opt/ofb/mpc-party-host
+START
+chmod 700 /usr/local/bin/ofb-party-host-start
+
+cat > /etc/systemd/system/ofb-party-host.service <<UNIT
+[Unit]
+Description=OpenFireblocks MPC party ${party_id}: host relay for the enclave
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/ofb-party-host-start
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+# --- The enclave -------------------------------------------------------------
+# Never --debug-mode: a debug enclave reports zeroed PCRs, so KMS and its
+# peers refuse it, and its memory is readable from this host.
+cat > /etc/systemd/system/ofb-enclave.service <<UNIT
+[Unit]
+Description=OpenFireblocks MPC party ${party_id}: Nitro Enclave
+After=ofb-party-host.service nitro-enclaves-allocator.service
+Requires=ofb-party-host.service nitro-enclaves-allocator.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStartPre=-/usr/bin/nitro-cli terminate-enclave --all
+ExecStart=/usr/bin/nitro-cli run-enclave --eif-path /opt/ofb/party.eif --cpu-count ${enclave_cpu_count} --memory ${enclave_memory_mib} --enclave-cid ${enclave_cid}
+ExecStop=/usr/bin/nitro-cli terminate-enclave --all
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+# The Vault token renewal, as without enclave mode.
+cat > /usr/local/bin/ofb-vault-renew <<RENEW
+#!/bin/bash
+set -euo pipefail
+TOKEN=\$(aws secretsmanager get-secret-value --region $REGION --secret-id ${vault_token_secret_arn} --query SecretString --output text)
+[ -n "\$TOKEN" ] || exit 0
+docker exec -e VAULT_ADDR=http://127.0.0.1:8200 -e VAULT_TOKEN="\$TOKEN" vault vault token renew >/dev/null
+RENEW
+chmod 700 /usr/local/bin/ofb-vault-renew
+
+cat > /etc/systemd/system/ofb-vault-renew.service <<UNIT
+[Unit]
+Description=Renew MPC party ${party_id}'s Vault token
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/ofb-vault-renew
+UNIT
+
+cat > /etc/systemd/system/ofb-vault-renew.timer <<UNIT
+[Unit]
+Description=Daily renewal of MPC party ${party_id}'s Vault token
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=1d
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+UNIT
+
+systemctl daemon-reload
+systemctl enable --now ofb-party-host.service ofb-enclave.service ofb-vault-renew.timer

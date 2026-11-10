@@ -388,6 +388,15 @@ jobs:
         run: |
           terraform -chdir=infrastructure/terraform/party init -backend=false
           terraform -chdir=infrastructure/terraform/party validate
+      - name: Test the party module, enclave mode included
+        # Plans against a mocked AWS provider (no credentials, no apply):
+        # checks the enclave host, the attestation-bound share key, the
+        # egress maps, and that a debug-mode image, a missing image, an
+        # unpinned EIF and a missing co-signer are refused.
+        run: |
+          terraform -chdir=infrastructure/terraform/modules/mpc-party-host init -backend=false
+          terraform -chdir=infrastructure/terraform/modules/mpc-party-host test
+          terraform -chdir=infrastructure/terraform/party test
 
   # Known-vulnerable dependencies fail the build. The gateway's production
   # dependencies were at 21 advisories (2 critical) before this existed.
