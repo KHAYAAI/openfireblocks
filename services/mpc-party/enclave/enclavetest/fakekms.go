@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/aws/aws-sdk-go-v2/service/kms"
 
@@ -60,6 +61,7 @@ type FakeKMS struct {
 	// DropRecipientBlob omits CiphertextForRecipient.
 	DropRecipientBlob bool
 	Calls             int
+	mu                sync.Mutex
 }
 
 // NewFakeKMS returns a fake whose key policy is the verifier's policy.
@@ -111,7 +113,9 @@ func (k *FakeKMS) unblob(b []byte, ec map[string]string) ([]byte, error) {
 }
 
 func (k *FakeKMS) GenerateDataKey(_ context.Context, in *kms.GenerateDataKeyInput, _ ...func(*kms.Options)) (*kms.GenerateDataKeyOutput, error) {
+	k.mu.Lock()
 	k.Calls++
+	k.mu.Unlock()
 	var doc []byte
 	if in.Recipient != nil {
 		doc = in.Recipient.AttestationDocument
@@ -133,7 +137,9 @@ func (k *FakeKMS) GenerateDataKey(_ context.Context, in *kms.GenerateDataKeyInpu
 }
 
 func (k *FakeKMS) Decrypt(_ context.Context, in *kms.DecryptInput, _ ...func(*kms.Options)) (*kms.DecryptOutput, error) {
+	k.mu.Lock()
 	k.Calls++
+	k.mu.Unlock()
 	var doc []byte
 	if in.Recipient != nil {
 		doc = in.Recipient.AttestationDocument

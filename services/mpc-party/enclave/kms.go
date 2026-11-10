@@ -100,6 +100,12 @@ func (s *Sealer) recipient() (*kmstypes.RecipientInfo, *rsa.PrivateKey, error) {
 	}, key, nil
 }
 
+// cmsMu serialises the CMS parser: crypto/cms (taken from mozilla-services/
+// pkcs7) updates a package-level indentation counter on every decode, so
+// two concurrent decodes are a data race. One party can seal two ceremonies
+// at once, and the race detector found it doing so.
+var cmsMu sync.Mutex
+
 // openRecipientBlob decrypts KMS's CiphertextForRecipient (CMS enveloped
 // data) with the enclave's RSA key.
 func openRecipientBlob(key *rsa.PrivateKey, blob []byte) (out []byte, err error) {
@@ -114,7 +120,9 @@ func openRecipientBlob(key *rsa.PrivateKey, blob []byte) (out []byte, err error)
 			out, err = nil, fmt.Errorf("enclave sealer: malformed CiphertextForRecipient (%v)", r)
 		}
 	}()
+	cmsMu.Lock()
 	dk, err := cms.DecryptEnvelopedKey(key, blob)
+	cmsMu.Unlock()
 	if err != nil {
 		return nil, fmt.Errorf("enclave sealer: opening CiphertextForRecipient: %w", err)
 	}
