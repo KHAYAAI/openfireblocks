@@ -28,6 +28,7 @@ func resetEnclaveState(t *testing.T) {
 	t.Cleanup(func() {
 		enclaveMu.Lock()
 		enclaveSealers = map[int]shareSealer{}
+		enclaveEscrows = map[int]*enclave.Escrow{}
 		enclaveVault = nil
 		enclaveMu.Unlock()
 	})
@@ -49,9 +50,16 @@ type enclaveCluster struct {
 	parties  map[int]*enclaveParty
 	addrs    map[int]string
 	peers    map[int]string
+	// escrows, if set, are registered for each party as it starts.
+	escrows map[int]*enclave.Escrow
 }
 
 func newEnclaveCluster(t *testing.T, n int) *enclaveCluster {
+	t.Helper()
+	return newEnclaveClusterWith(t, n, nil)
+}
+
+func newEnclaveClusterWith(t *testing.T, n int, escrows map[int]*enclave.Escrow) *enclaveCluster {
 	t.Helper()
 	resetEnclaveState(t)
 	root := nitroattesttest.New()
@@ -70,6 +78,7 @@ func newEnclaveCluster(t *testing.T, n int) *enclaveCluster {
 		parties:  map[int]*enclaveParty{},
 		addrs:    map[int]string{},
 		peers:    map[int]string{},
+		escrows:  escrows,
 	}
 	for i := 1; i <= n; i++ {
 		c.peers[i] = fmt.Sprintf("https://party-%d.internal:443", i)
@@ -118,6 +127,9 @@ func (c *enclaveCluster) startPartyAs(t *testing.T, i int, role string) *enclave
 	}}
 	mgr := NewTSSPartyManager(i, client)
 	registerEnclaveSealer(i, &enclave.Sealer{KMS: c.kms, KeyID: fmt.Sprintf("alias/forge-party-%d", i), Attester: nsm, PartyID: i})
+	if e, ok := c.escrows[i]; ok {
+		registerEnclaveEscrow(i, e)
+	}
 
 	router := mux.NewRouter()
 	ps := &PartyServer{partyID: i, tssManager: mgr}
@@ -512,4 +524,132 @@ func TestEnclaveSelfTestReportsAKMSRefusal(t *testing.T) {
 	if rep.OK || !strings.Contains(rep.Detail, "AccessDenied") {
 		t.Fatalf("report: %+v", rep)
 	}
+}
+
+func TestStartEnclaveRecoveryKeys(t *testing.T) {
+	// Without a recovery key: starts, and the start report says so.
+	f := newStartupFixture(t)
+	rt, err := f.run(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rt.warnings) == 0 || !strings.Contains(rt.warnings[0], "break-glass") {
+		t.Fatalf("no warning about the missing recovery key: %v", rt.warnings)
+	}
+	if _, ok := escrowFor(1); ok {
+		t.Fatal("an escrow was registered without a key")
+	}
+
+	// Required but absent: refused.
+	f = newStartupFixture(t)
+	f.env["ENCLAVE_REQUIRE_RECOVERY"] = "1"
+	if _, err := f.run(t); err == nil || !strings.Contains(err.Error(), "recovery public key") {
+		t.Fatalf("started without a required recovery key: %v", err)
+	}
+
+	// Malformed: refused.
+	f = newStartupFixture(t)
+	f.env["ENCLAVE_RECOVERY_PUBKEYS"] = "1=abcd"
+	if _, err := f.run(t); err == nil {
+		t.Fatal("started with a malformed recovery key")
+	}
+
+	// Present: registered, no warning.
+	_, pub, _ := enclave.RecoveryKeygen()
+	f = newStartupFixture(t)
+	f.env["ENCLAVE_RECOVERY_PUBKEYS"] = "1=" + pub
+	f.env["ENCLAVE_REQUIRE_RECOVERY"] = "1"
+	rt, err = f.run(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := escrowFor(1); !ok || len(rt.warnings) != 0 {
+		t.Fatalf("escrow not registered, or warnings %v", rt.warnings)
+	}
+}
+
+// The break-glass path with AWS gone: shares sealed by enclaves are opened
+// with the officers' offline recovery keys, written back in the pre-enclave
+// format, restored into ordinary parties, and the key signs. Nothing here
+// touches KMS or an enclave after the key is made.
+func TestBreakGlassRecoveryWithoutKMS(t *testing.T) {
+	t.Setenv("TSS_PREPARAMS_POOL", "0")
+	startFakeVault(t)
+	privs := map[int]string{}
+	escrows := map[int]*enclave.Escrow{}
+	for i := 1; i <= 3; i++ {
+		priv, pub, err := enclave.RecoveryKeygen()
+		if err != nil {
+			t.Fatal(err)
+		}
+		e, _ := enclave.NewEscrow(pub)
+		privs[i], escrows[i] = priv, e
+	}
+	c := newEnclaveClusterWith(t, 3, escrows)
+	const cer = "break-glass"
+	for i, p := range c.parties {
+		if err := p.mgr.StartKeygen(cer, 1, c.peers, CurveEd25519); err != nil {
+			t.Fatalf("party %d: %v", i, err)
+		}
+	}
+	pubHex := waitKeygen(t, c, cer)
+
+	// KMS and the enclaves are gone. The officers have the Vault backup and
+	// their recovery keys.
+	recovered := map[int]map[string]interface{}{}
+	for i := 1; i <= 3; i++ {
+		live := lastFakeVault.liveVersions(shareVaultPath(i, cer))
+		env, _ := live[len(live)-1]["recovery_envelope"].(string)
+		if env == "" {
+			t.Fatalf("party %d: no recovery envelope", i)
+		}
+		if _, err := enclave.OpenRecovery(privs[(i%3)+1], []byte(env), i, cer); err == nil {
+			t.Fatalf("party %d's envelope opened with another party's recovery key", i)
+		}
+		plain, err := enclave.OpenRecovery(privs[i], []byte(env), i, cer)
+		if err != nil {
+			t.Fatalf("party %d: %v", i, err)
+		}
+		var p sealedPayload
+		if err := json.Unmarshal(plain, &p); err != nil {
+			t.Fatal(err)
+		}
+		recovered[i] = map[string]interface{}{
+			"party_id": i, "ceremony_id": cer, "curve": string(CurveEd25519),
+			"save_data": p.SaveData, "ceremony_context": p.CeremonyContext,
+		}
+	}
+
+	// Rebuild on ordinary infrastructure: a new Vault, no enclave mode.
+	enclaveMu.Lock()
+	enclaveSealers = map[int]shareSealer{}
+	enclaveEscrows = map[int]*enclave.Escrow{}
+	enclaveMu.Unlock()
+	startFakeVault(t)
+	t.Setenv("TSS_ALLOW_UNAUTHENTICATED_PEERS", "1")
+	for i, data := range recovered {
+		cfg, _ := vaultShareConfigFromEnv(os.Getenv, i, cer)
+		client, _ := newVaultClient(cfg.addr)
+		client.SetToken(cfg.token)
+		if _, err := client.KVv2(cfg.mount).Put(context.Background(), cfg.keyPath, data); err != nil {
+			t.Fatal(err)
+		}
+	}
+	plain := &enclaveCluster{parties: map[int]*enclaveParty{}, peers: map[int]string{}}
+	for i := 1; i <= 3; i++ {
+		mgr := NewTSSPartyManager(i, &http.Client{Timeout: 90 * time.Second})
+		router := mux.NewRouter()
+		ps := &PartyServer{partyID: i, tssManager: mgr}
+		router.HandleFunc("/tss/sign/message", ps.HandleTSSSignMessage).Methods(http.MethodPost)
+		srv := httptest.NewServer(router)
+		t.Cleanup(srv.Close)
+		plain.parties[i] = &enclaveParty{id: i, mgr: mgr, server: srv}
+		plain.peers[i] = srv.URL
+	}
+	for i, p := range plain.parties {
+		if err := p.mgr.RestoreCeremony(cer, plain.peers); err != nil {
+			t.Fatalf("party %d restore from recovered share: %v", i, err)
+		}
+	}
+	signAndVerify(t, plain, "after-break-glass", cer, pubHex, []int{1, 2})
 }

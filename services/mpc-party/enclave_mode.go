@@ -46,6 +46,8 @@ package main
 //	ENCLAVE_EXTRA_IMAGE_PCR0      optional, comma-separated, during a rollout
 //	ENCLAVE_ORCHESTRATOR_CA_PEM   optional PEM; without it only parties connect
 //	CEREMONY_AUTHORIZER_PUBKEY    required in enclave mode
+//	ENCLAVE_RECOVERY_PUBKEYS      1=<hex>,2=...; break-glass escrow (enclave/escrow.go)
+//	ENCLAVE_REQUIRE_RECOVERY      1 refuses to start without a recovery key
 //
 // From the host: see enclave.RuntimeKeys.
 
@@ -115,6 +117,22 @@ func enclaveActive() bool {
 	return len(enclaveSealers) > 0
 }
 
+// enclaveEscrows holds each party's break-glass recovery key (enclave/escrow.go).
+var enclaveEscrows = map[int]*enclave.Escrow{}
+
+func registerEnclaveEscrow(partyID int, e *enclave.Escrow) {
+	enclaveMu.Lock()
+	defer enclaveMu.Unlock()
+	enclaveEscrows[partyID] = e
+}
+
+func escrowFor(partyID int) (*enclave.Escrow, bool) {
+	enclaveMu.RLock()
+	defer enclaveMu.RUnlock()
+	e, ok := enclaveEscrows[partyID]
+	return e, ok
+}
+
 func registerEnclaveSealer(partyID int, s shareSealer) {
 	enclaveMu.Lock()
 	defer enclaveMu.Unlock()
@@ -179,6 +197,7 @@ type enclaveRuntime struct {
 	policy         nitroattest.Policy
 	imagePCR0      string
 	rolePCR3       string
+	warnings       []string
 	dialCtrl       func(context.Context) (net.Conn, error)
 	sealer         shareSealer
 }
@@ -352,6 +371,24 @@ func startEnclave(ctx context.Context, d enclaveDeps) (*enclaveRuntime, error) {
 	}}
 	creds := aws.NewCredentialsCache(enclave.HostCredentials{Dial: dialCtrl})
 	sealer := &enclave.Sealer{KMS: d.newKMS(region, kmsClient, creds), KeyID: keyID, Attester: d.attester, PartyID: partyID}
+
+	// 6b. Break-glass escrow to this party's offline recovery key.
+	recovery, err := parseIntMap("ENCLAVE_RECOVERY_PUBKEYS", getenv("ENCLAVE_RECOVERY_PUBKEYS"))
+	if err != nil {
+		return nil, err
+	}
+	var warnings []string
+	if pub, ok := recovery[partyID]; ok {
+		escrow, err := enclave.NewEscrow(pub)
+		if err != nil {
+			return nil, fmt.Errorf("enclave mode: ENCLAVE_RECOVERY_PUBKEYS for party %d: %w", partyID, err)
+		}
+		registerEnclaveEscrow(partyID, escrow)
+	} else if strings.TrimSpace(getenv("ENCLAVE_REQUIRE_RECOVERY")) == "1" {
+		return nil, fmt.Errorf("enclave mode: no recovery public key for party %d in ENCLAVE_RECOVERY_PUBKEYS, and ENCLAVE_REQUIRE_RECOVERY=1", partyID)
+	} else {
+		warnings = append(warnings, "no break-glass recovery key: if this party's KMS key is lost, so are its shares")
+	}
 	registerEnclaveSealer(partyID, sealer)
 
 	enclaveMu.Lock()
@@ -370,7 +407,7 @@ func startEnclave(ctx context.Context, d enclaveDeps) (*enclaveRuntime, error) {
 	log.Printf("enclave mode: party %d, image %x, %d pinned parties, KMS key %s, listening on vsock %d",
 		partyID, own[0], len(pins), keyID, port)
 	rt := &enclaveRuntime{partyID: partyID, listener: ln, serverTLS: serverTLS, relayTransport: relay, policy: policy,
-		imagePCR0: fmt.Sprintf("%x", own[0]), rolePCR3: fmt.Sprintf("%x", own[3]), dialCtrl: dialCtrl, sealer: sealer}
+		imagePCR0: fmt.Sprintf("%x", own[0]), rolePCR3: fmt.Sprintf("%x", own[3]), warnings: warnings, dialCtrl: dialCtrl, sealer: sealer}
 	if strings.TrimSpace(getenv("ENCLAVE_SELFTEST")) == "1" {
 		if err := rt.selfTest(ctx); err != nil {
 			ln.Close()
@@ -426,6 +463,7 @@ func reportEnclaveStart(ctx context.Context, d enclaveDeps, rt *enclaveRuntime, 
 		r.Event, r.Detail = "failed", startErr.Error()
 	} else {
 		r.Party, r.ImagePCR, r.RolePCR = rt.partyID, rt.imagePCR0, rt.rolePCR3
+		r.Detail = strings.Join(rt.warnings, "; ")
 	}
 	_ = enclave.SendReport(ctx, dial, r)
 }

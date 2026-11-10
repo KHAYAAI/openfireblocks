@@ -10,6 +10,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"io"
 	"math/big"
@@ -478,5 +479,53 @@ func TestRuntimeConfig(t *testing.T) {
 	// A host-side Control refuses to start with a measured key in its config.
 	if err := (&Control{Config: map[string]string{"ENCLAVE_KMS_KEYS": "x"}}).Serve(ctx, ln2); err == nil {
 		t.Fatal("host control accepted a measured key")
+	}
+}
+
+// ---- escrow ----
+
+func TestEscrowRoundTripAndRefusals(t *testing.T) {
+	priv, pub, err := RecoveryKeygen()
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, err := NewEscrow(pub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env, err := e.Seal([]byte("share"), 2, "cer-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(env, []byte("share")) {
+		t.Fatal("plaintext in the envelope")
+	}
+	got, err := OpenRecovery(priv, env, 2, "cer-1")
+	if err != nil || string(got) != "share" {
+		t.Fatalf("open: %q %v", got, err)
+	}
+	other, _, _ := RecoveryKeygen()
+	for name, f := range map[string]func() error{
+		"another key":      func() error { _, e := OpenRecovery(other, env, 2, "cer-1"); return e },
+		"another party":    func() error { _, e := OpenRecovery(priv, env, 1, "cer-1"); return e },
+		"another ceremony": func() error { _, e := OpenRecovery(priv, env, 2, "cer-2"); return e },
+		"junk":             func() error { _, e := OpenRecovery(priv, []byte("{}"), 2, "cer-1"); return e },
+		"bad key hex":      func() error { _, e := OpenRecovery("zz", env, 2, "cer-1"); return e },
+	} {
+		if f() == nil {
+			t.Errorf("%s: opened", name)
+		}
+	}
+	var re RecoveryEnvelope
+	_ = json.Unmarshal(env, &re)
+	re.Ciphertext[len(re.Ciphertext)-1] ^= 1
+	bad, _ := json.Marshal(re)
+	if _, err := OpenRecovery(priv, bad, 2, "cer-1"); err == nil {
+		t.Fatal("tampered envelope opened")
+	}
+	for _, p := range []string{"", "zz", "abcd"} {
+		if _, err := NewEscrow(p); err == nil {
+			t.Errorf("public key %q accepted", p)
+		}
 	}
 }

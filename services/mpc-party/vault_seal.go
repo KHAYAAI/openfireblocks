@@ -147,8 +147,8 @@ func SealKeyShareWithContext(ctx context.Context, getenv func(string) string, pa
 			return false, err
 		}
 		env, err := sealer.Seal(ctx, plain, enclave.ShareContext(partyID, ceremonyID))
-		clear(plain)
 		if err != nil {
+			clear(plain)
 			return false, fmt.Errorf("sealing the key share with KMS: %w", err)
 		}
 		payload = map[string]interface{}{
@@ -157,6 +157,15 @@ func SealKeyShareWithContext(ctx context.Context, getenv func(string) string, pa
 			"curve":            string(share.Curve),
 			"enclave_envelope": string(env),
 		}
+		if escrow, ok := escrowFor(partyID); ok {
+			rec, err := escrow.Seal(plain, partyID, ceremonyID)
+			if err != nil {
+				clear(plain)
+				return false, fmt.Errorf("sealing the key share to the recovery key: %w", err)
+			}
+			payload["recovery_envelope"] = string(rec)
+		}
+		clear(plain)
 	}
 
 	kv := client.KVv2(cfg.mount)
