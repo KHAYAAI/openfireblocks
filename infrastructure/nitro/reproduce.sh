@@ -27,6 +27,11 @@ BUILD_ARGS_FILE="${BUILD_ARGS_FILE:-$ROOT/infrastructure/nitro/build-args.env}"
 NITRO_CLI="${NITRO_CLI:-nitro-cli}"
 export NITRO_CLI_ARTIFACTS="${NITRO_CLI_ARTIFACTS:-$WORK/artifacts}"
 mkdir -p "$NITRO_CLI_ARTIFACTS"
+# nitro-cli logs here and fails with E19 if the directory does not exist; the
+# package creates it, a nitro-cli built from source does not.
+mkdir -p /var/log/nitro_enclaves 2>/dev/null || {
+  [ -d /var/log/nitro_enclaves ] || { echo "create /var/log/nitro_enclaves (or run as root) first"; exit 2; }
+}
 
 [ -f "$BUILD_ARGS_FILE" ] || { echo "no build arguments at $BUILD_ARGS_FILE"; exit 2; }
 args=()
