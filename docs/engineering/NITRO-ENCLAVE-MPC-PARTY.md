@@ -95,9 +95,16 @@ balances. It complements separate hosts; it does not replace them.
 ## What it does not do
 
 - **It does not make the image trustworthy.** PCR0 identifies an image. Whether that image came from a
-  reviewed commit is answered by rebuilding it. The Go binary rebuilds byte for byte (checked: two
-  clean builds, identical SHA-256). The EIF has not been checked for this, and the base images still
-  have to be pinned by digest before production.
+  reviewed commit is answered by rebuilding it, and the build is now reproducible:
+  - `infrastructure/nitro/reproduce.sh` builds the EIF twice from nothing and compares PCR0/1/2, and CI
+    runs it on every change.
+  - It also checks a published PCR0 with `EXPECTED_PCR0`.
+  - The base image is pinned by digest.
+  - Every timestamp in the enclave's file system is set to the epoch. Before that fix, two builds of
+    the same commit had the same binary but different PCR0 and PCR2.
+
+  A reproducer must use the release's build arguments (`build-args.env`) and the same `nitro-cli` version
+  and blobs, which `reproduce.sh` records in `toolchain.txt`. PCR1 is the kernel shipped with nitro-cli.
 - **It does not stop whoever controls the KMS key policy.** An account principal with
   `kms:PutKeyPolicy` can rewrite the policy and decrypt. Put each party's key in that party's own
   account, restrict `PutKeyPolicy` to break-glass, and alert on it.
@@ -132,6 +139,13 @@ cd services/temporal-worker && go test ./internal/nitroattest/ ./activities/ -ru
 | `TestOpenRefusesAnotherImage`, `TestSealerRefusesAMisbehavingKMS` | KMS refuses a rebuilt or debug image; the sealer refuses a KMS answer with the data key in plaintext or without `CiphertextForRecipient` |
 | `TestAttestedTransportRoutesByHostName` | The orchestrator refuses a party that presents only a PKI certificate, and still reaches other services by PKI |
 | `TestCopyMatchesMPCParty` | The orchestrator's copy of the verifier is identical to the party's |
+
+Reproducibility, which CI runs and anyone can run without enclave hardware:
+
+```
+NITRO_CLI=<nitro-cli> NITRO_CLI_BLOBS=<blobs dir> ./infrastructure/nitro/reproduce.sh
+EXPECTED_PCR0=<published> BUILD_ARGS_FILE=<release's build-args.env> ./infrastructure/nitro/reproduce.sh
+```
 
 On hardware, which you run: `REGION=<region> infrastructure/nitro/spike.sh` on an enclave-enabled
 instance. It builds the EIF and prints its PCRs, then shows:
@@ -326,7 +340,7 @@ party's encryption context. It denies all cryptographic use without attestation 
 | Item | Size |
 |---|---|
 | Run `spike.sh` on hardware; commit the evidence | 1 day (you, on AWS) |
-| Pin base images by digest; check EIF reproducibility | 1–2 days |
+| ~~Pin base images by digest; check EIF reproducibility~~ | Done; two clean builds give the same PCR0/1/2, checked in CI |
 | ~~Migration of existing shares by refresh ceremony into enclave sealing~~ | Done (see above) |
 | ~~Image upgrade procedure; break-glass recovery with recovery-key holders~~ | Done (see above) |
 | EC2 and KMS provisioning in Terraform for the three-account layout, with a multi-region key and deletion protection | 1 week |
