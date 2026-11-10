@@ -11,7 +11,7 @@ require (
 	github.com/bnb-chain/tss-lib/v2 v2.0.0
 	github.com/btcsuite/btcd/btcec/v2 v2.3.4
 	github.com/btcsuite/btcutil v0.0.0-20190425235716-9e5f4b9a998d
-	github.com/decred/dcrd/dcrec/edwards/v2 v2.0.0
+	github.com/decred/dcrd/dcrec/edwards/v2 v2.0.4
 	github.com/edgebitio/nitro-enclaves-sdk-go v1.0.0
 	github.com/fxamacker/cbor/v2 v2.10.0
 	github.com/gorilla/mux v1.8.1
@@ -41,6 +41,7 @@ require (
 	github.com/btcsuite/btcd v0.0.0-20190629003639-c26ffa870fd8 // indirect
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
 	github.com/cespare/xxhash/v2 v2.2.0 // indirect
+	github.com/decred/dcrd/crypto/rand v1.0.1 // indirect
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.0.1 // indirect
 	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
