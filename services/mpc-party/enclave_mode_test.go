@@ -338,6 +338,7 @@ type startupFixture struct {
 	// hostile answers the config request without the host-side check, as a
 	// modified host would.
 	hostile  bool
+	reports  chan []byte
 	nsm      *nitroattesttest.FakeNSM
 	hostCfg  map[string]string
 	env      map[string]string
@@ -406,7 +407,11 @@ func (f *startupFixture) run(t *testing.T) (*enclaveRuntime, error) {
 		}()
 		t.Cleanup(func() { ln.Close() })
 	} else {
-		go (&enclave.Control{Config: f.hostCfg}).Serve(ctx, ln)
+		go (&enclave.Control{Config: f.hostCfg, Reports: func(b []byte) {
+			if f.reports != nil {
+				f.reports <- append([]byte(nil), b...)
+			}
+		}}).Serve(ctx, ln)
 	}
 	f.ctrlAddr = ln.Addr().String()
 	rt, err := startEnclave(context.Background(), f.deps(t))
@@ -464,5 +469,47 @@ func TestStartEnclaveRefusals(t *testing.T) {
 				t.Fatalf("error %q does not mention %q", err, tc.want)
 			}
 		})
+	}
+}
+
+func TestEnclaveSelfTestAndReports(t *testing.T) {
+	f := newStartupFixture(t)
+	f.reports = make(chan []byte, 4)
+	f.env["ENCLAVE_SELFTEST"] = "1"
+	rt, err := f.run(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rep enclave.Report
+	_ = json.Unmarshal(<-f.reports, &rep)
+	if rep.Event != "selftest" || !rep.OK || len(rep.EncryptedKey) == 0 || rep.ImagePCR != nitroattesttest.Hex("image") {
+		t.Fatalf("self-test report: %+v", rep)
+	}
+	reportEnclaveStart(context.Background(), f.deps(t), rt, nil)
+	_ = json.Unmarshal(<-f.reports, &rep)
+	if rep.Event != "started" || !rep.OK || rep.Party != 1 {
+		t.Fatalf("start report: %+v", rep)
+	}
+	reportEnclaveStart(context.Background(), f.deps(t), nil, fmt.Errorf("no co-signer"))
+	_ = json.Unmarshal(<-f.reports, &rep)
+	if rep.Event != "failed" || rep.OK || rep.Detail != "no co-signer" {
+		t.Fatalf("failure report: %+v", rep)
+	}
+}
+
+// The self-test fails, and says so, when KMS refuses the image: the spike's
+// negative case.
+func TestEnclaveSelfTestReportsAKMSRefusal(t *testing.T) {
+	f := newStartupFixture(t)
+	f.reports = make(chan []byte, 4)
+	f.env["ENCLAVE_SELFTEST"] = "1"
+	f.nsm.PCRs[0] = nitroattesttest.Digest("image with one byte changed")
+	if _, err := f.run(t); err == nil || !strings.Contains(err.Error(), "AccessDenied") {
+		t.Fatalf("self-test passed for an image KMS does not allow: %v", err)
+	}
+	var rep enclave.Report
+	_ = json.Unmarshal(<-f.reports, &rep)
+	if rep.OK || !strings.Contains(rep.Detail, "AccessDenied") {
+		t.Fatalf("report: %+v", rep)
 	}
 }

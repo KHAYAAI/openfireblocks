@@ -91,6 +91,8 @@ type Control struct {
 	// Config is sent in answer to a config request. Nil refuses them.
 	Config map[string]string
 	Logf   func(string, ...any)
+	// Reports, if set, receives each report the enclave sends.
+	Reports func(body []byte)
 }
 
 // Serve answers ping, config and credential requests on ln until ctx ends.
@@ -126,13 +128,19 @@ func (c *Control) logf(format string, args ...any) {
 func (c *Control) handle(ctx context.Context, conn net.Conn) {
 	defer conn.Close()
 	_ = conn.SetDeadline(time.Now().Add(15 * time.Second))
-	typ, _, err := ReadFrame(conn)
+	typ, reportBody, err := ReadFrame(conn)
 	if err != nil {
 		_ = WriteFrame(conn, FrameError, []byte("bad request frame"))
 		return
 	}
 	switch typ {
 	case FramePing:
+		_ = WriteFrame(conn, FramePong, nil)
+	case FrameReport:
+		c.logf("enclave report: %s", reportBody)
+		if c.Reports != nil {
+			c.Reports(reportBody)
+		}
 		_ = WriteFrame(conn, FramePong, nil)
 	case FrameConfigRequest:
 		if c.Config == nil {
@@ -182,4 +190,35 @@ func Ping(ctx context.Context, dial func(context.Context) (net.Conn, error)) err
 		return fmt.Errorf("enclave: expected pong, got frame type %d", typ)
 	}
 	return nil
+}
+
+// Report is what an enclave tells the host about itself.
+type Report struct {
+	Event    string `json:"event"` // started, failed, selftest
+	OK       bool   `json:"ok"`
+	Party    int    `json:"party,omitempty"`
+	ImagePCR string `json:"image_pcr0,omitempty"`
+	// RolePCR string is PCR3, the parent instance's IAM role measurement:
+	// the value to pin for this party in ENCLAVE_PARTY_PCR3.
+	RolePCR string `json:"role_pcr3,omitempty"`
+	Detail  string `json:"detail,omitempty"`
+	// EncryptedKey is the KMS ciphertext of the self-test data key (not
+	// secret), so the spike can show KMS refusing it to the host.
+	EncryptedKey []byte `json:"encrypted_key,omitempty"`
+}
+
+// SendReport delivers a report to the host's control channel. Best effort.
+func SendReport(ctx context.Context, dial func(context.Context) (net.Conn, error), r Report) error {
+	conn, err := dial(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+	body, _ := json.Marshal(r)
+	if err := WriteFrame(conn, FrameReport, body); err != nil {
+		return err
+	}
+	_, _, err = ReadFrame(conn)
+	return err
 }

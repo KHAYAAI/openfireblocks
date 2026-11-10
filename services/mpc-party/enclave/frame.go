@@ -35,6 +35,10 @@ const (
 	FrameError               byte = 5
 	FrameConfigRequest       byte = 6
 	FrameConfigResponse      byte = 7
+	// FrameReport carries a JSON status report from the enclave to the host
+	// log. A production enclave has no console, so this is the only way an
+	// operator learns why one did not start.
+	FrameReport byte = 8
 )
 
 // MaxFrame is the largest payload a frame may carry.
@@ -43,7 +47,7 @@ const MaxFrame = 16 << 20
 var knownFrames = map[byte]bool{
 	FramePing: true, FramePong: true, FrameCredentialsRequest: true,
 	FrameCredentialsResponse: true, FrameError: true,
-	FrameConfigRequest: true, FrameConfigResponse: true,
+	FrameConfigRequest: true, FrameConfigResponse: true, FrameReport: true,
 }
 
 // ErrFrameTooLarge is returned for a frame over MaxFrame, in either direction.

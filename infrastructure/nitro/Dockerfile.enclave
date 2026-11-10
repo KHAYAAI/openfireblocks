@@ -1,0 +1,81 @@
+# syntax=docker/dockerfile:1
+#
+# The signing-party enclave image. Build context: services/mpc-party.
+#
+#   docker build -f infrastructure/nitro/Dockerfile.enclave \
+#     --build-arg ENCLAVE_KMS_REGION=af-south-1 \
+#     --build-arg ENCLAVE_KMS_KEYS="1=arn:aws:kms:...,2=...,3=..." \
+#     --build-arg ENCLAVE_PARTY_PCR3="1=<hex>,2=<hex>,3=<hex>" \
+#     --build-arg CEREMONY_AUTHORIZER_PUBKEY=<hex> \
+#     -t forge-mpc-party-enclave services/mpc-party
+#   nitro-cli build-enclave --docker-uri forge-mpc-party-enclave:latest --output-file party.eif
+#
+# Everything set here is part of the image, so it is covered by PCR0 and a
+# peer or KMS that checks PCR0 is checking these values too. That is why the
+# settings that protect a share are build arguments and not something the
+# host passes at run time (see services/mpc-party/enclave_mode.go). One image
+# serves every party: the party number comes from the host and is checked
+# against the IAM-role pin (PCR3) by the peers and by each party's KMS key.
+#
+# Reproducibility: anyone rebuilding this from the same commit must get the
+# same PCR0, or the measurement proves nothing to them. Hence -trimpath,
+# -buildvcs=false, an empty build id, a scratch runtime, and no timestamps.
+# Pin both base images by digest (FROM image@sha256:...) before production;
+# a tag can move and change PCR0 under you.
+
+FROM golang:1.26-bookworm AS build
+
+RUN --mount=type=secret,id=egress_ca \
+    if [ -s /run/secrets/egress_ca ]; then \
+      cat /run/secrets/egress_ca >> /etc/ssl/certs/ca-certificates.crt; \
+    fi
+
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build -tags nitro -trimpath -buildvcs=false -ldflags='-s -w -buildid=' \
+      -o /out/mpc-party .
+# Changes nothing but the image, and so PCR0: the spike uses it to show a
+# rebuilt image being refused. Written to a file so it is in the root file
+# system, not only in the image configuration.
+ARG SPIKE_MARKER=""
+RUN printf '%s' "${SPIKE_MARKER}" > /out/spike-marker
+
+FROM scratch
+
+# Roots for TLS to KMS. The egress CA above is never copied: it is appended
+# to the build stage's bundle only, and this copies Debian's file from a
+# fresh layer below.
+COPY --from=golang:1.26-bookworm /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+COPY --from=build /out/mpc-party /mpc-party
+COPY --from=build /out/spike-marker /spike-marker
+
+# Production: the orchestrator's CA, so it can connect with its PKI
+# certificate. Without it only attested parties can connect.
+# COPY orchestrator-ca.pem /etc/forge/orchestrator-ca.pem
+# ENV ENCLAVE_ORCHESTRATOR_CA_FILE=/etc/forge/orchestrator-ca.pem
+
+ARG ENCLAVE_KMS_REGION
+ARG ENCLAVE_KMS_KEYS
+ARG ENCLAVE_PARTY_PCR3=""
+ARG ENCLAVE_REQUIRE_PARTY_PIN=1
+ARG ENCLAVE_EXTRA_IMAGE_PCR0=""
+ARG CEREMONY_AUTHORIZER_PUBKEY
+ARG CEREMONY_AUTHORIZER_ALG=ed25519
+ARG ENCLAVE_SELFTEST=0
+
+ENV ENCLAVE_MODE=1 \
+    ENCLAVE_VSOCK_PORT=5000 \
+    ENCLAVE_CONTROL_PORT=9000 \
+    ENCLAVE_KMS_REGION=${ENCLAVE_KMS_REGION} \
+    ENCLAVE_KMS_KEYS=${ENCLAVE_KMS_KEYS} \
+    ENCLAVE_PARTY_PCR3=${ENCLAVE_PARTY_PCR3} \
+    ENCLAVE_REQUIRE_PARTY_PIN=${ENCLAVE_REQUIRE_PARTY_PIN} \
+    ENCLAVE_EXTRA_IMAGE_PCR0=${ENCLAVE_EXTRA_IMAGE_PCR0} \
+    CEREMONY_AUTHORIZER_PUBKEY=${CEREMONY_AUTHORIZER_PUBKEY} \
+    CEREMONY_AUTHORIZER_ALG=${CEREMONY_AUTHORIZER_ALG} \
+    ENCLAVE_SELFTEST=${ENCLAVE_SELFTEST}
+
+ENTRYPOINT ["/mpc-party"]

@@ -50,9 +50,13 @@ package main
 // From the host: see enclave.RuntimeKeys.
 
 import (
+	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -173,6 +177,10 @@ type enclaveRuntime struct {
 	serverTLS      *tls.Config
 	relayTransport *http.Transport
 	policy         nitroattest.Policy
+	imagePCR0      string
+	rolePCR3       string
+	dialCtrl       func(context.Context) (net.Conn, error)
+	sealer         shareSealer
 }
 
 // measuredKeys must come from the image. If the host sends one, start-up
@@ -281,7 +289,8 @@ func startEnclave(ctx context.Context, d enclaveDeps) (*enclaveRuntime, error) {
 		return nil, fmt.Errorf("enclave mode: this enclave claims party %d, but its parent instance's IAM role (PCR3 %x) "+
 			"is not the role pinned for that party; refusing to start", partyID, own[3])
 	} else if !ok && policy.RequirePartyPin {
-		return nil, fmt.Errorf("enclave mode: party %d has no IAM-role pin in ENCLAVE_PARTY_PCR3", partyID)
+		return nil, fmt.Errorf("enclave mode: party %d has no IAM-role pin in ENCLAVE_PARTY_PCR3 "+
+			"(this instance's role measures PCR3 %x; pin that value if this is the right role)", partyID, own[3])
 	}
 	verifier := &nitroattest.Verifier{Policy: policy, Roots: d.roots}
 
@@ -291,7 +300,16 @@ func startEnclave(ctx context.Context, d enclaveDeps) (*enclaveRuntime, error) {
 		return nil, err
 	}
 	var orchCAs *x509.CertPool
-	if pem := getenv("ENCLAVE_ORCHESTRATOR_CA_PEM"); strings.TrimSpace(pem) != "" {
+	pem := getenv("ENCLAVE_ORCHESTRATOR_CA_PEM")
+	if f := strings.TrimSpace(getenv("ENCLAVE_ORCHESTRATOR_CA_FILE")); f != "" && strings.TrimSpace(pem) == "" {
+		// A file in the image: measured like everything else in it.
+		raw, err := os.ReadFile(f)
+		if err != nil {
+			return nil, fmt.Errorf("enclave mode: ENCLAVE_ORCHESTRATOR_CA_FILE: %w", err)
+		}
+		pem = string(raw)
+	}
+	if strings.TrimSpace(pem) != "" {
 		orchCAs = x509.NewCertPool()
 		if !orchCAs.AppendCertsFromPEM([]byte(pem)) {
 			return nil, errors.New("enclave mode: ENCLAVE_ORCHESTRATOR_CA_PEM holds no certificate")
@@ -351,5 +369,63 @@ func startEnclave(ctx context.Context, d enclaveDeps) (*enclaveRuntime, error) {
 	}
 	log.Printf("enclave mode: party %d, image %x, %d pinned parties, KMS key %s, listening on vsock %d",
 		partyID, own[0], len(pins), keyID, port)
-	return &enclaveRuntime{partyID: partyID, listener: ln, serverTLS: serverTLS, relayTransport: relay, policy: policy}, nil
+	rt := &enclaveRuntime{partyID: partyID, listener: ln, serverTLS: serverTLS, relayTransport: relay, policy: policy,
+		imagePCR0: fmt.Sprintf("%x", own[0]), rolePCR3: fmt.Sprintf("%x", own[3]), dialCtrl: dialCtrl, sealer: sealer}
+	if strings.TrimSpace(getenv("ENCLAVE_SELFTEST")) == "1" {
+		if err := rt.selfTest(ctx); err != nil {
+			ln.Close()
+			return nil, err
+		}
+	}
+	return rt, nil
+}
+
+// selfTest seals and opens a random secret through KMS and reports the
+// outcome to the host: the hardware spike's proof that KMS releases a data
+// key to this image. Baked in with ENCLAVE_SELFTEST=1; off in production.
+func (rt *enclaveRuntime) selfTest(ctx context.Context) error {
+	secret := make([]byte, 32)
+	if _, err := rand.Read(secret); err != nil {
+		return err
+	}
+	ec := map[string]string{"forge:purpose": "selftest", "forge:party": fmt.Sprintf("party-%d", rt.partyID)}
+	sealed, err := rt.sealer.Seal(ctx, secret, ec)
+	if err == nil {
+		var opened []byte
+		if opened, err = rt.sealer.Open(ctx, sealed, ec); err == nil && !bytes.Equal(opened, secret) {
+			err = errors.New("opened a different secret")
+		}
+	}
+	rep := enclave.Report{Event: "selftest", OK: err == nil, Party: rt.partyID, ImagePCR: rt.imagePCR0, RolePCR: rt.rolePCR3}
+	if err != nil {
+		rep.Detail = err.Error()
+	} else {
+		var env enclave.Envelope
+		_ = json.Unmarshal(sealed, &env)
+		sum := sha256.Sum256(secret)
+		rep.Detail = fmt.Sprintf("KMS sealed and opened a 32-byte secret, sha256 %x", sum)
+		rep.EncryptedKey = env.EncryptedKey
+	}
+	_ = enclave.SendReport(ctx, rt.dialCtrl, rep)
+	if err != nil {
+		return fmt.Errorf("enclave self-test: %w", err)
+	}
+	return nil
+}
+
+// reportEnclaveStart tells the host whether start-up worked. A production
+// enclave has no console; without this a refusal is silent.
+func reportEnclaveStart(ctx context.Context, d enclaveDeps, rt *enclaveRuntime, startErr error) {
+	port, err := portFrom(d.getenv, "ENCLAVE_CONTROL_PORT", 9000)
+	if err != nil {
+		return
+	}
+	dial := func(ctx context.Context) (net.Conn, error) { return d.dialHost(ctx, port) }
+	r := enclave.Report{Event: "started", OK: startErr == nil}
+	if startErr != nil {
+		r.Event, r.Detail = "failed", startErr.Error()
+	} else {
+		r.Party, r.ImagePCR, r.RolePCR = rt.partyID, rt.imagePCR0, rt.rolePCR3
+	}
+	_ = enclave.SendReport(ctx, dial, r)
 }

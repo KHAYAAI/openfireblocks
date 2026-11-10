@@ -128,6 +128,7 @@ func main() {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		enc, err = startEnclave(ctx, deps)
+		reportEnclaveStart(ctx, deps, enc, err)
 		cancel()
 		if err != nil {
 			log.Fatalf("enclave mode: %v", err)

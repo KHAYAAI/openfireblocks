@@ -6,6 +6,7 @@ go 1.26.10
 require (
 	github.com/btcsuite/btcd/btcec/v2 v2.5.1
 	github.com/hashicorp/vault/api v1.23.0
+	github.com/hf/nitrite v0.0.0-20241225144000-c2d5d3c4f303
 	github.com/lib/pq v1.12.3
 	github.com/stretchr/testify v1.12.1
 	go.temporal.io/api v1.63.5
@@ -34,7 +35,6 @@ require (
 	github.com/hashicorp/go-secure-stdlib/strutil v0.1.2 // indirect
 	github.com/hashicorp/go-sockaddr v1.0.7 // indirect
 	github.com/hashicorp/hcl v1.0.1-vault-7 // indirect
-	github.com/hf/nitrite v0.0.0-20241225144000-c2d5d3c4f303 // indirect
 	github.com/mitchellh/go-homedir v1.1.0 // indirect
 	github.com/mitchellh/mapstructure v1.5.0 // indirect
 	github.com/nexus-rpc/nexus-proto-annotations v0.1.0 // indirect
