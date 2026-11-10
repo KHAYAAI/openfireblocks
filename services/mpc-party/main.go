@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -117,6 +118,23 @@ func getenv(key, fallback string) string {
 }
 
 func main() {
+	// Enclave mode first: it fetches PARTY_ID and the other runtime settings
+	// from the host, and refuses to start on any failure (enclave_mode.go).
+	var enc *enclaveRuntime
+	if enclaveModeRequested(os.Getenv) {
+		deps, err := productionEnclaveDeps()
+		if err != nil {
+			log.Fatalf("enclave mode: %v", err)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		enc, err = startEnclave(ctx, deps)
+		reportEnclaveStart(ctx, deps, enc, err)
+		cancel()
+		if err != nil {
+			log.Fatalf("enclave mode: %v", err)
+		}
+	}
+
 	// Get party ID and configuration from environment
 	partyIDStr := getenv("PARTY_ID", "1")
 	partyID, err := strconv.Atoi(partyIDStr)
@@ -134,6 +152,9 @@ func main() {
 	relayClient := &http.Client{Timeout: 30 * time.Second}
 	if relayMTLSEnabled {
 		relayClient.Transport = relayTransport
+	}
+	if enc != nil {
+		relayClient.Transport = enc.relayTransport
 	}
 	ps.tssManager = NewTSSPartyManager(partyID, relayClient)
 
@@ -192,6 +213,12 @@ func main() {
 		Addr:              addr,
 		Handler:           router,
 		ReadHeaderTimeout: 10 * time.Second,
+	}
+
+	if enc != nil {
+		srv.TLSConfig = enc.serverTLS
+		log.Printf("MPC party %d serving in a Nitro Enclave (attested TLS, vsock)", partyID)
+		log.Fatal(srv.ServeTLS(enc.listener, "", ""))
 	}
 
 	tlsConfig, mtlsEnabled, err := serverTLSConfigFromEnv()

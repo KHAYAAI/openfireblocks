@@ -6,6 +6,7 @@ go 1.26.10
 require (
 	github.com/btcsuite/btcd/btcec/v2 v2.5.1
 	github.com/hashicorp/vault/api v1.23.0
+	github.com/hf/nitrite v0.0.0-20241225144000-c2d5d3c4f303
 	github.com/lib/pq v1.12.3
 	github.com/stretchr/testify v1.12.1
 	go.temporal.io/api v1.63.5
@@ -18,6 +19,7 @@ require (
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.1 // indirect
 	github.com/facebookgo/clock v0.0.0-20150410010913-600d898af40a // indirect
+	github.com/fxamacker/cbor/v2 v2.2.0 // indirect
 	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang/mock v1.6.0 // indirect
@@ -40,6 +42,7 @@ require (
 	github.com/robfig/cron v1.2.0 // indirect
 	github.com/ryanuber/go-glob v1.0.0 // indirect
 	github.com/stretchr/objx v0.5.3 // indirect
+	github.com/x448/float16 v0.8.4 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/net v0.60.0 // indirect
 	golang.org/x/sync v0.24.0 // indirect

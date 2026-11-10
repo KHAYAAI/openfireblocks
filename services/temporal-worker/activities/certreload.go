@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"forge-crypto/temporal-worker/internal/nitroattest"
 	"log"
 	"net"
 	"net/http"
@@ -151,3 +152,45 @@ func (r *clientCertReloader) transport() *http.Transport {
 		},
 	}
 }
+
+// attestedTransport is transport() for a fleet whose parties run in
+// enclaves. A party presents a self-signed certificate carrying an
+// attestation document instead of a PKI certificate, so for a party-N host
+// the chain check is replaced (never skipped) by the attestation check: the
+// enclave must run an image the policy allows and attest party N. Every
+// other host is verified against the PKI exactly as transport() does.
+func (r *clientCertReloader) attestedTransport(v *nitroattest.Verifier) *http.Transport {
+	return &http.Transport{
+		DialTLSContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			host, _, err := net.SplitHostPort(addr)
+			if err != nil {
+				return nil, err
+			}
+			b := r.current.Load()
+			cfg := &tls.Config{
+				ServerName:   host,
+				RootCAs:      b.caPool,
+				Certificates: []tls.Certificate{b.cert},
+				MinVersion:   tls.VersionTLS13,
+			}
+			if _, isParty := nitroattest.PartyFromName(host); isParty {
+				cfg.InsecureSkipVerify = true //nolint:gosec // replaced by VerifyServerConnection
+				cfg.VerifyConnection = v.VerifyServerConnection
+			}
+			raw, err := attestedDial(ctx, network, addr)
+			if err != nil {
+				return nil, err
+			}
+			conn := tls.Client(raw, cfg)
+			if err := conn.HandshakeContext(ctx); err != nil {
+				raw.Close()
+				return nil, err
+			}
+			return conn, nil
+		},
+	}
+}
+
+// attestedDial opens the TCP connection under attestedTransport; tests
+// replace it to resolve party names locally.
+var attestedDial = (&net.Dialer{Timeout: 10 * time.Second}).DialContext

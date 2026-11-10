@@ -227,8 +227,11 @@ how this platform drives `tss-lib` (not commissioned yet — see
 [`docs/security/TSS-LIB-ADVISORY-REVIEW.md`](docs/security/TSS-LIB-ADVISORY-REVIEW.md)
 for what a from-the-source review already established and what still
 needs an outside firm), hardware isolation for the threshold shares
-(they live in process memory, sealed in Vault at rest; PKCS#11 can't
-hold them — that needs SGX/Nitro enclaves), and SOC 2 Type II. The
+(PKCS#11 can't hold them; an AWS Nitro Enclave mode for the signing
+parties is built and tested in software but has not yet run on Nitro
+hardware — see
+[`docs/engineering/NITRO-ENCLAVE-MPC-PARTY.md`](docs/engineering/NITRO-ENCLAVE-MPC-PARTY.md)),
+and SOC 2 Type II. The
 single-key signer *can* already keep its key in a PKCS#11 HSM; that's
 tested against SoftHSM2 in CI but hasn't yet run on physical hardware.
 
@@ -245,7 +248,7 @@ Taurus](docs/COMPETITIVE-ANALYSIS.md) and
 - [Key recovery procedure](docs/deployment/KEY-RECOVERY.md) · [Disaster-recovery rebuild runbook](docs/deployment/DR-REBUILD-RUNBOOK.md) · [Off-site backups](docs/deployment/OFFSITE-BACKUPS.md)
 - [Party isolation](docs/deployment/PARTY-ISOLATION.md) · [Separate hosts](docs/deployment/SEPARATE-HOSTS.md) · [Separate-hosts playbook](docs/deployment/SEPARATE-HOSTS-PLAYBOOK.md)
 - [HSM signing over PKCS#11](docs/engineering/PKCS11-HSM-SIGNING.md) — what it does, what it can't do, how to run it
-- [Signing parties inside Nitro Enclaves](docs/engineering/NITRO-ENCLAVE-MPC-PARTY.md) — proposal: verified stack, architecture, phased plan · [Claude Code brief, Phase 0](docs/engineering/nitro/CLAUDE-CODE-BRIEF.md)
+- [Signing parties inside Nitro Enclaves](docs/engineering/NITRO-ENCLAVE-MPC-PARTY.md) — enclave mode: what it does and does not do, how to check it, the hardware spike ([`infrastructure/nitro/`](infrastructure/nitro/))
 - [tss-lib dependency review](docs/security/TSS-LIB-ADVISORY-REVIEW.md) · [Threat model](docs/security/threat-model.md) · [Audit checklist](docs/security/audit-checklist.md)
 - [API reference](docs/api.md) · [Policies (OPA)](docs/policies.md) · [Deployment](docs/deployment.md)
 - [Competitive analysis](docs/COMPETITIVE-ANALYSIS.md) · [Commercial model](docs/COMMERCIAL-MODEL.md)

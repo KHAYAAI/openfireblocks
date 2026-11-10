@@ -212,15 +212,21 @@ func loadShareFromFile(cfg fileShareConfig, partyID int, ceremonyID string) (*Ke
 	if err := json.Unmarshal(plain, &p); err != nil || p.PartyID != partyID || p.CeremonyID != ceremonyID {
 		return nil, nil, fmt.Errorf("the sealed share at %s is malformed", path)
 	}
+	return decodeSealedPayload(p, path)
+}
+
+// decodeSealedPayload turns a decrypted payload back into a share and its
+// context. where names the source in errors.
+func decodeSealedPayload(p sealedPayload, where string) (*KeyShare, *CeremonyContext, error) {
 	share, err := UnmarshalShare([]byte(p.SaveData))
 	if err != nil {
-		return nil, nil, fmt.Errorf("sealed share at %s: %w", path, err)
+		return nil, nil, fmt.Errorf("sealed share at %s: %w", where, err)
 	}
 	var cc *CeremonyContext
 	if p.CeremonyContext != "" {
 		var parsed CeremonyContext
 		if err := json.Unmarshal([]byte(p.CeremonyContext), &parsed); err != nil {
-			return nil, nil, fmt.Errorf("sealed ceremony context at %s is malformed: %w", path, err)
+			return nil, nil, fmt.Errorf("sealed ceremony context at %s is malformed: %w", where, err)
 		}
 		cc = &parsed
 	}

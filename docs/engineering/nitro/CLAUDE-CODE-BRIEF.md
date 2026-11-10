@@ -1,5 +1,11 @@
 # Brief for Claude Code: Nitro-enclave signing party (Phase 0)
 
+> **Superseded (2026-11-10).** This brief has been carried out, and more: enclave mode is built and
+> tested in software (see [`../NITRO-ENCLAVE-MPC-PARTY.md`](../NITRO-ENCLAVE-MPC-PARTY.md)). The design
+> changed on one point: TLS 1.3 ends inside the enclave, bound to attestation, instead of a custom
+> sealed-envelope protocol. What is left from this brief is the hardware run:
+> `infrastructure/nitro/spike.sh` and its evidence file. Kept for the record.
+
 Paste this into a Claude Code session on this repository. Background, the verified stack and the full
 plan are in [`../NITRO-ENCLAVE-MPC-PARTY.md`](../NITRO-ENCLAVE-MPC-PARTY.md); read it first.
 
