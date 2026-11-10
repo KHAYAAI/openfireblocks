@@ -91,6 +91,11 @@ func (m *TSSPartyManager) StartSigning(signID, keygenCeremonyID string, messageH
 		return fmt.Errorf("keygen ceremony %s has not completed (status: %s)", keygenCeremonyID, status)
 	}
 	share := keygenCeremony.saveData
+	if keygenCeremony.migrating {
+		keygenCeremony.mu.Unlock()
+		return fmt.Errorf("key %s was loaded for migration into enclave sealing and must be refreshed "+
+			"before it signs; run the migration's refresh first", keygenCeremonyID)
+	}
 
 	// The length rule is per curve, so it is checked here rather than at
 	// the top -- ECDSA signs a 32-byte digest and nothing else, while

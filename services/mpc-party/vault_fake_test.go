@@ -34,7 +34,15 @@ type fakeVault struct {
 	mu      sync.Mutex
 	secrets map[string]map[string]interface{}
 	version map[string]int
+	// Every version ever written, and which were destroyed, as KV v2 keeps
+	// them: a migration must be checked against the history, not the latest.
+	history   map[string][]map[string]interface{}
+	destroyed map[string]map[int]bool
 }
+
+// lastFakeVault is the most recently started fake, for tests that inspect
+// version history directly.
+var lastFakeVault *fakeVault
 
 // startFakeVault brings up the stand-in and points this test's environment
 // at it. Returns its address.
@@ -42,9 +50,12 @@ func startFakeVault(t *testing.T) string {
 	t.Helper()
 
 	fv := &fakeVault{
-		secrets: make(map[string]map[string]interface{}),
-		version: make(map[string]int),
+		secrets:   make(map[string]map[string]interface{}),
+		version:   make(map[string]int),
+		history:   make(map[string][]map[string]interface{}),
+		destroyed: make(map[string]map[int]bool),
 	}
+	lastFakeVault = fv
 	server := httptest.NewServer(fv)
 	t.Cleanup(server.Close)
 
@@ -73,12 +84,26 @@ func (fv *fakeVault) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		fv.mu.Lock()
 		delete(fv.secrets, dataPath)
 		delete(fv.version, dataPath)
+		delete(fv.history, dataPath)
+		delete(fv.destroyed, dataPath)
 		fv.mu.Unlock()
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
+	if r.Method == http.MethodGet && strings.Contains(path, "/metadata/") {
+		fv.metadata(w, strings.Replace(path, "/metadata/", "/data/", 1))
+		return
+	}
+	if (r.Method == http.MethodPut || r.Method == http.MethodPost) && strings.Contains(path, "/destroy/") {
+		fv.destroy(w, r, strings.Replace(path, "/destroy/", "/data/", 1))
+		return
+	}
 	if !strings.Contains(path, "/data/") {
 		http.NotFound(w, r)
+		return
+	}
+	if v := r.URL.Query().Get("version"); v != "" && r.Method == http.MethodGet {
+		fv.getVersion(w, path, v)
 		return
 	}
 
@@ -105,6 +130,7 @@ func (fv *fakeVault) put(w http.ResponseWriter, r *http.Request, path string) {
 	fv.version[path]++
 	version := fv.version[path]
 	fv.secrets[path] = wrapped.Data
+	fv.history[path] = append(fv.history[path], wrapped.Data)
 	fv.mu.Unlock()
 
 	// A write returns version metadata at the top level, not nested -- the
@@ -156,4 +182,83 @@ func vaultUnderTest() string {
 		return "the in-process KV v2 stand-in"
 	}
 	return "a real Vault"
+}
+
+func (fv *fakeVault) metadata(w http.ResponseWriter, path string) {
+	fv.mu.Lock()
+	defer fv.mu.Unlock()
+	hist, ok := fv.history[path]
+	if !ok {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	versions := map[string]interface{}{}
+	for i := range hist {
+		n := i + 1
+		versions[fmt.Sprint(n)] = map[string]interface{}{
+			"created_time":  time.Now().UTC().Format(time.RFC3339Nano),
+			"deletion_time": "",
+			"destroyed":     fv.destroyed[path][n],
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"data": map[string]interface{}{
+		"current_version": len(hist),
+		"oldest_version":  1,
+		"max_versions":    0,
+		"versions":        versions,
+		"created_time":    time.Now().UTC().Format(time.RFC3339Nano),
+		"updated_time":    time.Now().UTC().Format(time.RFC3339Nano),
+	}})
+}
+
+func (fv *fakeVault) destroy(w http.ResponseWriter, r *http.Request, path string) {
+	var body struct {
+		Versions []int `json:"versions"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeVaultErrors(w, http.StatusBadRequest, "malformed body")
+		return
+	}
+	fv.mu.Lock()
+	if fv.destroyed[path] == nil {
+		fv.destroyed[path] = map[int]bool{}
+	}
+	for _, v := range body.Versions {
+		fv.destroyed[path][v] = true
+	}
+	fv.mu.Unlock()
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (fv *fakeVault) getVersion(w http.ResponseWriter, path, v string) {
+	var n int
+	fmt.Sscanf(v, "%d", &n)
+	fv.mu.Lock()
+	hist := fv.history[path]
+	gone := fv.destroyed[path][n]
+	fv.mu.Unlock()
+	if n < 1 || n > len(hist) {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	data := hist[n-1]
+	meta := versionMetadata(n)
+	if gone {
+		data = nil
+		meta["destroyed"] = true
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"data": map[string]interface{}{"data": data, "metadata": meta}})
+}
+
+// liveVersions returns the versions of a path whose data still exists.
+func (fv *fakeVault) liveVersions(path string) []map[string]interface{} {
+	fv.mu.Lock()
+	defer fv.mu.Unlock()
+	var out []map[string]interface{}
+	for i, d := range fv.history[path] {
+		if !fv.destroyed[path][i+1] {
+			out = append(out, d)
+		}
+	}
+	return out
 }

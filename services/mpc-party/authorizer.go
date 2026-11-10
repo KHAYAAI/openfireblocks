@@ -75,7 +75,9 @@ const (
 // against a different ceremony: sign "party 1 may take part in a keygen"
 // and it authorises every keygen, forever.
 type AuthorizationRequest struct {
-	// What is being authorised: "keygen", "sign" or "reshare".
+	// What is being authorised: "keygen", "sign", "reshare", "restore",
+	// "retire" or "migrate" (loading a pre-enclave share into an enclave
+	// for migration; see MigrateLegacyCeremony).
 	Operation string `json:"operation"`
 	// The ceremony this authorisation is good for, and nothing else.
 	CeremonyID string `json:"ceremony_id"`

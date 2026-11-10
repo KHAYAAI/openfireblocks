@@ -443,6 +443,10 @@ func (ps *PartyServer) HandleTSSReshareStatus(w http.ResponseWriter, r *http.Req
 type tssRestoreRequest struct {
 	CeremonyID string         `json:"ceremony_id"`
 	Peers      map[int]string `json:"peers"`
+	// MigrateLegacy loads a share sealed before enclave mode, for migration
+	// into enclave sealing (TSSPartyManager.MigrateLegacyCeremony). Enclave
+	// mode only, and authorised as operation "migrate", not "restore".
+	MigrateLegacy bool `json:"migrate_legacy,omitempty"`
 	// Authorised like any other ceremony operation: restoring a key into a
 	// signing party is exactly as sensitive as generating one.
 	Authorization          string `json:"authorization,omitempty"`
@@ -460,9 +464,19 @@ func (ps *PartyServer) HandleTSSRestore(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
 		return
 	}
-	if err := ps.requireAuthorization("restore", req.CeremonyID, "",
+	op := "restore"
+	if req.MigrateLegacy {
+		// Its own operation, so an authorisation to restore a key can never be
+		// replayed to pull a clear-text share into an enclave.
+		op = "migrate"
+		if !enclaveActive() {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "migrate_legacy is for a party in enclave mode"})
+			return
+		}
+	}
+	if err := ps.requireAuthorization(op, req.CeremonyID, "",
 		req.Authorization, req.AuthorizationSignature); err != nil {
-		log.Printf("refused restore of %s: %v", req.CeremonyID, err)
+		log.Printf("refused %s of %s: %v", op, req.CeremonyID, err)
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": err.Error()})
 		return
 	}
@@ -470,7 +484,11 @@ func (ps *PartyServer) HandleTSSRestore(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	if err := ps.tssManager.RestoreCeremony(req.CeremonyID, req.Peers); err != nil {
+	restore := ps.tssManager.RestoreCeremony
+	if req.MigrateLegacy {
+		restore = ps.tssManager.MigrateLegacyCeremony
+	}
+	if err := restore(req.CeremonyID, req.Peers); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}

@@ -65,6 +65,10 @@ type tssKeygenCeremony struct {
 	publicKeyHex string
 	address      string
 	sealed       bool // true if the key share was durably sealed in Vault, see vault_seal.go
+	// migrating marks a share loaded from a legacy (unenveloped) Vault entry
+	// for migration into enclave sealing. It must be refreshed before it is
+	// used: signing with it is refused (see MigrateLegacyCeremony).
+	migrating bool
 }
 
 // TSSPartyManager tracks every ceremony this process (one party) is or has

@@ -103,8 +103,10 @@ balances. It complements separate hosts; it does not replace them.
   account, restrict `PutKeyPolicy` to break-glass, and alert on it.
 - **It does not stop the host from denying service.** The host can stop, starve or isolate the enclave.
   It cannot read the enclave's memory. Nitro does not claim side-channel resistance.
-- **There is no migration path yet.** An existing share sealed in Vault the old way is refused in enclave
-  mode. The intended path is a refresh ceremony that creates enclave-sealed shares; it is not built.
+- **Migration does not undo past exposure.** Moving an existing key into enclave sealing (below) refreshes
+  its shares and destroys the clear-text copies Vault holds. Old shares of the same key still
+  reconstruct it, so anyone who already copied threshold-many of them still holds the key. These copies
+  could come from Vault, a backup or a host's memory.
 - **There is no image rollout or break-glass recovery tooling yet.** `ENCLAVE_EXTRA_IMAGE_PCR0` and a
   multi-value KMS condition allow two images at once. The procedure around them, a multi-region key,
   and recovery-key holders opening shares without the image are not built.
@@ -141,6 +143,47 @@ instance. It builds the EIF and prints its PCRs, then shows:
 4. the debug-mode image refusing to start.
 
 It then writes `docs/evidence/<date>-nitro-spike.md`.
+
+## Moving existing keys into enclave sealing
+
+A key generated before enclave mode has its shares in Vault in the clear (under Vault's storage
+encryption). Enclave mode refuses to load such a share, with one exception: the migration.
+
+```
+forge-enclave-admin migrate -ceremony <id> -policy policy.json -cert orch.crt -key orch.key \
+  -domain internal -port 7000 -parties 3 -authorizations auth.json
+```
+
+1. Every party loads its clear-text share into the enclave (`POST /tss/keygen/restore` with
+   `migrate_legacy`). This needs a co-signer authorisation for the operation `migrate`, which is
+   separate from `restore`, so a restore authorisation cannot be replayed to do it. The key is
+   then blocked from signing.
+2. Every party refreshes the key inside its enclave (`POST /tss/reshare/start`, reshare id
+   `migrate-<ceremony>`, authorised `reshare`). The key and its address do not change. The new
+   shares are sealed as KMS envelopes.
+3. Each party then destroys every earlier version of its Vault entry (`vault kv destroy`), each of
+   which is a clear-text share, and reports how many it destroyed. The refresh is not reported
+   complete until this has run. If sealing or destruction fails, the party says so. If sealing
+   failed, the key stays blocked.
+
+Both authorisations are bound to the ceremony and reshare id, so the co-signer can sign them offline
+with `infrastructure/kind/authorize` (`migrate <ceremony>`, `reshare migrate-<ceremony>`) and hand
+over `auth.json`. The tool checks each party's attestation before sending anything.
+
+Then purge every backup of Vault taken before the migration. For a key whose old shares may already
+have been copied, migration is the wrong tool. Instead, generate a new key inside the enclaves and
+move the funds to it on-chain.
+
+Tested by `TestMigrateALegacyKeyIntoEnclaveSealing`:
+1. A key is generated the old way.
+2. Three simulated enclaves migrate it, and it is refused for signing until refreshed.
+3. Vault ends with one live version per party, and it is an envelope.
+4. The key signs, and the signature verifies against the original public key.
+5. After a restart the parties restore from the envelopes and sign again.
+6. A second migration is refused.
+
+`TestMigrateLegacyNeedsItsOwnAuthorisation` checks that a `restore` authorisation does not authorise a
+migration.
 
 ## Configuring a party
 
@@ -189,7 +232,7 @@ party's encryption context. It denies all cryptographic use without attestation 
 |---|---|
 | Run `spike.sh` on hardware; commit the evidence | 1 day (you, on AWS) |
 | Pin base images by digest; check EIF reproducibility | 1–2 days |
-| Migration of existing shares by refresh ceremony into enclave sealing | 1 week |
+| ~~Migration of existing shares by refresh ceremony into enclave sealing~~ | Done (see above) |
 | Image rollout procedure; multi-region key; break-glass recovery with recovery-key holders | 2–3 weeks |
 | EC2 and KMS provisioning in Terraform for the three-account layout | 1 week |
 | Independent review of this design | external |

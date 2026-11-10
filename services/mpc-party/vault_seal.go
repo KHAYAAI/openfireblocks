@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
+	"strconv"
 
 	tsskeygen "github.com/bnb-chain/tss-lib/v2/ecdsa/keygen"
 	vault "github.com/hashicorp/vault/api"
@@ -253,7 +255,26 @@ func orDefaultVault(v, def string) string {
 // the wrong package's struct and produces a party that cannot sign, found
 // out at signing time on a key holding money.
 func LoadSealedShare(ctx context.Context, getenv func(string) string, partyID int, ceremonyID string) (*KeyShare, *CeremonyContext, error) {
+	return loadSealedShare(ctx, getenv, partyID, ceremonyID, false)
+}
+
+// LoadLegacyShareForMigration reads a share that was sealed before enclave
+// mode, in the clear in Vault, so that an enclave can refresh it into an
+// enclave-sealed share (see MigrateLegacyCeremony). Enclave mode only, and
+// only for a Vault entry with no envelope: anything else is refused, so this
+// cannot be used to read an enclave-sealed share any other way.
+func LoadLegacyShareForMigration(ctx context.Context, getenv func(string) string, partyID int, ceremonyID string) (*KeyShare, *CeremonyContext, error) {
+	if _, ok := sealerFor(partyID); !ok {
+		return nil, nil, errors.New("migration into enclave sealing runs only in enclave mode")
+	}
+	return loadSealedShare(ctx, getenv, partyID, ceremonyID, true)
+}
+
+func loadSealedShare(ctx context.Context, getenv func(string) string, partyID int, ceremonyID string, legacy bool) (*KeyShare, *CeremonyContext, error) {
 	cfg, configured := vaultShareConfigFromEnv(getenv, partyID, ceremonyID)
+	if legacy && !configured {
+		return nil, nil, errors.New("migration reads the legacy share from Vault, and VAULT_ADDR is not set")
+	}
 	if !configured {
 		if fcfg, ok := fileShareConfigFromEnv(getenv); ok {
 			return loadShareFromFile(fcfg, partyID, ceremonyID)
@@ -277,7 +298,11 @@ func LoadSealedShare(ctx context.Context, getenv func(string) string, partyID in
 		return nil, nil, fmt.Errorf("no sealed key share at %s", cfg.keyPath)
 	}
 
-	if share, cc, handled, err := openEnclaveEntry(ctx, partyID, ceremonyID, cfg.keyPath, secret.Data); handled {
+	if legacy {
+		if _, enveloped := secret.Data["enclave_envelope"]; enveloped {
+			return nil, nil, fmt.Errorf("the share at %s is already enclave-sealed; there is nothing to migrate", cfg.keyPath)
+		}
+	} else if share, cc, handled, err := openEnclaveEntry(ctx, partyID, ceremonyID, cfg.keyPath, secret.Data); handled {
 		return share, cc, err
 	}
 	raw, ok := secret.Data["save_data"].(string)
@@ -392,4 +417,46 @@ func openEnclaveEntry(ctx context.Context, partyID int, ceremonyID, keyPath stri
 	}
 	share, cc, err := decodeSealedPayload(p, keyPath)
 	return share, cc, true, err
+}
+
+// destroyEarlierShareVersions permanently destroys every version of a share's
+// Vault entry except the current one, and returns how many it destroyed.
+//
+// Vault KV v2 keeps every version of an entry. After a migration the current
+// version is the enclave envelope, and every earlier one is a share in the
+// clear: unless they are destroyed, "migrated into the enclave" would describe
+// the newest version only, and `vault kv get -version=1` would undo it.
+func destroyEarlierShareVersions(ctx context.Context, getenv func(string) string, partyID int, ceremonyID string) (int, error) {
+	cfg, configured := vaultShareConfigFromEnv(getenv, partyID, ceremonyID)
+	if !configured {
+		return 0, errors.New("VAULT_ADDR is not set")
+	}
+	client, err := newVaultClient(cfg.addr)
+	if err != nil {
+		return 0, err
+	}
+	if cfg.token != "" {
+		client.SetToken(cfg.token)
+	}
+	kv := client.KVv2(cfg.mount)
+	meta, err := kv.GetMetadata(ctx, cfg.keyPath)
+	if err != nil {
+		return 0, fmt.Errorf("reading the versions of %s: %w", cfg.keyPath, err)
+	}
+	var versions []int
+	for k, v := range meta.Versions {
+		n, err := strconv.Atoi(k)
+		if err != nil || n >= meta.CurrentVersion || v.Destroyed {
+			continue
+		}
+		versions = append(versions, n)
+	}
+	sort.Ints(versions)
+	if len(versions) == 0 {
+		return 0, nil
+	}
+	if err := kv.Destroy(ctx, cfg.keyPath, versions); err != nil {
+		return 0, fmt.Errorf("destroying versions %v of %s: %w", versions, cfg.keyPath, err)
+	}
+	return len(versions), nil
 }

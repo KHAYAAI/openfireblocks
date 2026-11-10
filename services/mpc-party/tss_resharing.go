@@ -89,6 +89,12 @@ type tssResharingCeremony struct {
 
 	saveData *KeyShare
 	sealed   bool
+	// migration is set when this refresh completed a migration into
+	// enclave sealing.
+	migration *MigrationResult
+	// migrates is true when the source was loaded for migration; the
+	// refresh is not reported complete until the clean-up has run.
+	migrates bool
 }
 
 // StartResharing refreshes the shares of an existing key.
@@ -119,6 +125,7 @@ func (m *TSSPartyManager) StartResharing(reshareID, sourceCeremonyID string, pee
 	publicKey := source.publicKeyHex
 	address := source.address
 	epoch := source.epoch
+	migrates := source.migrating
 	source.mu.Unlock()
 
 	// Refusing anything but a completed ceremony. Refreshing a ceremony
@@ -150,6 +157,7 @@ func (m *TSSPartyManager) StartResharing(reshareID, sourceCeremonyID string, pee
 		sourceCeremonyID:  sourceCeremonyID,
 		expectedPublicKey: publicKey,
 		expectedAddress:   address,
+		migrates:          migrates,
 	}
 
 	m.mu.Lock()
@@ -496,6 +504,17 @@ func (m *TSSPartyManager) completeResharing(
 	m.mu.Unlock()
 	if ok {
 		source.mu.Lock()
+		wasMigrating := source.migrating
+		source.mu.Unlock()
+		if wasMigrating {
+			m.finishMigration(reshareID, ceremony, sealed)
+		}
+		source.mu.Lock()
+		if sealed {
+			// Usable from here: the share in memory is the refreshed one,
+			// and the one in Vault is its envelope.
+			source.migrating = false
+		}
 		source.saveData = share
 		// The key's committee identity moves with its shares. A refresh
 		// re-evaluates the secret at new x-coordinates, so signing after
@@ -507,6 +526,40 @@ func (m *TSSPartyManager) completeResharing(
 
 	m.logf("resharing %s: refreshed the shares of %s, key unchanged at %s",
 		reshareID, ceremony.sourceCeremonyID, address)
+}
+
+// finishMigration destroys the clear-text versions of a migrated share once
+// its refreshed share is sealed as an envelope.
+func (m *TSSPartyManager) finishMigration(reshareID string, ceremony *tssResharingCeremony, sealed bool) {
+	result := &MigrationResult{}
+	if !sealed {
+		result.Error = "the refreshed share was not sealed, so the legacy versions were kept and the key stays " +
+			"blocked from signing; fix sealing and run the refresh again"
+	} else if _, enclave := sealerFor(ceremony.selfPartyID); !enclave {
+		result.Error = "not in enclave mode; nothing was migrated"
+	} else {
+		n, err := destroyEarlierShareVersions(context.Background(), os.Getenv, ceremony.selfPartyID, ceremony.sourceCeremonyID)
+		result.LegacyVersionsDestroyed = n
+		if err != nil {
+			result.Error = "the refreshed share is enclave-sealed, but destroying the earlier clear-text versions " +
+				"failed; destroy them by hand (vault kv destroy) before calling the migration done: " + err.Error()
+		}
+	}
+	if result.Error != "" {
+		m.logf("resharing %s: migration: %s", reshareID, result.Error)
+	} else {
+		m.logf("resharing %s: migrated %s into enclave sealing; destroyed %d clear-text version(s)",
+			reshareID, ceremony.sourceCeremonyID, result.LegacyVersionsDestroyed)
+	}
+	ceremony.mu.Lock()
+	ceremony.migration = result
+	ceremony.mu.Unlock()
+}
+
+// MigrationResult reports the clean-up step of a migration refresh.
+type MigrationResult struct {
+	LegacyVersionsDestroyed int    `json:"legacy_versions_destroyed"`
+	Error                   string `json:"error,omitempty"`
 }
 
 func (m *TSSPartyManager) failResharing(reshareID string, err error) {
@@ -595,6 +648,8 @@ type ResharingStatusResult struct {
 	KeyUnchanged     bool   `json:"key_unchanged"`
 	Sealed           bool   `json:"sealed"`
 	Error            string `json:"error,omitempty"`
+	// Set when this refresh completed a migration into enclave sealing.
+	Migration *MigrationResult `json:"migration,omitempty"`
 }
 
 func (m *TSSPartyManager) GetResharingStatus(reshareID string) (*ResharingStatusResult, error) {
@@ -615,6 +670,12 @@ func (m *TSSPartyManager) GetResharingStatus(reshareID string) (*ResharingStatus
 		Curve:            string(ceremony.curve),
 		Sealed:           ceremony.sealed,
 		Error:            ceremony.errorMessage,
+		Migration:        ceremony.migration,
+	}
+	if ceremony.migrates && ceremony.status == ceremonyCompleted && ceremony.migration == nil {
+		// The refresh is done but the clean-up is not: not finished yet.
+		result.Status = string(ceremonyInProgress)
+		return result, nil
 	}
 	if ceremony.status == ceremonyCompleted {
 		result.Address = ceremony.expectedAddress
@@ -715,6 +776,29 @@ func findPartyIDByNode(sorted tsscommon.SortedPartyIDs, node int) *tsscommon.Par
 // the one field guaranteed to be stale exactly when it is needed. What is
 // sealed is the identity of the committee, which does not change.
 func (m *TSSPartyManager) RestoreCeremony(ceremonyID string, peers map[int]string) error {
+	return m.restoreCeremony(ceremonyID, peers, false)
+}
+
+// MigrateLegacyCeremony is the first step of moving a key that predates
+// enclave mode into enclave sealing.
+//
+// It loads the party's share from its legacy Vault entry (in the clear under
+// Vault's storage encryption) into the enclave, marked as migrating: signing
+// with it is refused. The second step is an ordinary refresh
+// (StartResharing) of the same ceremony on every party. Its new shares are
+// sealed as KMS envelopes, and on completion every earlier Vault version of
+// the entry, each one a share in the clear, is destroyed.
+//
+// What it does not do: make the old shares useless to someone who already
+// copied threshold-many of them (from Vault, a backup, or a host's memory).
+// Old shares of the same key still reconstruct it. For a key whose old
+// shares may have been copied, generate a new key inside the enclaves and
+// move the funds to it instead; see docs/engineering/NITRO-ENCLAVE-MPC-PARTY.md.
+func (m *TSSPartyManager) MigrateLegacyCeremony(ceremonyID string, peers map[int]string) error {
+	return m.restoreCeremony(ceremonyID, peers, true)
+}
+
+func (m *TSSPartyManager) restoreCeremony(ceremonyID string, peers map[int]string, legacy bool) error {
 	m.mu.Lock()
 	_, exists := m.ceremonies[ceremonyID]
 	m.mu.Unlock()
@@ -722,7 +806,11 @@ func (m *TSSPartyManager) RestoreCeremony(ceremonyID string, peers map[int]strin
 		return fmt.Errorf("ceremony %s is already loaded; nothing to restore", ceremonyID)
 	}
 
-	share, cc, err := LoadSealedShare(context.Background(), os.Getenv, m.partyID, ceremonyID)
+	load := LoadSealedShare
+	if legacy {
+		load = LoadLegacyShareForMigration
+	}
+	share, cc, err := load(context.Background(), os.Getenv, m.partyID, ceremonyID)
 	if err != nil {
 		return err
 	}
@@ -788,6 +876,7 @@ func (m *TSSPartyManager) RestoreCeremony(ceremonyID string, peers map[int]strin
 		publicKeyHex: pubKeyHex,
 		address:      address,
 		sealed:       true,
+		migrating:    legacy,
 	}
 
 	m.mu.Lock()
